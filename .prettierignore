@@ -1,0 +1,11 @@
+# generated / vendored
+pnpm-lock.yaml
+next-env.d.ts
+expo-env.d.ts
+
+# build output
+.next/
+dist/
+.expo/
+.cache/
+.turbo/

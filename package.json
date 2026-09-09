@@ -1,0 +1,30 @@
+{
+  "name": "skill-passport",
+  "private": true,
+  "engines": {
+    "node": ">=22.14.0",
+    "pnpm": ">=10.8.0"
+  },
+  "packageManager": "pnpm@10.8.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "dev:next": "turbo run dev -F @skill-passport/nextjs...",
+    "dev:expo": "turbo run dev -F @skill-passport/expo...",
+    "lint": "turbo run lint --continue",
+    "lint:ws": "pnpm dlx sherif@latest",
+    "typecheck": "turbo run typecheck",
+    "format": "prettier --check . --ignore-path .gitignore --ignore-path .prettierignore",
+    "format:fix": "prettier --write . --ignore-path .gitignore --ignore-path .prettierignore",
+    "clean": "git clean -xdf node_modules",
+    "clean:workspaces": "turbo run clean",
+    "test": "turbo run test",
+    "db:migrate": "pnpm --filter @skill-passport/nextjs db:migrate",
+    "user:create": "pnpm --filter @skill-passport/nextjs user:create"
+  },
+  "devDependencies": {
+    "prettier": "catalog:",
+    "turbo": "^2.10.12",
+    "typescript": "catalog:"
+  }
+}

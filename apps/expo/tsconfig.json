@@ -1,0 +1,18 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    // Expo's react-native-web type overrides (pulled in by expo-env.d.ts)
+    // augment `interface TextStyle`/`ViewStyle`. React Native 0.87's default
+    // `types_generated` entry declares those as type aliases, so the
+    // augmentation shadows them instead of merging and every style breaks.
+    // This condition selects RN's hand-written types, which are interfaces.
+    "customConditions": ["react-native-legacy-deep-imports", "react-native"],
+    "paths": {
+      "~/*": ["./*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
+  "exclude": ["node_modules"]
+}

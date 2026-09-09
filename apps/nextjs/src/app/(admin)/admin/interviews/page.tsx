@@ -1,0 +1,83 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+
+import { Card, CardContent, EmptyState, buttonClasses } from "~/components/ui";
+import { listInterviews, requireAdmin } from "~/server/admin/service";
+import { formatDate } from "~/lib/utils";
+
+export const metadata: Metadata = { title: "Interviews" };
+export const dynamic = "force-dynamic";
+
+export default async function AdminInterviewsPage() {
+  const admin = await requireAdmin("/admin/interviews");
+  const interviews = await listInterviews(admin.id);
+
+  return (
+    <>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Interviews</h1>
+          <p className="mt-1 text-sm text-content-muted">
+            {interviews.length} in total.
+          </p>
+        </div>
+        <Link href="/admin" className={buttonClasses("primary", "md")}>
+          New interview
+        </Link>
+      </div>
+
+      {interviews.length === 0 ? (
+        <EmptyState
+          title="No interviews yet"
+          description="Create your first one from the overview page."
+          action={
+            <Link href="/admin" className={buttonClasses("primary", "md")}>
+              Go to overview
+            </Link>
+          }
+        />
+      ) : (
+        <ul className="space-y-3">
+          {interviews.map((interview) => (
+            <li key={interview.id}>
+              <Card>
+                <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="truncate text-sm font-semibold">
+                        {interview.title}
+                      </h2>
+                      <span
+                        className={
+                          interview.isOpen
+                            ? "rounded-full bg-success-soft px-2.5 py-0.5 text-xs font-medium text-success"
+                            : "rounded-full bg-surface-muted px-2.5 py-0.5 text-xs font-medium text-content-muted"
+                        }
+                      >
+                        {interview.isOpen ? "Open" : "Closed"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm text-content-muted">
+                      {interview.attemptCount} candidate
+                      {interview.attemptCount === 1 ? "" : "s"} ·{" "}
+                      {interview.completedCount} completed ·{" "}
+                      {interview.questionCount} questions ·{" "}
+                      {formatDate(interview.createdAt)}
+                    </p>
+                  </div>
+
+                  <Link
+                    href={`/admin/interviews/${interview.id}`}
+                    className={buttonClasses("secondary", "sm")}
+                  >
+                    Open
+                  </Link>
+                </CardContent>
+              </Card>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}

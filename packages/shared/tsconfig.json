@@ -1,0 +1,5 @@
+{
+  "extends": "@skill-passport/tsconfig/internal-package.json",
+  "include": ["src"],
+  "exclude": ["node_modules"]
+}

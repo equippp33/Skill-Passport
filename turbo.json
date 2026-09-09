@@ -1,0 +1,57 @@
+{
+  "$schema": "https://turborepo.org/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "topo": {
+      "dependsOn": ["^topo"]
+    },
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**", ".expo/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": ["^topo"]
+    },
+    "typecheck": {
+      "dependsOn": ["^topo"]
+    },
+    "clean": {
+      "cache": false
+    },
+    "test": {
+      "dependsOn": ["^topo"]
+    }
+  },
+  "globalPassThroughEnv": [
+    "NODE_ENV",
+    "CI",
+    "EXPO_TOKEN",
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_URL",
+    "SKIP_ENV_VALIDATION",
+    "NEXT_BUILD"
+  ],
+  "globalEnv": [
+    "UI_LANGUAGE",
+    "INTERVIEW_LANGUAGE",
+    "DATABASE_URL",
+    "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "SARVAM_API_KEY",
+    "SARVAM_STT_MODEL",
+    "SARVAM_TTS_MODEL",
+    "SARVAM_TTS_SPEAKER",
+    "CLOUDFLARE_R2_ACCESS_KEY_ID",
+    "CLOUDFLARE_R2_SECRET_ACCESS_KEY",
+    "CLOUDFLARE_R2_ENDPOINT",
+    "CLOUDFLARE_R2_BUCKET",
+    "CLOUDFLARE_R2_PREFIX",
+    "CLOUDFLARE_R2_PUBLIC_URL",
+    "DATABASE_POOL_MAX"
+  ]
+}
