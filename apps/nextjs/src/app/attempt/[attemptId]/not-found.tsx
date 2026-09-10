@@ -13,6 +13,7 @@ export default function NotFound() {
   return (
     <main className="mx-auto max-w-lg px-4 py-16">
       <EmptyState
+        headingLevel={1}
         title={m.errors.notFoundTitle}
         description={m.errors.reopenLink}
       />

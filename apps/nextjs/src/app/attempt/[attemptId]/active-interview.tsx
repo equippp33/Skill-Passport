@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "~/components/ui/icon";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -685,7 +686,7 @@ export function ActiveInterview({
   // language the candidate may not speak.
   if (needsLanguage) {
     return (
-      <div className="mx-auto max-w-2xl space-y-5">
+      <div className="mx-auto max-w-3xl space-y-5">
         <Card>
           <CardContent className="space-y-4 pt-6">
             <div>
@@ -700,7 +701,7 @@ export function ActiveInterview({
             {/* A grid rather than the dropdown used mid-interview: here
                 choosing is the only thing on screen, so every option should
                 be visible at once instead of behind a click. */}
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 sm:grid-cols-3">
               {languages.map((lang) => (
                 <button
                   key={lang.key}
@@ -716,10 +717,10 @@ export function ActiveInterview({
                     {lang.symbol}
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">
+                    <span className="block text-sm font-medium">
                       {lang.displayName}
                     </span>
-                    <span className="block truncate text-xs text-content-muted">
+                    <span className="block text-xs text-content-muted">
                       {lang.promptName}
                     </span>
                   </span>
@@ -745,7 +746,7 @@ export function ActiveInterview({
   const nearLimit = recorder.elapsedSeconds >= ANSWER_WARN_SECONDS;
 
   return (
-    <div className="mx-auto max-w-2xl space-y-5">
+    <div className="mx-auto max-w-3xl space-y-5">
       {/* Backup for automatic detection. Kept at the very top so a candidate
           being interviewed in the wrong language can fix it immediately,
           without hunting for the control while a timer runs. */}
@@ -793,7 +794,7 @@ export function ActiveInterview({
         onCut={preventCapture}
         onContextMenu={preventCapture}
         onDragStart={preventCapture}
-        className="select-none"
+        className="border-accent/20 border-t-4 border-t-accent select-none"
       >
         <CardContent className="space-y-4 pt-5">
           {turn.skillId ? (
@@ -807,7 +808,7 @@ export function ActiveInterview({
           )}
 
           <h1
-            className="text-lg leading-relaxed font-medium"
+            className="text-xl leading-relaxed font-medium sm:text-2xl"
             aria-live="polite"
             lang={languageCode}
           >
@@ -848,6 +849,7 @@ export function ActiveInterview({
                   className="hidden"
                 />
                 <Button variant="secondary" size="sm" onClick={playQuestion}>
+                  <Icon name="mic" className="size-4" />
                   {m.interview.playQuestion}
                 </Button>
               </>
@@ -905,7 +907,7 @@ export function ActiveInterview({
         <CardContent className="space-y-4 pt-5">
           {/* Recording status, announced to assistive tech. */}
           <div
-            className="flex items-center justify-between gap-4"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-canvas p-4"
             role="status"
             aria-live="polite"
           >
@@ -934,10 +936,12 @@ export function ActiveInterview({
             </div>
 
             <span
+              role="timer"
+              aria-live="off"
               className={
                 nearLimit && recorder.isRecording
-                  ? "text-sm font-medium text-danger tabular-nums"
-                  : "text-sm text-content-muted tabular-nums"
+                  ? "rounded-lg bg-danger-soft px-3 py-1.5 text-base font-semibold text-danger tabular-nums"
+                  : "rounded-lg border border-border-subtle bg-surface px-3 py-1.5 text-base font-semibold text-content tabular-nums"
               }
             >
               {formatDuration(recorder.elapsedSeconds)} /{" "}
@@ -976,7 +980,7 @@ export function ActiveInterview({
                 muted
                 playsInline
                 aria-label="Your camera"
-                className="aspect-video w-full -scale-x-100 object-cover"
+                className="aspect-video max-h-[400px] w-full -scale-x-100 object-contain"
               />
             </div>
           ) : null}
@@ -986,6 +990,8 @@ export function ActiveInterview({
           <div className="flex flex-wrap items-center gap-3">
             <Button
               size="lg"
+              className="w-full sm:w-auto"
+              aria-busy={isBusy}
               onClick={() => void handleNext()}
               disabled={isBusy || !canFinish}
             >
@@ -1016,9 +1022,16 @@ export function ActiveInterview({
               {m.interview.savingRecordings}
             </p>
           ) : phase === "processing" ? (
-            <p className="text-sm text-content-muted">
-              {m.interview.processingHint}
-            </p>
+            <div
+              role="status"
+              className="flex items-center gap-3 rounded-xl border border-accent/15 bg-accent-soft p-4 text-sm text-accent"
+            >
+              <span
+                aria-hidden="true"
+                className="size-5 shrink-0 animate-spin rounded-full border-2 border-accent/20 border-t-accent"
+              />
+              <p>{m.interview.processingHint}</p>
+            </div>
           ) : null}
         </CardContent>
       </Card>

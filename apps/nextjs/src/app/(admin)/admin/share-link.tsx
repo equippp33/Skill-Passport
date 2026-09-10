@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 
+import { Icon } from "~/components/ui/icon";
 import { Button, Input } from "~/components/ui";
 
 /**
@@ -15,8 +16,10 @@ import { Button, Input } from "~/components/ui";
 export function ShareLink({ url }: { url: string }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
 
   async function copy() {
+    setCopyError(false);
     const value = inputRef.current?.value ?? url;
     try {
       await navigator.clipboard.writeText(value);
@@ -25,22 +28,33 @@ export function ShareLink({ url }: { url: string }) {
     } catch {
       // Clipboard access can be blocked; the input stays selectable.
       inputRef.current?.select();
+      setCopyError(true);
     }
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Input
-        ref={inputRef}
-        readOnly
-        defaultValue={url}
-        onFocus={(e) => e.currentTarget.select()}
-        aria-label="Candidate link"
-        className="min-w-0 flex-1 font-mono text-xs"
-      />
-      <Button variant="secondary" size="md" onClick={() => void copy()}>
-        {copied ? "Copied" : "Copy link"}
-      </Button>
+    <div className="space-y-2">
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          ref={inputRef}
+          readOnly
+          defaultValue={url}
+          onFocus={(e) => e.currentTarget.select()}
+          aria-label="Candidate link"
+          className="min-w-0 flex-1 bg-surface font-mono text-sm"
+        />
+        <Button variant="primary" size="md" onClick={() => void copy()}>
+          <Icon name={copied ? "check" : "copy"} />
+          {copied ? "Copied" : "Copy link"}
+        </Button>
+      </div>
+      <p role="status" className="text-xs text-content-muted">
+        {copied
+          ? "Link copied. Ready to share with candidates."
+          : copyError
+            ? "Copy is unavailable. The link is selected; copy it manually."
+            : "Anyone with this link can begin their own interview."}
+      </p>
     </div>
   );
 }

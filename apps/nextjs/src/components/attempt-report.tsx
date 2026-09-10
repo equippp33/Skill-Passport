@@ -101,20 +101,20 @@ export function AttemptReport({
         </Card>
       ) : null}
 
-      <Card>
-        <CardContent className="flex flex-wrap items-center justify-between gap-6 pt-6">
+      <Card className="border-accent/20 bg-linear-to-br from-surface to-accent-soft">
+        <CardContent className="flex flex-wrap items-center justify-between gap-6 pt-6 sm:p-8">
           <div>
             <p className="text-sm text-content-muted">
               {m.result.overallScore}
             </p>
-            <p className="text-4xl font-semibold tabular-nums">
+            <p className="mt-2 text-5xl font-semibold tracking-tight text-accent tabular-nums">
               {attempt.overallScore ?? "—"}
               {attempt.overallScore !== null ? (
                 <span className="text-lg text-content-muted">/100</span>
               ) : null}
             </p>
           </div>
-          <div className="text-sm text-content-muted">
+          <div className="max-w-xs rounded-xl border border-accent/15 bg-surface px-4 py-3 text-sm text-content-muted">
             {t(m.result.answered, {
               answered: answered.length,
               total: skillScores.length,
@@ -239,7 +239,7 @@ export function AttemptReport({
                         showCandidate ? "" : `?attempt=${attempt.id}`
                       }`}
                       aria-label={m.result.yourAnswer}
-                      className="aspect-video w-full rounded-lg border border-border-subtle bg-content/90"
+                      className="aspect-video max-h-[400px] w-full rounded-lg border border-border-subtle bg-content/90 object-contain"
                     />
                     {/* Says which answer this clip is, so a recording can
                         never be read as belonging to the wrong question. */}
@@ -289,7 +289,7 @@ export function AttemptReport({
                 </div>
 
                 {turn.evaluation ? (
-                  <div className="rounded-md bg-surface-muted px-3 py-2.5">
+                  <div className="rounded-xl border border-border-subtle bg-canvas p-4">
                     <p className="text-xs font-medium text-content-muted">
                       {m.result.evaluation}
                     </p>
@@ -311,7 +311,7 @@ function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-xs text-content-muted">{label}</p>
-      <p className="text-sm font-medium">{value}</p>
+      <p className="text-sm font-medium break-words">{value}</p>
     </div>
   );
 }
@@ -334,14 +334,19 @@ function SkillRow({
 }) {
   const pct = score === null ? 0 : (score / 10) * 100;
   return (
-    <li className="flex items-center gap-3 py-2">
-      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 py-3 sm:grid-cols-[minmax(0,1fr)_8rem_5rem]">
+      <span className="min-w-0 text-sm font-medium">{label}</span>
       <div
-        className="hidden h-1.5 w-28 overflow-hidden rounded-full bg-surface-muted sm:block"
-        role="presentation"
+        className="order-3 col-span-2 h-2 w-full overflow-hidden rounded-full bg-surface-muted sm:order-none sm:col-span-1"
+        role="meter"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={10}
+        aria-valuenow={score ?? 0}
+        aria-valuetext={score === null ? notAssessed : `${score}/10`}
       >
         <div
-          className="h-full rounded-full bg-accent"
+          className={`h-full rounded-full ${score === null ? "bg-border-strong" : score >= 7 ? "bg-success" : score >= 4 ? "bg-warning" : "bg-danger"}`}
           style={{ width: `${pct}%` }}
         />
       </div>

@@ -1,3 +1,4 @@
+import { Icon } from "~/components/ui/icon";
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
@@ -39,8 +40,11 @@ export default async function AttemptResultPage({
   const m = uiMessages();
 
   return (
-    <main className="mx-auto max-w-3xl space-y-6 px-4 py-10">
-      <div>
+    <main className="candidate-main space-y-6">
+      <div className="rounded-2xl border border-success/20 bg-success-soft p-6">
+        <span className="mb-4 grid size-11 place-items-center rounded-full bg-surface text-success">
+          <Icon name="check" className="size-6" />
+        </span>
         <h1 className="text-2xl font-semibold tracking-tight">
           {m.result.title}
         </h1>
@@ -52,7 +56,7 @@ export default async function AttemptResultPage({
 
       <AttemptReport attempt={attempt} turns={turns} m={m} />
 
-      <p className="text-sm text-content-muted">
+      <p className="rounded-xl border border-border-subtle bg-surface p-4 text-center text-sm text-content-muted">
         Thank you for completing the interview. You can close this page.
       </p>
     </main>

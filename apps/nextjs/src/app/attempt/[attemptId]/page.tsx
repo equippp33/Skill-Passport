@@ -48,7 +48,7 @@ export default async function AttemptPage({
 
   if (attempt.status === "not_started" || turns.length === 0) {
     return (
-      <main className="mx-auto max-w-3xl px-4 py-10">
+      <main className="candidate-main">
         <Instructions
           attemptId={attempt.id}
           questionCount={interview.questionCount}
@@ -64,7 +64,7 @@ export default async function AttemptPage({
 
   if (attempt.status === "failed") {
     return (
-      <main className="mx-auto max-w-3xl px-4 py-10">
+      <main className="candidate-main">
         <Alert tone="danger" title={m.interview.errorTitle}>
           {attempt.errorMessage ?? m.errors.generic}
         </Alert>
@@ -81,7 +81,7 @@ export default async function AttemptPage({
     : PROBE_SPOKEN_LANGUAGE_CODE;
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-10">
+    <main className="candidate-main">
       <ActiveInterview
         attemptId={attempt.id}
         totalTurns={totalTurns(interview.questionCount)}

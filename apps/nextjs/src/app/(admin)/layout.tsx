@@ -1,3 +1,4 @@
+import { Brand } from "~/components/brand";
 import Link from "next/link";
 
 import { Button } from "~/components/ui";
@@ -13,9 +14,7 @@ import { AdminSidebar } from "./admin/sidebar";
  * role, even if a child forgets to check. Each server action re-checks too —
  * a layout guard does not protect an action endpoint.
  *
- * The rail is `fixed`, so the content column carries a matching left padding
- * rather than sitting in a flex row: that way hovering the rail open overlays
- * the page instead of reflowing it.
+ * Persistent desktop navigation and a compact mobile menu share the same routes.
  */
 export default async function AdminLayout({
   children,
@@ -35,32 +34,28 @@ export default async function AdminLayout({
       </a>
 
       <div data-print-hide>
-        <AdminSidebar />
+        <AdminSidebar signOut={m.app.signOut} />
       </div>
 
-      <div className="lg:pl-16 print:pl-0">
+      <div className="lg:pl-64 print:pl-0">
         <header
           data-print-hide
-          className="sticky top-0 z-20 border-b border-border-subtle bg-canvas/80 backdrop-blur"
+          className="sticky top-0 z-20 border-b border-border-subtle bg-surface"
         >
-          <div className="mx-auto flex h-16 max-w-5xl items-center justify-between gap-4 px-4 sm:px-8">
+          <div className="mx-auto flex min-h-20 max-w-7xl items-center justify-between gap-3 px-4 sm:px-8 lg:px-10">
             {/* Only shown where the rail is hidden. */}
             <Link
               href="/admin"
               className="flex items-center gap-2 text-sm font-semibold tracking-tight lg:hidden"
             >
-              <span
-                aria-hidden
-                className="grid size-7 place-items-center rounded-lg bg-linear-to-br from-accent to-accent-hover text-[10px] font-bold text-accent-contrast"
-              >
-                SP
-              </span>
-              {m.app.name}
+              <Brand className="gap-2 [&>svg]:size-8 [&>span]:text-base" />
             </Link>
-            <span className="hidden lg:block" />
+            <span className="hidden text-sm font-medium text-content-muted lg:block">
+              Interview workspace
+            </span>
 
             <div className="flex items-center gap-3">
-              <span className="hidden text-sm text-content-muted sm:inline">
+              <span className="hidden max-w-64 truncate text-sm text-content-muted sm:inline">
                 {admin.email}
               </span>
               <form action={logoutAction} className="lg:hidden">
@@ -70,11 +65,12 @@ export default async function AdminLayout({
               </form>
             </div>
           </div>
+          <AdminSidebar mobile />
         </header>
 
         <main
           id="main"
-          className="mx-auto max-w-5xl space-y-6 px-4 py-8 sm:px-8"
+          className="mx-auto max-w-7xl space-y-7 px-4 py-6 sm:px-8 sm:py-9 lg:px-10"
         >
           {children}
         </main>

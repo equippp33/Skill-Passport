@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "~/components/ui/icon";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
@@ -84,8 +85,8 @@ export function Instructions({
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <header>
+    <div className="grid gap-6 lg:grid-cols-2">
+      <header className="lg:col-span-2">
         <p className="text-xs font-medium tracking-widest text-content-muted uppercase">
           {m.instructions.title}
         </p>
@@ -111,12 +112,12 @@ export function Instructions({
           scripts rather than assuming the candidate reads English. This is
           the last screen before the first question, which is where the
           reassurance is actually worth something. */}
-      <Card>
+      <Card className="border-accent/15 bg-accent-soft lg:col-span-2">
         <CardContent className="pt-5">
           <p className="text-xs font-medium tracking-widest text-content-muted uppercase">
             {m.instructions.ownLanguageTitle}
           </p>
-          <ul className="mt-2.5 space-y-1.5">
+          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
             {PROBE_PROMPTS.slice(0, 4).map((prompt) => (
               <li
                 key={prompt.code}
@@ -133,12 +134,12 @@ export function Instructions({
       {/* Grouped rather than one flat list of nine bullets: the points
           answer three different questions, and a reader scanning for "what
           do I need" should not have to filter out "what happens after". */}
-      <Card>
+      <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle>{m.instructions.expectTitle}</CardTitle>
           <CardDescription>{m.instructions.expectSubtitle}</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
+        <CardContent className="grid gap-6 sm:grid-cols-3">
           {[
             {
               heading: m.instructions.groupHowItWorks,
@@ -183,7 +184,10 @@ export function Instructions({
 
       <Card>
         <CardHeader>
-          <CardTitle>{m.instructions.micCheckTitle}</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Icon name="mic" className="text-accent" />
+            {m.instructions.micCheckTitle}
+          </CardTitle>
           <CardDescription>{m.instructions.micCheckSubtitle}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -231,12 +235,12 @@ export function Instructions({
 
       <Card>
         <CardContent className="space-y-4 pt-5">
-          <label className="flex cursor-pointer items-start gap-3 text-sm">
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border-subtle bg-canvas p-4 text-sm leading-relaxed">
             <input
               type="checkbox"
               checked={consented}
               onChange={(e) => setConsented(e.target.checked)}
-              className="mt-0.5 size-4 shrink-0 cursor-pointer accent-[var(--accent)]"
+              className="mt-0.5 size-5 shrink-0 cursor-pointer accent-[var(--accent)]"
             />
             <span>{m.instructions.consent}</span>
           </label>
@@ -252,6 +256,8 @@ export function Instructions({
           <div className="flex flex-wrap items-center gap-3">
             <Button
               size="lg"
+              className="w-full"
+              aria-busy={isStarting}
               onClick={handleStart}
               disabled={!consented || !micTested || isStarting || !aiReady}
             >

@@ -1,3 +1,4 @@
+import { Brand } from "~/components/brand";
 import Link from "next/link";
 
 import { buttonClasses } from "~/components/ui";
@@ -20,7 +21,8 @@ export default async function NotFound() {
 
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-16">
-      <div className="w-full max-w-md text-center">
+      <div className="w-full max-w-md rounded-2xl border border-border-subtle bg-surface p-8 text-center shadow-[var(--shadow-card)]">
+        <Brand className="mb-8" />
         <p className="text-sm font-medium text-content-muted">404</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">
           Page not found

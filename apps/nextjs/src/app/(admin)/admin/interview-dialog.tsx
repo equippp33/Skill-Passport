@@ -64,7 +64,9 @@ export function InterviewDialog({
       labelledBy="interview-dialog-title"
       title={
         <>
-          <span className="truncate">{details?.title ?? "Interview"}</span>
+          <span className="min-w-0 break-words">
+            {details?.title ?? "Interview"}
+          </span>
           {details ? (
             <span
               className={
@@ -93,7 +95,7 @@ export function InterviewDialog({
     >
       {details ? (
         <div className="space-y-6">
-          <section className="space-y-2">
+          <section className="space-y-3 rounded-xl border border-accent/15 bg-accent-soft p-4">
             <h3 className="text-sm font-semibold">Candidate link</h3>
             <p className="text-sm text-content-muted">
               Share this with as many candidates as you like. Each one gets a
@@ -108,7 +110,7 @@ export function InterviewDialog({
             ) : null}
           </section>
 
-          <section className="space-y-2">
+          <section className="space-y-3">
             <h3 className="text-sm font-semibold">
               Candidates ({details.attempts.length})
             </h3>
@@ -125,9 +127,9 @@ export function InterviewDialog({
                     key={attempt.id}
                     className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5"
                   >
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1 basis-48">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-medium">
+                        <span className="text-sm font-medium">
                           {attempt.candidateName}
                         </span>
                         <StatusBadge
@@ -135,7 +137,7 @@ export function InterviewDialog({
                           label={statusLabels[attempt.status] ?? attempt.status}
                         />
                       </div>
-                      <p className="mt-0.5 truncate text-xs text-content-muted">
+                      <p className="mt-0.5 text-xs text-content-muted">
                         {attempt.candidateEmail ?? "no email"} ·{" "}
                         {formatSpokenLanguages(
                           attempt.spokenLanguages,

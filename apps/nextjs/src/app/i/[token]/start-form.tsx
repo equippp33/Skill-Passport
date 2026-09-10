@@ -13,7 +13,13 @@ const initialState: CandidateFormState = { error: null };
 function SubmitButton() {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" size="lg" className="w-full" disabled={pending}>
+    <Button
+      type="submit"
+      size="lg"
+      className="w-full"
+      disabled={pending}
+      aria-busy={pending}
+    >
       {pending ? "Starting…" : "Continue"}
     </Button>
   );
@@ -46,8 +52,11 @@ export function StartForm({ token }: { token: string }) {
           maxLength={120}
           required
           aria-invalid={state.fieldErrors?.name ? true : undefined}
+          aria-describedby="name-error"
         />
-        <FieldError>{state.fieldErrors?.name}</FieldError>
+        <span id="name-error">
+          <FieldError>{state.fieldErrors?.name}</FieldError>
+        </span>
       </div>
 
       <div>
@@ -62,8 +71,11 @@ export function StartForm({ token }: { token: string }) {
           autoComplete="email"
           maxLength={255}
           aria-invalid={state.fieldErrors?.email ? true : undefined}
+          aria-describedby="email-error"
         />
-        <FieldError>{state.fieldErrors?.email}</FieldError>
+        <span id="email-error">
+          <FieldError>{state.fieldErrors?.email}</FieldError>
+        </span>
       </div>
 
       <div>
@@ -88,14 +100,16 @@ export function StartForm({ token }: { token: string }) {
           }
           placeholder={`${PHONE_DIGITS} digits`}
           aria-invalid={state.fieldErrors?.phone ? true : undefined}
-          aria-describedby="phone-hint"
+          aria-describedby="phone-hint phone-error"
         />
         <p id="phone-hint" className="mt-1 text-xs text-content-muted">
           {phone.length > 0 && phone.length < PHONE_DIGITS
             ? `${PHONE_DIGITS - phone.length} more to go`
             : "Indian mobile number, without the country code."}
         </p>
-        <FieldError>{state.fieldErrors?.phone}</FieldError>
+        <span id="phone-error">
+          <FieldError>{state.fieldErrors?.phone}</FieldError>
+        </span>
       </div>
 
       <SubmitButton />

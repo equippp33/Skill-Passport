@@ -1,3 +1,4 @@
+import { AuthShell } from "~/components/auth-shell";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -7,7 +8,6 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "~/components/ui";
 import { getAuth } from "~/server/auth/session";
 import { uiLanguage, uiMessages } from "~/server/language";
@@ -26,36 +26,28 @@ export default async function SignupPage() {
   if (user) redirect("/admin");
 
   return (
-    <main
-      className="flex min-h-screen items-center justify-center px-4 py-12"
-      lang={lang.code}
-    >
-      <div className="w-full max-w-sm">
-        <div className="mb-6 text-center">
-          <h1 className="text-xl font-semibold tracking-tight">{m.app.name}</h1>
-          <p className="mt-1 text-sm text-content-muted">{m.signup.intro}</p>
-        </div>
+    <AuthShell m={m} lang={lang.code}>
+      <Card className="border-0 bg-transparent shadow-none">
+        <CardHeader className="px-0 pt-0 pb-7">
+          <h1 className="text-3xl leading-snug font-semibold tracking-tight">
+            {m.signup.title}
+          </h1>
+          <CardDescription>{m.signup.subtitle}</CardDescription>
+        </CardHeader>
+        <CardContent className="px-0 pb-0">
+          <SignupForm m={m} />
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{m.signup.title}</CardTitle>
-            <CardDescription>{m.signup.subtitle}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <SignupForm m={m} />
-          </CardContent>
-        </Card>
-
-        <p className="mt-4 text-center text-sm text-content-muted">
-          {m.signup.haveAccount}{" "}
-          <Link
-            href="/login"
-            className="font-medium text-accent underline-offset-4 hover:underline"
-          >
-            {m.signup.signInLink}
-          </Link>
-        </p>
-      </div>
-    </main>
+      <p className="mt-4 text-center text-sm text-content-muted">
+        {m.signup.haveAccount}{" "}
+        <Link
+          href="/login"
+          className="font-medium text-accent underline-offset-4 hover:underline"
+        >
+          {m.signup.signInLink}
+        </Link>
+      </p>
+    </AuthShell>
   );
 }

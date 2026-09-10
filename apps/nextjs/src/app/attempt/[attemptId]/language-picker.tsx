@@ -188,7 +188,7 @@ export function LanguagePicker({
           aria-activedescendant={`${listId}-${activeIndex}`}
           onKeyDown={onListKeyDown}
           className={cn(
-            "absolute right-0 z-40 mt-2 max-h-80 w-64 overflow-y-auto p-1",
+            "absolute right-0 z-40 mt-2 max-h-80 w-64 max-w-[calc(100vw-2rem)] overflow-y-auto p-1",
             "rounded-xl border border-border-subtle bg-surface",
             "shadow-[var(--shadow-raised)] outline-none",
           )}
@@ -214,12 +214,12 @@ export function LanguagePicker({
                 <Glyph symbol={language.symbol} highlighted={isSelected} />
 
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">
+                  <span className="block text-sm font-medium">
                     {language.displayName}
                   </span>
                   {/* The English name is what lets someone who cannot read a
                       script still find their language in the list. */}
-                  <span className="block truncate text-xs text-content-muted">
+                  <span className="block text-xs text-content-muted">
                     {language.promptName}
                   </span>
                 </span>
@@ -261,7 +261,7 @@ function Glyph({
     <span
       aria-hidden
       className={cn(
-        "grid size-7 shrink-0 place-items-center rounded-md text-[13px] leading-none font-semibold",
+        "grid size-8 shrink-0 place-items-center rounded-md text-sm leading-normal font-semibold",
         highlighted
           ? "bg-accent text-accent-contrast"
           : "bg-surface-muted text-content-muted",

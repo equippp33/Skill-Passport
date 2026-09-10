@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Noto_Sans_Devanagari } from "next/font/google";
 
 import { uiLanguage, uiMessages } from "~/server/language";
 
@@ -17,6 +17,8 @@ export async function generateMetadata(): Promise<Metadata> {
       template: `%s · ${m.app.name}`,
     },
     description: m.dashboard.subtitle,
+    applicationName: "Skill Passport",
+    icons: { icon: "/icon.svg" },
   };
 }
 
@@ -26,11 +28,18 @@ export async function generateMetadata(): Promise<Metadata> {
  */
 const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-sans",
+  variable: "--font-inter",
+  display: "swap",
+});
+
+const devanagari = Noto_Sans_Devanagari({
+  subsets: ["devanagari"],
+  variable: "--font-devanagari",
   display: "swap",
 });
 
 export const viewport: Viewport = {
+  themeColor: "#4338ca",
   width: "device-width",
   initialScale: 1,
 };
@@ -43,7 +52,10 @@ export default function RootLayout({
   const lang = uiLanguage();
 
   return (
-    <html lang={lang.code} className={inter.variable}>
+    <html
+      lang={lang.code}
+      className={`${inter.variable} ${devanagari.variable}`}
+    >
       <body className="min-h-screen bg-canvas text-content antialiased">
         {children}
       </body>

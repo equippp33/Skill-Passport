@@ -1,3 +1,4 @@
+import { AuthShell } from "~/components/auth-shell";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -7,7 +8,6 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "~/components/ui";
 import { getAuth } from "~/server/auth/session";
 import { uiLanguage, uiMessages } from "~/server/language";
@@ -34,36 +34,28 @@ export default async function LoginPage({
   if (user) redirect(safeNext ?? "/admin");
 
   return (
-    <main
-      className="flex min-h-screen items-center justify-center px-4 py-12"
-      lang={lang.code}
-    >
-      <div className="w-full max-w-sm">
-        <div className="mb-6 text-center">
-          <h1 className="text-xl font-semibold tracking-tight">{m.app.name}</h1>
-          <p className="mt-1 text-sm text-content-muted">{m.login.intro}</p>
-        </div>
+    <AuthShell m={m} lang={lang.code}>
+      <Card className="border-0 bg-transparent shadow-none">
+        <CardHeader className="px-0 pt-0 pb-7">
+          <h1 className="text-3xl leading-snug font-semibold tracking-tight">
+            {m.login.title}
+          </h1>
+          <CardDescription>{m.login.subtitle}</CardDescription>
+        </CardHeader>
+        <CardContent className="px-0 pb-0">
+          <LoginForm next={safeNext} m={m} />
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{m.login.title}</CardTitle>
-            <CardDescription>{m.login.subtitle}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <LoginForm next={safeNext} m={m} />
-          </CardContent>
-        </Card>
-
-        <p className="mt-4 text-center text-sm text-content-muted">
-          {m.login.noAccount}{" "}
-          <Link
-            href="/signup"
-            className="font-medium text-accent underline-offset-4 hover:underline"
-          >
-            {m.login.signUpLink}
-          </Link>
-        </p>
-      </div>
-    </main>
+      <p className="mt-4 text-center text-sm text-content-muted">
+        {m.login.noAccount}{" "}
+        <Link
+          href="/signup"
+          className="font-medium text-accent underline-offset-4 hover:underline"
+        >
+          {m.login.signUpLink}
+        </Link>
+      </p>
+    </AuthShell>
   );
 }

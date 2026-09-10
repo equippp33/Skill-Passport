@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 
 import { Card, CardContent, EmptyState } from "~/components/ui";
 import { getInterviewByPublicToken } from "~/server/attempt/access";
-import { uiMessages } from "~/server/language";
 import { StartForm } from "./start-form";
 
 export const metadata: Metadata = { title: "Start your interview" };
@@ -27,13 +26,13 @@ export default async function CandidateLandingPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  const m = uiMessages();
   const interview = await getInterviewByPublicToken(token);
 
   if (!interview) {
     return (
       <main className="mx-auto max-w-lg px-4 py-16">
         <EmptyState
+          headingLevel={1}
           title="This link is not active"
           description="The interview may have been closed, or the link may be incomplete. Please check with whoever sent it to you."
         />
@@ -42,11 +41,9 @@ export default async function CandidateLandingPage({
   }
 
   return (
-    <main className="mx-auto max-w-lg space-y-6 px-4 py-12">
+    <main className="mx-auto max-w-xl space-y-7 px-4 py-8 sm:py-12">
       <header className="text-center">
-        <p className="text-xs font-medium tracking-widest text-content-muted uppercase">
-          {m.app.name}
-        </p>
+        <p className="eyebrow">YOUR SKILLS. YOUR VOICE.</p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-balance">
           {interview.title}
         </h1>
@@ -56,6 +53,24 @@ export default async function CandidateLandingPage({
           </p>
         ) : null}
       </header>
+
+      <ol
+        aria-label="Interview steps"
+        className="grid grid-cols-3 gap-2 text-center text-xs font-medium"
+      >
+        <li
+          aria-current="step"
+          className="rounded-xl bg-accent-soft px-2 py-3 text-accent"
+        >
+          1 / Your details
+        </li>
+        <li className="rounded-xl bg-surface-muted px-2 py-3 text-content-muted">
+          2 / Device check
+        </li>
+        <li className="rounded-xl bg-surface-muted px-2 py-3 text-content-muted">
+          3 / Interview
+        </li>
+      </ol>
 
       <Card>
         <CardContent className="space-y-5 pt-6">

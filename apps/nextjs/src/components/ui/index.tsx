@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { Icon } from "./icon";
 import { cn } from "~/lib/utils";
 
 /**
@@ -27,9 +28,9 @@ const buttonVariants: Record<ButtonVariant, string> = {
 };
 
 const buttonSizes: Record<ButtonSize, string> = {
-  sm: "h-9 px-3 text-sm",
-  md: "h-10 px-4 text-sm",
-  lg: "h-12 px-6 text-base",
+  sm: "min-h-10 px-3 py-2 text-sm",
+  md: "min-h-11 px-4 py-2.5 text-sm",
+  lg: "min-h-12 px-6 py-3 text-base",
 };
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -49,7 +50,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         className={cn(
           // Tailwind v4's preflight sets buttons to `cursor: default`, so the
           // pointer has to be explicit. `disabled:` comes after, and wins.
-          "inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg font-medium transition-colors",
+          "inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl font-semibold transition-colors",
           "disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none",
           buttonVariants[variant],
           buttonSizes[size],
@@ -62,7 +63,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 );
 
 const buttonBase =
-  "inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
  * Anchor styled as a button. Navigation must be a real link (focusable,
@@ -97,7 +98,12 @@ export function CardHeader({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("px-6 pt-6 pb-3", className)} {...props} />;
+  return (
+    <div
+      className={cn("px-5 pt-5 pb-3 sm:px-6 sm:pt-6", className)}
+      {...props}
+    />
+  );
 }
 
 export function CardTitle({
@@ -128,13 +134,15 @@ export function CardContent({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("px-6 pb-6", className)} {...props} />;
+  return (
+    <div className={cn("px-5 pb-5 sm:px-6 sm:pb-6", className)} {...props} />
+  );
 }
 
 /* --------------------------------- Inputs -------------------------------- */
 
 const fieldStyles =
-  "w-full rounded-lg border border-border-strong bg-surface px-3.5 py-2.5 text-sm text-content transition-colors placeholder:text-content-muted/70 hover:border-content-muted/40 focus:border-accent disabled:cursor-not-allowed disabled:opacity-60";
+  "min-h-12 w-full min-w-0 rounded-xl border border-border-strong bg-surface px-3.5 py-2.5 text-base text-content transition-colors placeholder:text-content-muted hover:border-content-muted/60 focus:border-accent focus:ring-2 focus:ring-accent/10 aria-invalid:border-danger disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm";
 
 export const Input = React.forwardRef<
   HTMLInputElement,
@@ -217,7 +225,7 @@ export function Alert({
     <div
       role={tone === "danger" ? "alert" : "status"}
       className={cn(
-        "rounded-md border px-4 py-3 text-sm",
+        "rounded-xl border px-4 py-3 text-sm leading-relaxed",
         alertTones[tone],
         className,
       )}
@@ -252,10 +260,14 @@ export function StatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold",
         badgeTones[status] ?? "bg-surface-muted text-content-muted",
       )}
     >
+      <span
+        aria-hidden="true"
+        className="size-1.5 shrink-0 rounded-full bg-current"
+      />
       {label}
     </span>
   );
@@ -280,7 +292,7 @@ export function Progress({
       aria-valuemin={0}
       aria-valuemax={max}
       aria-label={label}
-      className="h-1.5 w-full overflow-hidden rounded-full bg-surface-muted"
+      className="h-2 w-full overflow-hidden rounded-full bg-surface-muted"
     >
       <div
         className="h-full rounded-full bg-accent transition-[width] duration-300"
@@ -307,15 +319,24 @@ export function EmptyState({
   title,
   description,
   action,
+  headingLevel = 2,
 }: {
   title: string;
   description: string;
   action?: React.ReactNode;
+  headingLevel?: 1 | 2;
 }) {
   return (
     <div className="rounded-card border border-border-subtle bg-surface px-6 py-12 text-center shadow-[var(--shadow-card)]">
       <div className="mx-auto max-w-sm">
-        <p className="text-base font-semibold text-content">{title}</p>
+        <span className="mx-auto mb-4 grid size-12 place-items-center rounded-2xl bg-accent-soft text-accent">
+          <Icon name="report" className="size-6" />
+        </span>
+        {headingLevel === 1 ? (
+          <h1 className="text-xl font-semibold text-content">{title}</h1>
+        ) : (
+          <h2 className="text-base font-semibold text-content">{title}</h2>
+        )}
         <p className="mt-1.5 text-sm leading-relaxed text-content-muted">
           {description}
         </p>

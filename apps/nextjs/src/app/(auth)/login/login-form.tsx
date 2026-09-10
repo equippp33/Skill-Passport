@@ -13,7 +13,13 @@ const initialState: AuthFormState = { error: null };
 function SubmitButton({ label, busy }: { label: string; busy: string }) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" size="lg" className="w-full" disabled={pending}>
+    <Button
+      type="submit"
+      size="lg"
+      className="w-full"
+      disabled={pending}
+      aria-busy={pending}
+    >
       {pending ? busy : label}
     </Button>
   );

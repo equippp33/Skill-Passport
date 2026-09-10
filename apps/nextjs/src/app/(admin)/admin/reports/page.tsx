@@ -39,8 +39,10 @@ export default async function AdminReportsPage() {
 
   return (
     <>
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
+      <div className="page-heading">
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          Reports
+        </h1>
         <p className="mt-1 text-sm text-content-muted">
           {reports.length} candidate{reports.length === 1 ? "" : "s"}
           {scored.length > 0 ? ` · ${scored.length} scored` : ""}
@@ -62,11 +64,11 @@ export default async function AdminReportsPage() {
         <ul className="space-y-3">
           {reports.map((report) => (
             <li key={report.attemptId}>
-              <Card>
+              <Card className="transition-colors hover:border-border-strong">
                 <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1 basis-48">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="truncate text-sm font-semibold">
+                      <h2 className="text-base font-semibold">
                         {report.candidateName}
                       </h2>
                       <StatusBadge
@@ -78,7 +80,7 @@ export default async function AdminReportsPage() {
                       />
                     </div>
 
-                    <p className="mt-1 truncate text-sm text-content-muted">
+                    <p className="mt-1 text-sm text-content-muted">
                       {report.interviewTitle} ·{" "}
                       {report.candidateEmail ?? "no email"} ·{" "}
                       {formatSpokenLanguages(

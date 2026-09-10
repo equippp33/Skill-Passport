@@ -2,7 +2,7 @@ import { Card, CardContent, Skeleton } from "~/components/ui";
 
 export default function Loading() {
   return (
-    <div className="mx-auto max-w-2xl space-y-5">
+    <div className="candidate-main space-y-5">
       <Skeleton className="h-4 w-40" />
       <Card>
         <CardContent className="space-y-3 pt-5">

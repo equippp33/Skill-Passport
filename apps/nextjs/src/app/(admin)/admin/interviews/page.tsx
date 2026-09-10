@@ -21,9 +21,11 @@ export default async function AdminInterviewsPage({
 
   return (
     <>
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="page-heading flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Interviews</h1>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            Interviews
+          </h1>
           <p className="mt-1 text-sm text-content-muted">
             {interviews.length} in total.
           </p>
@@ -47,11 +49,11 @@ export default async function AdminInterviewsPage({
         <ul className="space-y-3">
           {interviews.map((interview) => (
             <li key={interview.id}>
-              <Card>
+              <Card className="transition-colors hover:border-border-strong">
                 <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1 basis-48">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="truncate text-sm font-semibold">
+                      <h2 className="text-base font-semibold">
                         {interview.title}
                       </h2>
                       <span
