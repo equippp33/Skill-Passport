@@ -31,7 +31,14 @@ const config: NextConfig = {
   /** Typecheck runs as its own Turborepo task, but keep builds honest too. */
   typescript: { ignoreBuildErrors: false },
 
-  serverExternalPackages: ["postgres"],
+  /**
+   * Left out of the bundle and required at runtime instead.
+   *
+   * `puppeteer-core` resolves parts of itself dynamically, which a bundler
+   * cannot follow; `postgres` ships native-ish internals for the same
+   * reason. Both still get traced into the standalone output.
+   */
+  serverExternalPackages: ["postgres", "puppeteer-core"],
 };
 
 export default config;

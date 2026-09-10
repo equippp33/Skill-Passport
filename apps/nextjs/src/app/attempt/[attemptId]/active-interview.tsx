@@ -166,6 +166,8 @@ export function ActiveInterview({
   const autoStartedForTurnRef = useRef<number | null>(null);
   const playedForTurnRef = useRef<number | null>(null);
   const startRecordingFn = recorder.startRecording;
+  const attachQuestion = recorder.attachQuestionAudio;
+  const startQuestionCapture = recorder.startQuestionCapture;
 
   /**
    * Forget that this turn has already been played and recorded.
@@ -609,6 +611,13 @@ export function ActiveInterview({
     let timer: ReturnType<typeof setTimeout> | null = null;
     const el = audioRef.current;
 
+    // Route the player through the recorder's mixer and start the webcam
+    // BEFORE the question is spoken, so the clip an admin watches contains
+    // the question as well as the answer. Both are best-effort: neither
+    // failing stops the question from playing.
+    attachQuestion(el);
+    startQuestionCapture();
+
     if (el && turnRef.current?.questionAudioId) {
       el.currentTime = 0;
       void el.play().catch(() => {
@@ -627,7 +636,7 @@ export function ActiveInterview({
       if (timer) clearTimeout(timer);
       clearTimeout(backstop);
     };
-  }, [turnNumber, phase, beginAnswer]);
+  }, [turnNumber, phase, beginAnswer, attachQuestion, startQuestionCapture]);
 
   async function handleRetryAudio() {
     if (!turn) return;
@@ -822,6 +831,11 @@ export function ActiveInterview({
                 <audio
                   ref={audioRef}
                   src={`/api/media/${turn.questionAudioId}?attempt=${attemptId}`}
+                  // Second attempt at starting the webcam. On the first
+                  // question the media stream can still be resolving when
+                  // the effect above runs, and by playback it is ready.
+                  // Idempotent, so this is free when it already started.
+                  onPlay={startQuestionCapture}
                   // Recording starts when the question finishes playing.
                   // Without this the candidate is left on "getting ready".
                   onEnded={beginAnswer}

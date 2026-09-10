@@ -52,6 +52,24 @@ change you would rather not rebuild for.
 default binds to localhost, which inside a container means nothing outside it
 can connect.
 
+## PDF export
+
+The candidate report downloads as a PDF, rendered by the Chromium the
+runtime stage installs. `CHROMIUM_PATH` already points at it.
+
+The Noto font packages beside it are load-bearing, not padding: reports
+carry whatever language the candidate answered in, and Alpine ships no
+Indic fonts. Without them Hindi, Telugu and Tamil render as empty boxes —
+the text is in the file and looks fine to a grep, and wrong to a reader.
+
+Chromium is also the reason the image is a few hundred megabytes rather
+than tens. It is the only way to get a real download with correct shaping
+for these scripts; the JavaScript PDF libraries do no complex text layout
+and would silently mangle every non-Latin transcript.
+
+If Chromium is missing the app still runs — the export returns a 501 and
+the button says so, rather than the page failing.
+
 ## Migrations
 
 The image deliberately does not run them. Schema changes are a deploy step

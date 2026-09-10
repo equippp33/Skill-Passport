@@ -62,7 +62,34 @@ RUN pnpm --filter @skill-passport/nextjs exec next build
 # Runtime. No pnpm, no node_modules, no source — just the traced server.
 # ---------------------------------------------------------------------------
 FROM node:22.14.0-alpine AS runner
-RUN apk add --no-cache libc6-compat
+
+# Chromium renders the candidate report to PDF (see src/server/pdf.ts).
+#
+# The font list is not padding. Reports contain whatever language the
+# candidate answered in, and Alpine ships no Indic fonts — without these the
+# PDF renders Hindi, Telugu and Tamil as empty boxes. Verified locally: the
+# exported file embeds a subset of an Indic-capable font, and would embed
+# nothing to shape with here.
+RUN apk add --no-cache \
+    libc6-compat \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ttf-freefont \
+    font-noto \
+    font-noto-devanagari \
+    font-noto-bengali \
+    font-noto-gujarati \
+    font-noto-kannada \
+    font-noto-malayalam \
+    font-noto-oriya \
+    font-noto-gurmukhi \
+    font-noto-tamil \
+    font-noto-telugu
+
+# puppeteer-core ships no browser; this is the one it drives.
+ENV CHROMIUM_PATH=/usr/bin/chromium
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

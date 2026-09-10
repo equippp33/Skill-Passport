@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "with-env": "dotenv -e ../../.env --",
-    "dev": "pnpm with-env next dev --port 3000",
+    "dev": "pnpm with-env node scripts/dev.mjs",
     "build": "pnpm with-env next build",
     "start": "pnpm with-env next start",
     "clean": "git clean -xdf .cache .next .turbo node_modules",
@@ -33,6 +33,7 @@
     "next": "catalog:",
     "openai": "^7.10.0",
     "postgres": "^3.4.9",
+    "puppeteer-core": "^25.10.0",
     "react": "catalog:react19",
     "react-dom": "catalog:react19",
     "server-only": "^0.0.1",

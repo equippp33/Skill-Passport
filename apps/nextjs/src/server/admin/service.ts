@@ -390,3 +390,62 @@ export async function getClipDurations(
   }
   return durations;
 }
+
+/**
+ * Every candidate across every interview this admin owns.
+ *
+ * The interview pages answer "how is this interview going"; this answers
+ * "who has been assessed", which is the question you have when you are
+ * looking for one person rather than one interview.
+ *
+ * Spoken languages come from the same aggregate the dialog uses, so a row
+ * reads identically in both places.
+ */
+export interface ReportRow {
+  attemptId: string;
+  candidateName: string;
+  candidateEmail: string | null;
+  candidatePhone: string | null;
+  status: string;
+  overallScore: number | null;
+  awayCount: number;
+  language: string | null;
+  spokenLanguages: SpokenLanguage[];
+  interviewId: string;
+  interviewTitle: string;
+  createdAt: Date;
+  completedAt: Date | null;
+}
+
+export async function listReports(adminId: string): Promise<ReportRow[]> {
+  const rows = await db
+    .select({
+      attemptId: interviewAttemptsTable.id,
+      candidateName: interviewAttemptsTable.candidateName,
+      candidateEmail: interviewAttemptsTable.candidateEmail,
+      candidatePhone: interviewAttemptsTable.candidatePhone,
+      status: interviewAttemptsTable.status,
+      overallScore: interviewAttemptsTable.overallScore,
+      awayCount: interviewAttemptsTable.awayCount,
+      language: interviewAttemptsTable.language,
+      interviewId: interviewsTable.id,
+      interviewTitle: interviewsTable.title,
+      createdAt: interviewAttemptsTable.createdAt,
+      completedAt: interviewAttemptsTable.completedAt,
+    })
+    .from(interviewAttemptsTable)
+    .innerJoin(
+      interviewsTable,
+      eq(interviewAttemptsTable.interviewId, interviewsTable.id),
+    )
+    .where(eq(interviewsTable.createdByUserId, adminId))
+    .orderBy(desc(interviewAttemptsTable.createdAt))
+    .limit(500);
+
+  const spoken = await getSpokenLanguages(rows.map((r) => r.attemptId));
+
+  return rows.map((row) => ({
+    ...row,
+    spokenLanguages: spoken.get(row.attemptId) ?? [],
+  }));
+}

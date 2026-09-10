@@ -34,10 +34,15 @@ export default async function AdminLayout({
         {m.app.skipToContent}
       </a>
 
-      <AdminSidebar />
+      <div data-print-hide>
+        <AdminSidebar />
+      </div>
 
-      <div className="lg:pl-16">
-        <header className="sticky top-0 z-20 border-b border-border-subtle bg-canvas/80 backdrop-blur">
+      <div className="lg:pl-16 print:pl-0">
+        <header
+          data-print-hide
+          className="sticky top-0 z-20 border-b border-border-subtle bg-canvas/80 backdrop-blur"
+        >
           <div className="mx-auto flex h-16 max-w-5xl items-center justify-between gap-4 px-4 sm:px-8">
             {/* Only shown where the rail is hidden. */}
             <Link

@@ -120,6 +120,28 @@ export function useAnswerRecorder({
    */
   const hasCameraRef = useRef(false);
 
+  /**
+   * Web Audio graph that mixes the interviewer's voice into the video.
+   *
+   * The question is spoken through an <audio> element. Left alone, the
+   * webcam recording captures only the candidate, so playing it back is a
+   * series of answers to questions you cannot hear — long silences where
+   * the interviewer was talking. Routing the element's output into the
+   * video recorder's audio track fixes that digitally, which also works on
+   * headphones and survives the microphone's echo cancellation.
+   *
+   * The speech-to-text recorder keeps the RAW microphone track. Mixing the
+   * question into it would transcribe the interviewer as part of the
+   * answer, which would wreck both the scoring and the repeat detection.
+   */
+  const mixContextRef = useRef<AudioContext | null>(null);
+  const mixDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(
+    null,
+  );
+  const questionSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const questionElementRef = useRef<HTMLAudioElement | null>(null);
+  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+
   const streamRef = useRef<MediaStream | null>(null);
   const audioRecorderRef = useRef<MediaRecorder | null>(null);
   const videoRecorderRef = useRef<MediaRecorder | null>(null);
@@ -182,10 +204,67 @@ export function useAnswerRecorder({
   const stopTracks = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    // The mic node points at tracks that no longer exist. The context and
+    // the question source are kept: the <audio> element outlives this, and
+    // it can only be routed once.
+    micSourceRef.current?.disconnect();
+    micSourceRef.current = null;
     previewStreamRef.current = null;
     setPreviewStream(null);
     setStream(null);
   }, []);
+
+  /** The shared context and mix bus, created on first use. */
+  const ensureMixBus =
+    useCallback((): MediaStreamAudioDestinationNode | null => {
+      if (mixDestinationRef.current) return mixDestinationRef.current;
+
+      const AudioCtx =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!AudioCtx) return null;
+
+      try {
+        const context = new AudioCtx();
+        mixContextRef.current = context;
+        mixDestinationRef.current = context.createMediaStreamDestination();
+        return mixDestinationRef.current;
+      } catch {
+        // Mixing is an enhancement; the recording still works without it.
+        return null;
+      }
+    }, []);
+
+  /**
+   * Route the question player into the mix.
+   *
+   * `createMediaElementSource` can only be called once per element, and
+   * once called the element's audio flows ONLY through the graph — so the
+   * connection to `destination` is what keeps the candidate able to hear
+   * the question at all, and is not optional.
+   */
+  const attachQuestionAudio = useCallback(
+    (element: HTMLAudioElement | null) => {
+      if (!element || questionElementRef.current === element) return;
+
+      const bus = ensureMixBus();
+      const context = mixContextRef.current;
+      if (!bus || !context) return;
+
+      try {
+        const source = context.createMediaElementSource(element);
+        source.connect(context.destination);
+        source.connect(bus);
+        questionSourceRef.current = source;
+        questionElementRef.current = element;
+      } catch {
+        // Already routed, or unsupported. The element keeps playing
+        // normally; the video just will not carry the question.
+      }
+    },
+    [ensureMixBus],
+  );
 
   const clearSegmentTimer = useCallback(() => {
     if (segmentTimerRef.current) {
@@ -331,6 +410,49 @@ export function useAnswerRecorder({
     }
   }, [withVideo]);
 
+  /**
+   * Camera track + the mix bus, as one stream for the video recorder.
+   *
+   * Returns null when there is nothing to gain — no bus, or no camera — so
+   * the caller can just use the capture stream unchanged.
+   */
+  const buildMixedVideoStream = useCallback(
+    (capture: MediaStream): MediaStream | null => {
+      const videoTracks = capture.getVideoTracks();
+      if (videoTracks.length === 0) return null;
+
+      const bus = ensureMixBus();
+      const context = mixContextRef.current;
+      if (!bus || !context) return null;
+
+      // Autoplay policy can leave the context suspended; a suspended graph
+      // produces silence, and — because the question player is routed
+      // through it — silence the candidate would notice.
+      if (context.state === "suspended") void context.resume();
+
+      try {
+        // The microphone joins the bus once and stays; connecting it again
+        // per answer would stack gain with every question.
+        if (!micSourceRef.current) {
+          const audioTracks = capture.getAudioTracks();
+          if (audioTracks.length === 0) return null;
+          micSourceRef.current = context.createMediaStreamSource(
+            new MediaStream(audioTracks),
+          );
+          micSourceRef.current.connect(bus);
+        }
+
+        const mixedAudio = bus.stream.getAudioTracks()[0];
+        if (!mixedAudio) return null;
+
+        return new MediaStream([...videoTracks, mixedAudio]);
+      } catch {
+        return null;
+      }
+    },
+    [ensureMixBus],
+  );
+
   const startRecording = useCallback(async (): Promise<boolean> => {
     // Re-entry guard: never run two recordings at once.
     if (
@@ -353,15 +475,20 @@ export function useAnswerRecorder({
       return false;
     }
 
+    const videoAlreadyRolling = videoRecorderRef.current?.state === "recording";
+
     revokePreview();
     setPreviewUrl(null);
     setBlob(null);
-    setVideoBlob(null);
     audioChunksRef.current = [];
-    videoChunksRef.current = [];
     finishedAudioRef.current = null;
-    finishedVideoRef.current = null;
     setElapsedSeconds(0);
+    if (!videoAlreadyRolling) {
+      setVideoBlob(null);
+      videoChunksRef.current = [];
+      finishedVideoRef.current = null;
+      videoRecorderRef.current = null;
+    }
 
     // --- audio-only recorder: this is what gets transcribed ---------------
     const audioTracks = stream.getAudioTracks();
@@ -451,19 +578,28 @@ export function useAnswerRecorder({
     const audioRecorder = startSegment();
     if (!audioRecorder) return false;
 
-    // One for the audio recorder, plus one if the video recorder starts.
+    // One for the audio recorder, plus one if the video recorder is
+    // running — which it usually already is, having been started when the
+    // question began playing.
     let startedRecorders = 1;
-    videoRecorderRef.current = null;
+    if (videoRecorderRef.current?.state === "recording") startedRecorders += 1;
 
     // --- video recorder: best-effort record of the answer -----------------
     const videoMime = pickMimeType(VIDEO_MIME_TYPES);
     if (
+      videoRecorderRef.current?.state !== "recording" &&
       hasCameraRef.current &&
       videoMime &&
       stream.getVideoTracks().length > 0
     ) {
       try {
-        const videoRecorder = new MediaRecorder(stream, {
+        // Camera picture, plus the mixed audio so the recording carries the
+        // interviewer's voice as well as the candidate's. If the mix could
+        // not be built, fall back to the plain stream: a video with only
+        // the candidate is much better than no video.
+        const mixed = buildMixedVideoStream(stream);
+
+        const videoRecorder = new MediaRecorder(mixed ?? stream, {
           mimeType: videoMime,
           videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
           audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
@@ -536,7 +672,69 @@ export function useAnswerRecorder({
     clearSegmentTimer,
     maxSeconds,
     settleStop,
+    buildMixedVideoStream,
   ]);
+
+  /**
+   * Begin the webcam recording for this turn, before the question is read
+   * out, so the clip contains the interviewer asking it.
+   *
+   * Only the video starts here. The speech-to-text recorder waits for
+   * `startRecording()` once the question has finished, so the transcript
+   * is the candidate's answer and nothing else.
+   *
+   * Idempotent and best-effort: no camera, or a recorder that will not
+   * start, simply means the answer is recorded from `startRecording()` as
+   * before.
+   */
+  const startQuestionCapture = useCallback((): boolean => {
+    if (videoRecorderRef.current?.state === "recording") return true;
+    if (!hasCameraRef.current) return false;
+
+    const stream = streamRef.current;
+    if (!stream || stream.getVideoTracks().length === 0) return false;
+
+    const videoMime = pickMimeType(VIDEO_MIME_TYPES);
+    if (!videoMime) return false;
+
+    videoChunksRef.current = [];
+    finishedVideoRef.current = null;
+    setVideoBlob(null);
+
+    try {
+      const mixed = buildMixedVideoStream(stream);
+      const videoRecorder = new MediaRecorder(mixed ?? stream, {
+        mimeType: videoMime,
+        videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+        audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
+      });
+
+      videoRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) videoChunksRef.current.push(event.data);
+      };
+      videoRecorder.onstop = () => {
+        const type = videoRecorder.mimeType || videoMime;
+        const recorded = new Blob(videoChunksRef.current, { type });
+        videoChunksRef.current = [];
+        finishedVideoRef.current = recorded;
+        setVideoBlob(recorded);
+        settleStop();
+      };
+      videoRecorder.onerror = () => {
+        videoChunksRef.current = [];
+        finishedVideoRef.current = null;
+        setVideoBlob(null);
+        settleStop();
+      };
+
+      videoRecorderRef.current = videoRecorder;
+      videoRecorder.start(1000);
+      return true;
+    } catch {
+      videoRecorderRef.current = null;
+      return false;
+    }
+  }, [buildMixedVideoStream, settleStop]);
 
   /**
    * Stop and resolve with the finished blobs.
@@ -633,6 +831,8 @@ export function useAnswerRecorder({
     isRecording: state === "recording",
     hasRecording: state === "recorded" && blob !== null,
     requestPermission,
+    attachQuestionAudio,
+    startQuestionCapture,
     startRecording,
     stopRecording,
     reset,

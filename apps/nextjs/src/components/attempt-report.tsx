@@ -32,6 +32,7 @@ export function AttemptReport({
   m,
   showCandidate = false,
   clipDurations,
+  appOrigin,
 }: {
   attempt: InterviewAttempt;
   turns: InterviewTurn[];
@@ -46,6 +47,12 @@ export function AttemptReport({
    * before this was captured simply have no length to show.
    */
   clipDurations?: Record<string, number>;
+  /**
+   * Absolute origin, so the printed report can carry links that work when
+   * the PDF is opened somewhere other than the browser that made it. Absent
+   * on the candidate's own copy, which has no print view.
+   */
+  appOrigin?: string;
 }) {
   const language = attempt.language
     ? INTERVIEW_LANGUAGES[attempt.language as InterviewLanguageKey]
@@ -245,6 +252,26 @@ export function AttemptReport({
                         .filter(Boolean)
                         .join(" · ")}
                     </p>
+
+                    {/* A PDF cannot play a video, so the printed copy gets
+                        the address instead. Rendered as a real anchor so it
+                        stays clickable in the exported file, and absolute so
+                        it still resolves away from this browser. */}
+                    {appOrigin ? (
+                      <p className="hidden text-xs break-all print:block">
+                        Recording:{" "}
+                        {/* No `target`: Chromium drops it when converting
+                            to a PDF link annotation (verified — the output
+                            is byte-identical with and without it). Whether
+                            a PDF link opens in a new tab is the viewer's
+                            decision; the format has no way to ask. */}
+                        <a
+                          href={`${appOrigin}/api/media/${turn.answerVideoId}?attempt=${attempt.id}`}
+                        >
+                          {`${appOrigin}/api/media/${turn.answerVideoId}?attempt=${attempt.id}`}
+                        </a>
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
 

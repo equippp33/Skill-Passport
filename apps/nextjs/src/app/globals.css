@@ -129,3 +129,67 @@ dialog[open]::backdrop {
     transition-duration: 0.01ms !important;
   }
 }
+
+/**
+ * Printing a report.
+ *
+ * The admin report doubles as the PDF: "Download PDF" is the browser's own
+ * print-to-PDF, because these documents carry Indic scripts that need real
+ * text shaping and the browser is the only thing in the stack that does it
+ * properly. So the page has to survive being put on paper.
+ */
+@media print {
+  /* Ink, not screen: white ground, black text, no shadows to render as
+     grey smears. */
+  :root {
+    --canvas: #fff;
+    --surface: #fff;
+    --surface-muted: #fff;
+    --content: #000;
+    --content-muted: #444;
+    --border-subtle: #d4d4d4;
+    --border-strong: #b0b0b0;
+    --shadow-card: none;
+    --shadow-raised: none;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  /* The rail is fixed and the content column is padded around it; neither
+     means anything on a page. */
+  [data-print-hide] {
+    display: none !important;
+  }
+
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  /* A player prints as a black rectangle. The link beside it is what
+     carries the recording into the PDF. */
+  video,
+  audio {
+    display: none !important;
+  }
+
+  /* Keep a question and its answer together rather than split across a
+     page boundary, which is where a report becomes hard to read. */
+  section > div,
+  article,
+  li {
+    break-inside: avoid;
+  }
+
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+  }
+
+  /* NOTE: deliberately no `a::after { content: attr(href) }`. The recording
+     links already use the URL as their own text, so appending it would
+     print every address twice. */
+}
