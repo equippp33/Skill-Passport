@@ -32,10 +32,12 @@
     "VERCEL",
     "VERCEL_ENV",
     "VERCEL_URL",
+    "VERCEL_PROJECT_PRODUCTION_URL",
     "SKIP_ENV_VALIDATION",
     "NEXT_BUILD"
   ],
   "globalEnv": [
+    "APP_URL",
     "UI_LANGUAGE",
     "INTERVIEW_LANGUAGE",
     "DATABASE_URL",

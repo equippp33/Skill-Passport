@@ -1,29 +1,23 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button, Input } from "~/components/ui";
 
 /**
  * The shareable candidate link.
  *
- * The absolute URL is built from `window.location.origin` so it is correct on
- * localhost, a preview deployment and production without a configured base
- * URL. It is written straight to the input's DOM value rather than held in
- * state: setting state from an effect would trigger a second render pass on
- * every mount for a value that never changes afterwards.
+ * The URL arrives absolute and already resolved on the server — see
+ * `~/server/app-url`. It used to be assembled here from
+ * `window.location.origin`, which meant the link was whatever host this
+ * particular admin had loaded, and was blank until hydration.
  */
-export function ShareLink({ path }: { path: string }) {
+export function ShareLink({ url }: { url: string }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    const el = inputRef.current;
-    if (el) el.value = `${window.location.origin}${path}`;
-  }, [path]);
-
   async function copy() {
-    const value = inputRef.current?.value ?? path;
+    const value = inputRef.current?.value ?? url;
     try {
       await navigator.clipboard.writeText(value);
       setCopied(true);
@@ -39,7 +33,7 @@ export function ShareLink({ path }: { path: string }) {
       <Input
         ref={inputRef}
         readOnly
-        defaultValue={path}
+        defaultValue={url}
         onFocus={(e) => e.currentTarget.select()}
         aria-label="Candidate link"
         className="min-w-0 flex-1 font-mono text-xs"

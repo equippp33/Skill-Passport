@@ -1,3 +1,4 @@
+import { appUrl } from "~/server/app-url";
 import { getInterviewDetails } from "~/server/admin/service";
 import { uiLanguage } from "~/server/language";
 import { uuidSchema } from "~/server/interview/validation";
@@ -23,9 +24,16 @@ export async function InterviewDialogSlot({
   const language = uiLanguage().key;
 
   const parsed = interviewId ? uuidSchema.safeParse(interviewId) : null;
-  const details = parsed?.success
-    ? await getInterviewDetails(adminId, parsed.data)
-    : null;
+  const [details, appOrigin] = await Promise.all([
+    parsed?.success ? getInterviewDetails(adminId, parsed.data) : null,
+    appUrl(),
+  ]);
 
-  return <InterviewDialog details={details} uiLanguage={language} />;
+  return (
+    <InterviewDialog
+      details={details}
+      uiLanguage={language}
+      appOrigin={appOrigin}
+    />
+  );
 }

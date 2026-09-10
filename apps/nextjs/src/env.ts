@@ -27,6 +27,21 @@ export const env = createEnv({
     NODE_ENV: z
       .enum(["development", "production", "test"])
       .default("development"),
+    /**
+     * Override for the origin used in candidate links.
+     *
+     * Not needed for either normal case: development reads the origin off
+     * the request, and production uses the domain compiled into
+     * `~/server/app-url`. Set this for anything else — a staging host, or a
+     * domain change you would rather not rebuild for.
+     *
+     * A trailing slash is stripped, so links never double up.
+     */
+    APP_URL: z
+      .string()
+      .url()
+      .optional()
+      .transform((v) => v?.replace(/\/+$/, "")),
 
     // --- OpenAI (question generation + answer evaluation) ---
     /**

@@ -29,10 +29,13 @@ import { ShareLink } from "./share-link";
 export function InterviewDialog({
   details,
   uiLanguage,
+  appOrigin,
 }: {
   /** Null when no `?interview=` is set — the dialog stays closed. */
   details: InterviewDetails | null;
   uiLanguage: TranslatedLanguageKey;
+  /** Resolved on the server so the shared link is the deployed one. */
+  appOrigin: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -96,7 +99,7 @@ export function InterviewDialog({
               Share this with as many candidates as you like. Each one gets a
               separate attempt and cannot see anyone else&apos;s.
             </p>
-            <ShareLink path={`/i/${details.publicToken}`} />
+            <ShareLink url={`${appOrigin}/i/${details.publicToken}`} />
             {!details.isOpen ? (
               <p className="text-sm text-danger">
                 This interview is closed — the link will not accept new

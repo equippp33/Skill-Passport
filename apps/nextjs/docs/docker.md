@@ -43,6 +43,11 @@ Required at runtime (see `apps/nextjs/.env.example` for the full list):
 | `CLOUDFLARE_R2_*`                   | recording storage                  |
 | `UI_LANGUAGE`, `INTERVIEW_LANGUAGE` | app chrome and interview content   |
 
+Candidate links use the production domain compiled into
+`src/server/app-url.ts`, so a normal deployment needs no URL configuration.
+Set `APP_URL` only to point somewhere else — a staging host, or a domain
+change you would rather not rebuild for.
+
 `PORT` and `HOSTNAME` are already set. `HOSTNAME=0.0.0.0` matters: Next's
 default binds to localhost, which inside a container means nothing outside it
 can connect.
