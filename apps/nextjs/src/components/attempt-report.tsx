@@ -11,8 +11,9 @@ import { INTERVIEW_LANGUAGES } from "~/config/languages";
 import type { InterviewLanguageKey } from "~/config/languages";
 import type { WorkSkillId } from "~/config/work-skills";
 import type { InterviewAttempt, InterviewTurn } from "~/server/db/schema";
-import { aggregateSkillScores } from "~/server/attempt/service";
-import { formatDate } from "~/lib/utils";
+import { aggregateSkillScores } from "~/lib/scoring";
+import { spokenLanguages } from "~/lib/spoken-languages";
+import { formatDate, formatDateTime, formatDuration } from "~/lib/utils";
 
 /**
  * The interview report.
@@ -30,11 +31,21 @@ export function AttemptReport({
   turns,
   m,
   showCandidate = false,
+  clipDurations,
 }: {
   attempt: InterviewAttempt;
   turns: InterviewTurn[];
   m: Messages;
   showCandidate?: boolean;
+  /**
+   * Recorded length per media id, in milliseconds.
+   *
+   * Comes from the recorder rather than the file: MediaRecorder WebM has no
+   * duration header, so the player's own scrubber cannot show a total until
+   * the clip has been played all the way through. Optional — clips recorded
+   * before this was captured simply have no length to show.
+   */
+  clipDurations?: Record<string, number>;
 }) {
   const language = attempt.language
     ? INTERVIEW_LANGUAGES[attempt.language as InterviewLanguageKey]
@@ -45,6 +56,7 @@ export function AttemptReport({
     (x) => x.kind === "skill" && x.status === "completed",
   );
   const skillScores = aggregateSkillScores(turns);
+  const spoken = spokenLanguages(turns);
   const probe = turns.find((x) => x.kind === "language_probe");
 
   return (
@@ -56,9 +68,19 @@ export function AttemptReport({
             <Detail label="Email" value={attempt.candidateEmail ?? "—"} />
             <Detail label="Phone" value={attempt.candidatePhone ?? "—"} />
             <Detail
-              label="Language"
+              label="Interview language"
               value={
                 language ? `${language.displayName} (${language.code})` : "—"
+              }
+            />
+            {/* What they actually spoke, which is not always the one the
+                interview was conducted in. */}
+            <Detail
+              label="Languages spoken"
+              value={
+                spoken.length > 0
+                  ? spoken.map((s) => `${s.label} (${s.turns})`).join(", ")
+                  : "—"
               }
             />
             <Detail
@@ -201,16 +223,29 @@ export function AttemptReport({
 
               <CardContent className="space-y-4">
                 {turn.answerVideoId ? (
-                  <video
-                    controls
-                    playsInline
-                    preload="none"
-                    src={`/api/media/${turn.answerVideoId}${
-                      showCandidate ? "" : `?attempt=${attempt.id}`
-                    }`}
-                    aria-label={m.result.yourAnswer}
-                    className="aspect-video w-full rounded-lg border border-border-subtle bg-content/90"
-                  />
+                  <div className="space-y-1.5">
+                    <video
+                      controls
+                      playsInline
+                      preload="none"
+                      src={`/api/media/${turn.answerVideoId}${
+                        showCandidate ? "" : `?attempt=${attempt.id}`
+                      }`}
+                      aria-label={m.result.yourAnswer}
+                      className="aspect-video w-full rounded-lg border border-border-subtle bg-content/90"
+                    />
+                    {/* Says which answer this clip is, so a recording can
+                        never be read as belonging to the wrong question. */}
+                    <p className="text-xs text-content-muted">
+                      {[
+                        `Question ${turn.turnNumber}`,
+                        clipLength(clipDurations?.[turn.answerVideoId]),
+                        `answered ${formatDateTime(turn.updatedAt)}`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                  </div>
                 ) : null}
 
                 <div>
@@ -339,4 +374,10 @@ function ListCard({
       </CardContent>
     </Card>
   );
+}
+
+/** "0:15", or nothing when the length was never captured. */
+function clipLength(durationMs: number | undefined): string | null {
+  if (!durationMs || durationMs <= 0) return null;
+  return formatDuration(Math.round(durationMs / 1000));
 }

@@ -7,7 +7,7 @@
     },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**", ".expo/**"]
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
     },
     "dev": {
       "cache": false,
@@ -29,7 +29,6 @@
   "globalPassThroughEnv": [
     "NODE_ENV",
     "CI",
-    "EXPO_TOKEN",
     "VERCEL",
     "VERCEL_ENV",
     "VERCEL_URL",

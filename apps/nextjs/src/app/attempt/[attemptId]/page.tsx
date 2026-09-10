@@ -55,6 +55,8 @@ export default async function AttemptPage({
           aiReady={isOpenAIConfigured()}
           m={m}
           languageName="your own language"
+          interviewTitle={interview.title}
+          interviewDescription={interview.description}
         />
       </main>
     );
@@ -90,7 +92,9 @@ export default async function AttemptPage({
           key: l.key,
           displayName: l.displayName,
           promptName: l.promptName,
+          symbol: l.symbol,
         }))}
+        currentLanguage={attempt.language}
         initialTurn={
           current
             ? {

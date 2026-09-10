@@ -4,12 +4,19 @@ import Link from "next/link";
 import { Card, CardContent, EmptyState, buttonClasses } from "~/components/ui";
 import { listInterviews, requireAdmin } from "~/server/admin/service";
 import { formatDate } from "~/lib/utils";
+import { InterviewDialogSlot } from "../interview-dialog-slot";
+import { OpenInterviewButton } from "../open-interview-button";
 
 export const metadata: Metadata = { title: "Interviews" };
 export const dynamic = "force-dynamic";
 
-export default async function AdminInterviewsPage() {
+export default async function AdminInterviewsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ interview?: string }>;
+}) {
   const admin = await requireAdmin("/admin/interviews");
+  const { interview: openInterviewId } = await searchParams;
   const interviews = await listInterviews(admin.id);
 
   return (
@@ -66,18 +73,19 @@ export default async function AdminInterviewsPage() {
                     </p>
                   </div>
 
-                  <Link
-                    href={`/admin/interviews/${interview.id}`}
-                    className={buttonClasses("secondary", "sm")}
-                  >
-                    Open
-                  </Link>
+                  <OpenInterviewButton
+                    interviewId={interview.id}
+                    interviewTitle={interview.title}
+                    basePath="/admin/interviews"
+                  />
                 </CardContent>
               </Card>
             </li>
           ))}
         </ul>
       )}
+
+      <InterviewDialogSlot adminId={admin.id} interviewId={openInterviewId} />
     </>
   );
 }

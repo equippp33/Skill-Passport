@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 
 /**
  * Base ESLint config for non-app workspace packages.
- * The Next.js and Expo apps use their framework presets instead.
+ * The Next.js app layers its framework preset on top.
  */
 export default tseslint.config(
   {

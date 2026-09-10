@@ -66,7 +66,7 @@ export const en = {
     expectTitle: "What to expect",
     expectSubtitle:
       "One question at a time. Listen, answer out loud, then press Next.",
-    duration: "About {minutes} minutes in total, across {count} questions.",
+    duration: "about {minutes} minutes",
     skillsCovered:
       "It assesses ten workplace skills, such as reliability, teamwork and communication.",
     answerLimit:
@@ -80,6 +80,10 @@ export const en = {
     notHiring: "This is practice only — it is not a hiring decision.",
     languageNotice:
       "The whole assessment — questions, your answers and the report — is in {language}.",
+    ownLanguageTitle: "You can answer in your own language",
+    groupHowItWorks: "How it works",
+    groupWhatYouNeed: "What you need",
+    groupYourAnswers: "Your answers",
     micCheckTitle: "Microphone check",
     micCheckSubtitle: "Grant access so the assessment can record your answers.",
     micTest: "Test microphone",
@@ -115,7 +119,7 @@ export const en = {
       "The audio could not play — you can still read the question above.",
     ready: "Ready to record",
     recording: "Recording",
-    recorded: "Recorded — review or submit",
+    recorded: "Recorded",
     uploading: "Uploading…",
     processingStatus: "Processing your answer…",
     startRecording: "Start recording",
@@ -125,20 +129,23 @@ export const en = {
     reRecord: "Re-record",
     next: "Next question",
     finish: "Finish assessment",
-    keepSpeaking: "Press next when you have finished answering.",
+    keepSpeaking: "Keep speaking — this moves on by itself when you stop.",
+    advancingIn: "Moving on in {seconds}…",
     leftTab:
       "You left the interview tab {count} time(s). This is recorded. Please stay on this page until you finish.",
     introduction: "Introduction",
     chooseLanguageTitle: "Which language would you like to continue in?",
     chooseLanguageBody:
       "We could not identify your language from that answer. Choose one and the rest of the interview will be in it.",
+    languageLabel: "Language",
+    languageHint: "Re-asks the current question",
     liveCaptions: "Live captions",
     listening: "Listening…",
-    previousTranscript: "What we heard in your last answer",
     preparing: "Getting ready…",
     tooShort: "That answer was too short. Please answer again.",
     greeting:
       "Hello, and welcome. I will ask you a few questions about how you work. Answer naturally — there are no trick questions.",
+    savingRecordings: "Saving your recordings — nearly done…",
     processingHint:
       "Transcribing and evaluating your answer. This usually takes a few seconds — keep this tab open.",
     errorTitle: "Something went wrong",

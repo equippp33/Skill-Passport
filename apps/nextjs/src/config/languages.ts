@@ -24,6 +24,12 @@ export interface InterviewLanguage {
   /** English name, used inside OpenAI prompts. */
   promptName: string;
   /**
+   * One or two glyphs from the language's own script, used as its mark in
+   * the picker. A script glyph rather than a flag: several of these share a
+   * country, and a flag would be the wrong thing to identify a language by.
+   */
+  symbol: string;
+  /**
    * Sarvam TTS speaker. Voices are language-agnostic in bulbul:v3, but this
    * allows per-language tuning without touching the service layer.
    */
@@ -32,17 +38,72 @@ export interface InterviewLanguage {
 
 /** Every language both Sarvam models can handle. */
 export const INTERVIEW_LANGUAGES = {
-  english: { code: "en-IN", displayName: "English", promptName: "English" },
-  hindi: { code: "hi-IN", displayName: "हिंदी", promptName: "Hindi" },
-  marathi: { code: "mr-IN", displayName: "मराठी", promptName: "Marathi" },
-  bengali: { code: "bn-IN", displayName: "বাংলা", promptName: "Bengali" },
-  gujarati: { code: "gu-IN", displayName: "ગુજરાતી", promptName: "Gujarati" },
-  kannada: { code: "kn-IN", displayName: "ಕನ್ನಡ", promptName: "Kannada" },
-  malayalam: { code: "ml-IN", displayName: "മലയാളം", promptName: "Malayalam" },
-  odia: { code: "od-IN", displayName: "ଓଡ଼ିଆ", promptName: "Odia" },
-  punjabi: { code: "pa-IN", displayName: "ਪੰਜਾਬੀ", promptName: "Punjabi" },
-  tamil: { code: "ta-IN", displayName: "தமிழ்", promptName: "Tamil" },
-  telugu: { code: "te-IN", displayName: "తెలుగు", promptName: "Telugu" },
+  english: {
+    code: "en-IN",
+    displayName: "English",
+    promptName: "English",
+    symbol: "Aa",
+  },
+  hindi: {
+    code: "hi-IN",
+    displayName: "हिंदी",
+    promptName: "Hindi",
+    symbol: "हि",
+  },
+  marathi: {
+    code: "mr-IN",
+    displayName: "मराठी",
+    promptName: "Marathi",
+    symbol: "म",
+  },
+  bengali: {
+    code: "bn-IN",
+    displayName: "বাংলা",
+    promptName: "Bengali",
+    symbol: "বা",
+  },
+  gujarati: {
+    code: "gu-IN",
+    displayName: "ગુજરાતી",
+    promptName: "Gujarati",
+    symbol: "ગુ",
+  },
+  kannada: {
+    code: "kn-IN",
+    displayName: "ಕನ್ನಡ",
+    promptName: "Kannada",
+    symbol: "ಕ",
+  },
+  malayalam: {
+    code: "ml-IN",
+    displayName: "മലയാളം",
+    promptName: "Malayalam",
+    symbol: "മ",
+  },
+  odia: {
+    code: "od-IN",
+    displayName: "ଓଡ଼ିଆ",
+    promptName: "Odia",
+    symbol: "ଓ",
+  },
+  punjabi: {
+    code: "pa-IN",
+    displayName: "ਪੰਜਾਬੀ",
+    promptName: "Punjabi",
+    symbol: "ਪੰ",
+  },
+  tamil: {
+    code: "ta-IN",
+    displayName: "தமிழ்",
+    promptName: "Tamil",
+    symbol: "த",
+  },
+  telugu: {
+    code: "te-IN",
+    displayName: "తెలుగు",
+    promptName: "Telugu",
+    symbol: "తె",
+  },
 } as const satisfies Record<string, InterviewLanguage>;
 
 export type InterviewLanguageKey = keyof typeof INTERVIEW_LANGUAGES;

@@ -79,6 +79,40 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/**
+ * Modal entry.
+ *
+ * Fade and a short rise — deliberately NO scale. Scaling a box full of text
+ * composites the glyphs at a fractional size for the length of the
+ * animation, which drops subpixel antialiasing and makes the whole panel
+ * look warped and smeared as it opens. A translation moves whole pixels and
+ * leaves the text crisp.
+ *
+ * Only the entry is animated. Animating a closing `<dialog>` means keeping it
+ * in the top layer until the animation ends, which is more machinery than a
+ * 150ms fade is worth — and the reduced-motion rule below neutralises both.
+ */
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+dialog[open] {
+  animation: modal-in 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+dialog[open]::backdrop {
+  animation: modal-backdrop-in 150ms ease-out;
+}
+
 /* Always show a visible focus ring for keyboard users. */
 :focus-visible {
   outline: 2px solid var(--accent);

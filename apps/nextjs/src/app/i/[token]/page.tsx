@@ -1,14 +1,6 @@
 import type { Metadata } from "next";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  EmptyState,
-} from "~/components/ui";
-import { PROBE_PROMPTS } from "~/config/greeting";
+import { Card, CardContent, EmptyState } from "~/components/ui";
 import { getInterviewByPublicToken } from "~/server/attempt/access";
 import { uiMessages } from "~/server/language";
 import { StartForm } from "./start-form";
@@ -22,6 +14,12 @@ export const dynamic = "force-dynamic";
  * Not behind auth — anyone with the link can start. The link itself is the
  * credential, which is why the token is 256 bits of randomness rather than a
  * database id.
+ *
+ * Deliberately asks one thing: who are you. The briefing — how long it
+ * takes, what is recorded, that any language is welcome — is on the next
+ * page, where it sits next to the microphone check and the consent box it
+ * relates to. Splitting it across both pages meant reading the same points
+ * twice before answering a single question.
  */
 export default async function CandidateLandingPage({
   params,
@@ -45,38 +43,30 @@ export default async function CandidateLandingPage({
 
   return (
     <main className="mx-auto max-w-lg space-y-6 px-4 py-12">
-      <div className="text-center">
-        <p className="text-sm text-content-muted">{m.app.name}</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+      <header className="text-center">
+        <p className="text-xs font-medium tracking-widest text-content-muted uppercase">
+          {m.app.name}
+        </p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-balance">
           {interview.title}
         </h1>
         {interview.description ? (
-          <p className="mt-2 text-sm text-content-muted">
+          <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-content-muted text-pretty">
             {interview.description}
           </p>
         ) : null}
-      </div>
+      </header>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Before you start</CardTitle>
-          <CardDescription>
-            You will answer {interview.questionCount} short questions out loud.
-            Your microphone and camera are recorded.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Shown before any language is known, so it is offered in several
-              scripts rather than assuming the candidate reads English. */}
-          <div className="space-y-1.5 rounded-lg bg-surface-muted px-4 py-3">
-            <p className="text-xs font-medium tracking-wide text-content-muted uppercase">
-              You can answer in your own language
+        <CardContent className="space-y-5 pt-6">
+          <div>
+            <h2 className="text-base font-semibold tracking-tight">
+              Your details
+            </h2>
+            <p className="mt-1 text-sm leading-relaxed text-content-muted">
+              So we know whose assessment this is. You will see what to expect
+              on the next page before anything is recorded.
             </p>
-            {PROBE_PROMPTS.slice(0, 4).map((p) => (
-              <p key={p.code} lang={p.code} className="text-sm leading-relaxed">
-                {p.text}
-              </p>
-            ))}
           </div>
 
           <StartForm token={token} />

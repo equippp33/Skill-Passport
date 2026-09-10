@@ -104,6 +104,8 @@ export async function storeAudio(input: {
   kind: "question" | "answer";
   mimeType: string;
   data: Buffer;
+  /** Recorded length, when the recorder measured one. */
+  durationMs?: number | null;
 }): Promise<string> {
   const audioId = crypto.randomUUID();
   const key = buildAudioKey({
@@ -124,6 +126,7 @@ export async function storeAudio(input: {
         kind: input.kind,
         mimeType: input.mimeType,
         sizeBytes: input.data.byteLength,
+        durationMs: input.durationMs ?? null,
         storageKey: key,
       })
       .returning({ id: interviewAudioTable.id });

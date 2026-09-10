@@ -31,3 +31,12 @@ export const MIN_ANSWER_BLOB_BYTES = 1024;
  * long before it.
  */
 export const AUTO_START_BACKSTOP_MS = 60_000;
+
+/**
+ * Silence after speaking that ends the answer and moves on by itself.
+ *
+ * Long enough to sit through a mid-answer pause for thought, short enough
+ * that finishing a sentence and waiting feels like a conversation rather
+ * than a form. The candidate sees it count down and can still press Next.
+ */
+export const SILENCE_ADVANCE_SECONDS = 4;

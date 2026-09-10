@@ -1,9 +1,9 @@
 /**
  * Code shared by every app in the monorepo.
  *
- * Keep this package platform-agnostic: it is consumed by both the Next.js web
- * app (bundled via `transpilePackages`) and the Expo app (bundled by Metro),
- * so it must not import from `next`, `react-native`, or the DOM.
+ * Keep this package framework-agnostic: it is consumed by the Next.js app
+ * via `transpilePackages` and should stay usable from a script, a worker or
+ * a second app later, so it must not import from `next` or the DOM.
  */
 
 export const APP_NAME = "Skill Passport";

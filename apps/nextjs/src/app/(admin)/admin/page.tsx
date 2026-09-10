@@ -1,22 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  EmptyState,
-  buttonClasses,
-} from "~/components/ui";
+import { Card, CardContent, EmptyState, buttonClasses } from "~/components/ui";
 import {
   getAdminStats,
   listInterviews,
   requireAdmin,
 } from "~/server/admin/service";
 import { formatDate } from "~/lib/utils";
-import { CreateInterviewForm } from "./create-form";
+import { CreateInterview } from "./create-interview";
+import { InterviewDialogSlot } from "./interview-dialog-slot";
+import { OpenInterviewButton } from "./open-interview-button";
 
 export const metadata: Metadata = { title: "Overview" };
 export const dynamic = "force-dynamic";
@@ -45,8 +39,13 @@ function Stat({
   );
 }
 
-export default async function AdminOverviewPage() {
+export default async function AdminOverviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ interview?: string }>;
+}) {
   const admin = await requireAdmin("/admin");
+  const { interview: openInterviewId } = await searchParams;
   const [stats, interviews] = await Promise.all([
     getAdminStats(admin.id),
     listInterviews(admin.id),
@@ -95,15 +94,8 @@ export default async function AdminOverviewPage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>New interview</CardTitle>
-          <CardDescription>
-            Every candidate who opens the link gets their own attempt, in
-            whichever language they speak.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <CreateInterviewForm />
+        <CardContent className="pt-6">
+          <CreateInterview />
         </CardContent>
       </Card>
 
@@ -154,12 +146,11 @@ export default async function AdminOverviewPage() {
                       </p>
                     </div>
 
-                    <Link
-                      href={`/admin/interviews/${interview.id}`}
-                      className={buttonClasses("secondary", "sm")}
-                    >
-                      Open
-                    </Link>
+                    <OpenInterviewButton
+                      interviewId={interview.id}
+                      interviewTitle={interview.title}
+                      basePath="/admin"
+                    />
                   </CardContent>
                 </Card>
               </li>
@@ -167,6 +158,8 @@ export default async function AdminOverviewPage() {
           </ul>
         )}
       </section>
+
+      <InterviewDialogSlot adminId={admin.id} interviewId={openInterviewId} />
     </>
   );
 }

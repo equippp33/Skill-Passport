@@ -3,9 +3,11 @@ import { NextResponse } from "next/server";
 import { getAttemptForCandidate } from "~/server/attempt/access";
 import { AttemptError } from "~/server/attempt/service";
 import {
+  MAX_VIDEO_BYTES,
   createAnswerVideoUpload,
   finaliseAnswerVideo,
   normaliseVideoMimeType,
+  relayAnswerVideo,
 } from "~/server/interview/video";
 import { uuidSchema } from "~/server/interview/validation";
 
@@ -13,11 +15,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Webcam upload, in two steps:
+ * Webcam upload:
  *   POST  -> reserve a row, return a presigned PUT URL
  *   PATCH -> verify the object, enforce the cap, link it to the turn
+ *   PUT   -> fallback: send the bytes through here instead
  *
- * Bytes go browser -> R2 directly, so the request-body limit never applies.
+ * The fast path is browser -> R2 directly, which needs a CORS rule on the
+ * bucket. PUT exists for when that rule is absent: the bytes come through
+ * the server, subject to the platform request-body limit.
+ *
  * Video is supplementary: failures here never block the interview.
  */
 async function resolveAttempt(params: Promise<{ attemptId: string }>) {
@@ -58,6 +64,7 @@ export async function POST(
   const body = (await request.json().catch(() => null)) as {
     turnNumber?: unknown;
     mimeType?: unknown;
+    durationMs?: unknown;
   } | null;
 
   const turnNumber = turnNumberFrom(body?.turnNumber);
@@ -76,12 +83,68 @@ export async function POST(
   }
 
   try {
+    // Cosmetic, browser-supplied: a nonsense value is dropped rather than
+    // failing an upload the interview does not depend on.
+    const declared = Number(body?.durationMs);
+    const durationMs =
+      Number.isFinite(declared) && declared > 0 && declared < 3_600_000
+        ? Math.round(declared)
+        : null;
+
     const ticket = await createAnswerVideoUpload({
       attemptId: found.attempt.id,
       turnNumber,
       mimeType,
+      durationMs,
     });
     return NextResponse.json(ticket, { status: 201 });
+  } catch (error) {
+    return handleError(error);
+  }
+}
+
+/**
+ * Relay the recording through the server.
+ *
+ * Identifiers travel in the query string so the whole body can be the file —
+ * no multipart parse of a video-sized payload.
+ */
+export async function PUT(
+  request: Request,
+  ctx: { params: Promise<{ attemptId: string }> },
+): Promise<Response> {
+  const found = await resolveAttempt(ctx.params);
+  if (!found) {
+    return NextResponse.json({ error: "Not found." }, { status: 401 });
+  }
+
+  const url = new URL(request.url);
+  const turnNumber = turnNumberFrom(url.searchParams.get("turnNumber"));
+  const videoId = uuidSchema.safeParse(url.searchParams.get("videoId"));
+  if (turnNumber === null || !videoId.success) {
+    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
+  }
+
+  // Reject an oversized upload on the declared length before reading it, so
+  // a large body is not buffered only to be thrown away.
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > MAX_VIDEO_BYTES) {
+    return NextResponse.json({ error: "Video too large." }, { status: 413 });
+  }
+
+  try {
+    const body = Buffer.from(await request.arrayBuffer());
+    if (body.byteLength > MAX_VIDEO_BYTES) {
+      return NextResponse.json({ error: "Video too large." }, { status: 413 });
+    }
+
+    const result = await relayAnswerVideo({
+      attemptId: found.attempt.id,
+      turnNumber,
+      videoId: videoId.data,
+      body,
+    });
+    return NextResponse.json(result);
   } catch (error) {
     return handleError(error);
   }

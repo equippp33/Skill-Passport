@@ -1,17 +1,22 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import type { User } from "lucia";
 
 import { db } from "~/server/db";
 import {
   interviewAttemptsTable,
+  interviewAudioTable,
+  interviewTurnsTable,
   interviewsTable,
   usersTable,
 } from "~/server/db/schema";
 import type { Interview, InterviewAttempt } from "~/server/db/schema";
+import type { InterviewDetails } from "./dto";
+import { labelForCode } from "~/lib/spoken-languages";
+import type { SpokenLanguage } from "~/lib/spoken-languages";
 import { getAuth } from "~/server/auth/session";
 import { DEFAULT_QUESTION_COUNT } from "~/server/interview/validation";
 
@@ -101,6 +106,30 @@ export async function createInterview(
 export interface InterviewWithCounts extends Interview {
   attemptCount: number;
   completedCount: number;
+}
+
+/**
+ * Create an interview with nothing to fill in.
+ *
+ * Every interview is the same ten workplace skills, and the language comes
+ * from how the candidate answers, so there is no configuration to collect.
+ * The title exists only so an admin can tell two links apart and is numbered
+ * from how many they already have. Two simultaneous creates can land on the
+ * same number — nothing depends on it being unique, and the share token is
+ * what actually identifies an interview.
+ */
+export async function createGeneralInterview(
+  adminId: string,
+): Promise<Interview> {
+  const [counted] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(interviewsTable)
+    .where(eq(interviewsTable.createdByUserId, adminId));
+
+  return createInterview(adminId, {
+    title: `General interview ${(counted?.total ?? 0) + 1}`,
+    description: null,
+  });
 }
 
 export async function listInterviews(
@@ -247,4 +276,117 @@ export async function getAdminStats(adminId: string): Promise<AdminStats> {
         ? null
         : Math.round(Number(attemptRow.averageScore)),
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/*                              Views for the UI                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One interview plus its candidates, shaped for the dialog.
+ *
+ * Narrower than the rows themselves: this crosses to the browser, so it
+ * carries what the dialog renders and nothing else — no access tokens, no
+ * transcripts.
+ */
+export async function getInterviewDetails(
+  adminId: string,
+  interviewId: string,
+): Promise<InterviewDetails | null> {
+  const found = await getInterviewForAdmin(adminId, interviewId);
+  if (!found) return null;
+
+  const { interview, attempts } = found;
+  const spokenByAttempt = await getSpokenLanguages(attempts.map((a) => a.id));
+
+  return {
+    id: interview.id,
+    title: interview.title,
+    description: interview.description,
+    questionCount: interview.questionCount,
+    publicToken: interview.publicToken,
+    isOpen: interview.isOpen,
+    createdAt: interview.createdAt,
+    attempts: attempts.map((attempt) => ({
+      id: attempt.id,
+      candidateName: attempt.candidateName,
+      candidateEmail: attempt.candidateEmail,
+      status: attempt.status,
+      language: attempt.language,
+      spokenLanguages: spokenByAttempt.get(attempt.id) ?? [],
+      overallScore: attempt.overallScore,
+      awayCount: attempt.awayCount,
+      createdAt: attempt.createdAt,
+    })),
+  };
+}
+
+/**
+ * Languages heard per attempt, for a whole list of them at once.
+ *
+ * Aggregated in the database rather than by loading every turn: a list of
+ * fifty candidates would otherwise pull several hundred rows of questions,
+ * transcripts and scores to count a single column.
+ */
+async function getSpokenLanguages(
+  attemptIds: string[],
+): Promise<Map<string, SpokenLanguage[]>> {
+  const byAttempt = new Map<string, SpokenLanguage[]>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewTurnsTable.attemptId,
+      code: interviewTurnsTable.detectedLanguageCode,
+      turns: sql<number>`count(*)::int`,
+    })
+    .from(interviewTurnsTable)
+    .where(
+      and(
+        inArray(interviewTurnsTable.attemptId, attemptIds),
+        isNotNull(interviewTurnsTable.detectedLanguageCode),
+      ),
+    )
+    .groupBy(
+      interviewTurnsTable.attemptId,
+      interviewTurnsTable.detectedLanguageCode,
+    )
+    .orderBy(desc(sql`count(*)`));
+
+  for (const row of rows) {
+    if (!row.code) continue;
+    const list = byAttempt.get(row.attemptId) ?? [];
+    list.push({
+      code: row.code,
+      label: labelForCode(row.code),
+      turns: row.turns,
+    });
+    byAttempt.set(row.attemptId, list);
+  }
+  return byAttempt;
+}
+
+/**
+ * Recorded length per media id, for labelling clips in a report.
+ *
+ * Absent for anything recorded before the length was captured, which is why
+ * the caller treats a missing entry as "no length to show" rather than zero.
+ */
+export async function getClipDurations(
+  attemptId: string,
+): Promise<Record<string, number>> {
+  const rows = await db
+    .select({
+      id: interviewAudioTable.id,
+      durationMs: interviewAudioTable.durationMs,
+    })
+    .from(interviewAudioTable)
+    .where(eq(interviewAudioTable.attemptId, attemptId));
+
+  const durations: Record<string, number> = {};
+  for (const row of rows) {
+    if (row.durationMs && row.durationMs > 0)
+      durations[row.id] = row.durationMs;
+  }
+  return durations;
 }

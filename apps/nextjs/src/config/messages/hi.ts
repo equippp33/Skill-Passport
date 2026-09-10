@@ -67,7 +67,7 @@ export const hi: Messages = {
     expectTitle: "क्या उम्मीद करें",
     expectSubtitle:
       "एक बार में एक सवाल। सुनें, बोलकर जवाब दें, फिर अगला दबाएँ।",
-    duration: "कुल लगभग {minutes} मिनट, {count} सवालों के लिए।",
+    duration: "लगभग {minutes} मिनट",
     skillsCovered:
       "इसमें भरोसेमंदी, टीम वर्क और संवाद जैसे दस कार्य कौशल्य जाँचे जाते हैं।",
     answerLimit:
@@ -81,6 +81,10 @@ export const hi: Messages = {
     notHiring: "यह सिर्फ़ अभ्यास है — यह नौकरी का फ़ैसला नहीं है।",
     languageNotice:
       "पूरा मूल्यांकन — सवाल, आपके जवाब और रिपोर्ट — {language} में होगा।",
+    ownLanguageTitle: "आप अपनी भाषा में जवाब दे सकते हैं",
+    groupHowItWorks: "यह कैसे चलता है",
+    groupWhatYouNeed: "आपको क्या चाहिए",
+    groupYourAnswers: "आपके जवाब",
     micCheckTitle: "माइक्रोफ़ोन जाँच",
     micCheckSubtitle: "जवाब रिकॉर्ड करने के लिए अनुमति दें।",
     micTest: "माइक्रोफ़ोन जाँचें",
@@ -115,7 +119,7 @@ export const hi: Messages = {
     audioFailed: "आवाज़ नहीं चल पाई — आप ऊपर सवाल पढ़ सकते हैं।",
     ready: "रिकॉर्ड करने के लिए तैयार",
     recording: "रिकॉर्डिंग चल रही है",
-    recorded: "रिकॉर्ड हो गया — सुनें या भेजें",
+    recorded: "रिकॉर्ड हो गया",
     uploading: "अपलोड हो रहा है…",
     processingStatus: "आपका जवाब जाँचा जा रहा है…",
     startRecording: "रिकॉर्डिंग शुरू करें",
@@ -125,20 +129,23 @@ export const hi: Messages = {
     reRecord: "दोबारा रिकॉर्ड करें",
     next: "अगला सवाल",
     finish: "मूल्यांकन पूरा करें",
-    keepSpeaking: "जवाब पूरा होने पर अगला बटन दबाएँ।",
+    keepSpeaking: "बोलते रहिए — आपके रुकते ही यह अपने आप आगे बढ़ जाएगा।",
+    advancingIn: "{seconds} में आगे बढ़ रहे हैं…",
     leftTab:
       "आपने इंटरव्यू टैब {count} बार छोड़ा। यह दर्ज होता है। कृपया पूरा होने तक इसी पेज पर रहें।",
     introduction: "परिचय",
     chooseLanguageTitle: "आप किस भाषा में आगे बढ़ना चाहेंगे?",
     chooseLanguageBody:
       "उस जवाब से आपकी भाषा पहचानी नहीं जा सकी। एक चुनें, बाकी इंटरव्यू उसी में होगा।",
+    languageLabel: "भाषा",
+    languageHint: "मौजूदा सवाल दोबारा पूछा जाएगा",
     liveCaptions: "लाइव कैप्शन",
     listening: "सुन रहे हैं…",
-    previousTranscript: "आपके पिछले जवाब में हमें यह सुनाई दिया",
     preparing: "तैयारी हो रही है…",
     tooShort: "यह जवाब बहुत छोटा था। कृपया दोबारा जवाब दें।",
     greeting:
       "नमस्ते, आपका स्वागत है। मैं आपसे काम करने के तरीके पर कुछ सवाल पूछूँगा। सहज होकर जवाब दें — इसमें कुछ मुश्किल नहीं है।",
+    savingRecordings: "आपकी रिकॉर्डिंग सहेजी जा रही है — बस हो गया…",
     processingHint:
       "आपका जवाब लिखा और जाँचा जा रहा है। इसमें कुछ सेकंड लगते हैं — यह पेज खुला रखें।",
     errorTitle: "कुछ गड़बड़ हो गई",

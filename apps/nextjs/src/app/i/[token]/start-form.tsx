@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import { Alert, Button, FieldError, Input, Label } from "~/components/ui";
+import { PHONE_DIGITS, normalisePhoneInput } from "~/lib/phone";
 import { beginAttemptAction } from "~/server/attempt/actions";
 import type { CandidateFormState } from "~/server/attempt/actions";
 
@@ -26,6 +27,7 @@ function SubmitButton() {
  * interview.
  */
 export function StartForm({ token }: { token: string }) {
+  const [phone, setPhone] = useState("");
   const [state, formAction] = useActionState(
     beginAttemptAction.bind(null, token),
     initialState,
@@ -69,14 +71,30 @@ export function StartForm({ token }: { token: string }) {
           Phone{" "}
           <span className="font-normal text-content-muted">(optional)</span>
         </Label>
+        {/* Controlled so the field can never hold something the server
+            would reject: the eleventh digit is simply not accepted, and a
+            pasted "+91 98765 43210" collapses to the ten digits it means.
+            `maxLength` alone could not do both — it would have truncated
+            the pasted form mid-number. */}
         <Input
           id="phone"
           name="phone"
           type="tel"
+          inputMode="numeric"
           autoComplete="tel"
-          maxLength={32}
+          value={phone}
+          onChange={(event) =>
+            setPhone(normalisePhoneInput(event.target.value))
+          }
+          placeholder={`${PHONE_DIGITS} digits`}
           aria-invalid={state.fieldErrors?.phone ? true : undefined}
+          aria-describedby="phone-hint"
         />
+        <p id="phone-hint" className="mt-1 text-xs text-content-muted">
+          {phone.length > 0 && phone.length < PHONE_DIGITS
+            ? `${PHONE_DIGITS - phone.length} more to go`
+            : "Indian mobile number, without the country code."}
+        </p>
         <FieldError>{state.fieldErrors?.phone}</FieldError>
       </div>
 

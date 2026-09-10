@@ -5,7 +5,6 @@
   "files": [
     "base.json",
     "internal-package.json",
-    "nextjs.json",
-    "react-native.json"
+    "nextjs.json"
   ]
 }

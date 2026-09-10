@@ -438,3 +438,83 @@ export async function generateInterviewSummary(args: {
     validator: interviewSummarySchema,
   });
 }
+
+/* -------------------------------------------------------------------------- */
+/*                                Re-asking                                   */
+/* -------------------------------------------------------------------------- */
+
+const TRANSLATED_QUESTION_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["question", "questionTranslation"],
+  properties: {
+    question: {
+      type: "string",
+      description: "The same question, written in the target language.",
+    },
+    questionTranslation: {
+      type: "string",
+      description: "English rendering, or an empty string if already English.",
+    },
+  },
+};
+
+const translatedQuestionSchema = z.object({
+  question: z.string(),
+  questionTranslation: z.string(),
+});
+
+/**
+ * Say the same question again in a different language.
+ *
+ * Used when a candidate switches language part-way through: the question
+ * they are looking at should change language, not change. Generating a fresh
+ * question instead would move the goalposts mid-answer, and would quietly
+ * break the one-skill-per-turn mapping the report depends on.
+ */
+export async function translateQuestion(
+  ctx: InterviewContext,
+  question: string,
+): Promise<GeneratedQuestion> {
+  const result = await requestStructured({
+    instructions: [
+      "You translate interview questions between languages.",
+      "Preserve the meaning, the tone and the scenario exactly.",
+      "Do not answer it, shorten it, or ask anything different.",
+      "Return only the translation.",
+    ].join(" "),
+    input: [
+      `Target language: ${ctx.language.promptName}.`,
+      "",
+      "Question to translate:",
+      untrusted("QUESTION", question),
+      "",
+      `Put the ${ctx.language.promptName} version in "question".`,
+      ctx.language.promptName === "English"
+        ? 'Leave "questionTranslation" as an empty string.'
+        : 'Put a plain English rendering in "questionTranslation".',
+    ].join("\n"),
+    schemaName: "translated_question",
+    jsonSchema: TRANSLATED_QUESTION_JSON_SCHEMA,
+    validator: translatedQuestionSchema,
+  });
+
+  const translated = result.question.trim();
+  if (!translated) {
+    throw new ProviderError({
+      provider: "openai",
+      message: "openai returned an empty translation",
+      userMessage: "We could not switch the language. Please try again.",
+      retryable: true,
+    });
+  }
+
+  const english = result.questionTranslation.trim();
+  return {
+    question: translated,
+    translation:
+      ctx.language.promptName === "English" || english === translated
+        ? null
+        : english || null,
+  };
+}

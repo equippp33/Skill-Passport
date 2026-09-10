@@ -28,14 +28,16 @@ import {
   isAttemptFollowUp,
   skillForAttemptTurn,
   totalTurns,
-  WORK_SKILLS,
 } from "~/config/work-skills";
 import type { WorkSkillId } from "~/config/work-skills";
+import { isRepeatRequest } from "~/config/repeat-requests";
+import { aggregateSkillScores } from "~/lib/scoring";
 import { ProviderError, toUserMessage } from "~/server/services/errors";
 import {
   evaluateAnswerAndGetNextQuestion,
   generateFirstQuestion,
   generateInterviewSummary,
+  translateQuestion,
 } from "~/server/services/openai";
 import type { InterviewContext, PriorTurn } from "~/server/services/openai";
 import { generateSpeech, transcribeAudio } from "~/server/services/sarvam";
@@ -234,39 +236,67 @@ export async function startAttempt(attemptId: string): Promise<void> {
 /*                              Question audio                                */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Voice a question and store the clip, WITHOUT attaching it to a turn.
+ *
+ * Separate from attaching because of an ordering that matters: a question
+ * must not become the candidate's current question until its audio exists.
+ * The client polls every couple of seconds and reveals a new question the
+ * moment it appears, while speech synthesis takes a second or two — attach
+ * afterwards and there is a window where the candidate is shown a question
+ * captioned "audio unavailable" that was never actually unavailable.
+ *
+ * Returns null rather than throwing: audio is best-effort, and a question
+ * that cannot be voiced is still readable on screen.
+ */
+async function synthesiseQuestionAudio(
+  attemptId: string,
+  text: string,
+  languageCode: string,
+): Promise<string | null> {
+  try {
+    const speech = await generateSpeech(text, { languageCode });
+    return await storeAudio({
+      attemptId,
+      kind: "question",
+      mimeType: speech.mimeType,
+      data: speech.audio,
+    });
+  } catch (error) {
+    console.error(
+      `[attempt] question TTS failed attempt=${attemptId}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Voice a question that already exists and link it.
+ *
+ * Only for a turn the candidate can already see — the retry button, and the
+ * probe, which is created before the interview screen is shown at all.
+ */
 async function tryAttachQuestionAudio(
   attemptId: string,
   turnNumber: number,
   text: string,
   languageCode: string,
 ): Promise<boolean> {
-  try {
-    const speech = await generateSpeech(text, { languageCode });
-    const audioId = await storeAudio({
-      attemptId,
-      kind: "question",
-      mimeType: speech.mimeType,
-      data: speech.audio,
-    });
-    await db
-      .update(interviewTurnsTable)
-      .set({ questionAudioId: audioId, updatedAt: new Date() })
-      .where(
-        and(
-          eq(interviewTurnsTable.attemptId, attemptId),
-          eq(interviewTurnsTable.turnNumber, turnNumber),
-        ),
-      );
-    return true;
-  } catch (error) {
-    // Audio is best-effort: the question is still readable on screen.
-    console.error(
-      `[attempt] question TTS failed attempt=${attemptId} turn=${turnNumber}: ${
-        error instanceof Error ? error.message : "unknown"
-      }`,
+  const audioId = await synthesiseQuestionAudio(attemptId, text, languageCode);
+  if (!audioId) return false;
+
+  await db
+    .update(interviewTurnsTable)
+    .set({ questionAudioId: audioId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(interviewTurnsTable.attemptId, attemptId),
+        eq(interviewTurnsTable.turnNumber, turnNumber),
+      ),
     );
-    return false;
-  }
+  return true;
 }
 
 export async function regenerateQuestionAudio(
@@ -297,7 +327,6 @@ export interface SubmitResult {
 export async function submitAnswer(args: {
   attempt: InterviewAttempt;
   turnNumber: number;
-  audio: Buffer;
   mimeType: string;
 }): Promise<SubmitResult> {
   const { attempt } = args;
@@ -331,13 +360,11 @@ export async function submitAnswer(args: {
     );
   }
 
-  const audioId = await storeAudio({
-    attemptId: attempt.id,
-    kind: "answer",
-    mimeType: args.mimeType,
-    data: args.audio,
-  });
-
+  // NOTE: the recording is NOT written to R2 here. This runs inside the
+  // request the candidate is waiting on, and an upload to object storage on
+  // that path buys nothing — the bytes are already in memory, and archiving
+  // them is not something the next question depends on. `processTurn` does
+  // it from `after()`, alongside transcription, once the response has gone.
   const staleCutoff = new Date(Date.now() - STALE_PROCESSING_MS);
 
   // Compare-and-swap: exactly one concurrent caller can match this predicate.
@@ -346,7 +373,6 @@ export async function submitAnswer(args: {
     .set({
       status: "processing",
       processingStartedAt: new Date(),
-      answerAudioId: audioId,
       errorMessage: null,
       updatedAt: new Date(),
     })
@@ -378,6 +404,32 @@ export async function submitAnswer(args: {
 /*                                 Processing                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Put a turn back to unanswered so the question can be asked again.
+ *
+ * Unlike `failTurn` this is not an error: nothing went wrong, the candidate
+ * simply asked to hear the question again. No transcript is kept and no
+ * score is written, so a repeat leaves no trace in the report.
+ */
+async function repeatTurn(attemptId: string, turnId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(interviewTurnsTable)
+      .set({
+        status: "awaiting_answer",
+        errorMessage: null,
+        processingStartedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(interviewTurnsTable.id, turnId));
+
+    await tx
+      .update(interviewAttemptsTable)
+      .set({ status: "in_progress", updatedAt: new Date() })
+      .where(eq(interviewAttemptsTable.id, attemptId));
+  });
+}
+
 async function failTurn(
   attemptId: string,
   turnId: string,
@@ -405,10 +457,151 @@ async function failTurn(
  * The long half of a submission. Runs outside the request via `after()`, so
  * every state change is durable and a crash leaves the turn recoverable.
  */
+/**
+ * The recording as it arrived, when the caller still has it in hand.
+ *
+ * A list, because the transcriber refuses audio over 30 seconds and the
+ * browser therefore records a long answer as a series of complete files.
+ * Usually there is exactly one.
+ */
+export interface AnswerAudio {
+  segments: Buffer[];
+  mimeType: string;
+  /** Length the recorder measured, for the admin's per-answer marker. */
+  durationMs?: number | null;
+}
+
+/**
+ * Keep a copy of the recording, and point the turn at it.
+ *
+ * Never throws. The archive is for the admin to listen back to afterwards;
+ * losing it must not cost the candidate their answer, which has already been
+ * transcribed and scored from the same bytes.
+ */
+async function archiveAnswerAudio(
+  attemptId: string,
+  turnId: string,
+  answer: AnswerAudio,
+): Promise<void> {
+  try {
+    // Every segment is kept; the turn points at the first, and the rest
+    // hang off the attempt. Concatenating them is not possible without
+    // re-encoding, and the video already holds the answer end to end.
+    const ids = [];
+    for (const [index, data] of answer.segments.entries()) {
+      ids.push(
+        await storeAudio({
+          attemptId,
+          kind: "answer",
+          mimeType: answer.mimeType,
+          data,
+          // The measured length belongs to the take, not to one slice of it.
+          durationMs: index === 0 ? answer.durationMs : null,
+        }),
+      );
+    }
+    if (ids.length === 0) return;
+
+    await db
+      .update(interviewTurnsTable)
+      .set({ answerAudioId: ids[0], updatedAt: new Date() })
+      .where(eq(interviewTurnsTable.id, turnId));
+  } catch (error) {
+    console.error(
+      `[attempt] archiving answer audio failed turn=${turnId}: ${
+        error instanceof Error ? error.name : "unknown"
+      }`,
+    );
+  }
+}
+
+/**
+ * Transcribe an answer that may have arrived in several pieces.
+ *
+ * Sent one at a time rather than in parallel: the pieces are consecutive
+ * speech and the transcript has to read in order, and firing five requests
+ * at once is a good way to meet a rate limit mid-answer.
+ *
+ * The language reported is the one from the longest-transcribing segment —
+ * the opening few words of a reply are the least reliable place to judge
+ * from, and a candidate who switches language mid-answer should be read as
+ * whatever they mostly spoke.
+ */
+async function transcribeSegments(answer: AnswerAudio): Promise<{
+  transcript: string;
+  languageCode: string | null;
+  languageProbability: number | null;
+}> {
+  const parts: string[] = [];
+  let best: { code: string | null; probability: number | null; len: number } = {
+    code: null,
+    probability: null,
+    len: -1,
+  };
+
+  let failures = 0;
+
+  for (const segment of answer.segments) {
+    let result;
+    try {
+      result = await transcribeAudio({
+        audio: segment,
+        mimeType: answer.mimeType,
+        languageCode: "unknown",
+      });
+    } catch (error) {
+      // One bad slice must not lose the whole answer — a rollover can leave
+      // a final fragment of a fraction of a second, which is exactly the
+      // sort of thing a transcriber rejects.
+      failures += 1;
+      console.error(
+        `[attempt] segment transcription failed: ${
+          error instanceof Error ? error.message : "unknown"
+        }`,
+      );
+      continue;
+    }
+
+    const text = result.transcript?.trim() ?? "";
+    if (text) parts.push(text);
+    if (text.length > best.len) {
+      best = {
+        code: result.languageCode,
+        probability: result.languageProbability,
+        len: text.length,
+      };
+    }
+  }
+
+  // Every slice failed: that is a real failure, and the caller should say so
+  // rather than score an empty answer.
+  if (failures > 0 && parts.length === 0) {
+    throw new ProviderError({
+      provider: "sarvam",
+      message: `all ${failures} answer segments failed to transcribe`,
+      userMessage:
+        "We could not transcribe your answer just now. Please try again.",
+      retryable: true,
+    });
+  }
+
+  return {
+    transcript: parts.join(" "),
+    languageCode: best.code,
+    languageProbability: best.probability,
+  };
+}
+
 export async function processTurn(
   attemptId: string,
   turnId: string,
   interview: Interview,
+  /**
+   * The recording, when `processTurn` is called straight after the upload.
+   * Absent when recovering a turn later, in which case it is read back from
+   * storage instead.
+   */
+  answer?: AnswerAudio,
 ): Promise<void> {
   const attempt = await reload(attemptId).catch(() => null);
   const turn = await db.query.interviewTurnsTable.findFirst({
@@ -417,16 +610,25 @@ export async function processTurn(
       eq(interviewTurnsTable.attemptId, attemptId),
     ),
   });
-  if (!attempt || !turn || !turn.answerAudioId) {
+  if (!attempt || !turn) {
     console.error(`[attempt] processTurn: missing state turn=${turnId}`);
     return;
   }
 
   try {
-    const audioRow = await loadAudioBytes({
-      audioId: turn.answerAudioId,
-      attemptId,
-    });
+    // Fresh submission: use the bytes we were handed. Recovery: read the
+    // archived copy back — only the first segment survives that route, so
+    // a recovered long answer is transcribed from its opening 25 seconds.
+    const recovered = turn.answerAudioId
+      ? await loadAudioBytes({ audioId: turn.answerAudioId, attemptId })
+      : null;
+
+    const audioRow: AnswerAudio | null =
+      answer ??
+      (recovered
+        ? { segments: [recovered.data], mimeType: recovered.mimeType }
+        : null);
+
     if (!audioRow) {
       await failTurn(
         attemptId,
@@ -439,12 +641,17 @@ export async function processTurn(
     // --- 1. Transcribe, with detection always on ---------------------------
     // "unknown" lets Sarvam identify the language, which is how both the
     // initial detection and a later switch are noticed.
-    const { transcript, languageCode, languageProbability } =
-      await transcribeAudio({
-        audio: audioRow.data,
-        mimeType: audioRow.mimeType,
-        languageCode: "unknown",
-      });
+    //
+    // Archiving runs alongside rather than before it: the two are
+    // independent, and overlapping them keeps the turn as short as the
+    // slower of the two rather than their sum.
+    const [, transcription] = await Promise.all([
+      answer
+        ? archiveAnswerAudio(attemptId, turnId, answer)
+        : Promise.resolve(),
+      transcribeSegments(audioRow),
+    ]);
+    const { transcript, languageCode, languageProbability } = transcription;
 
     if (!transcript || transcript.trim().length < 2) {
       await failTurn(
@@ -452,6 +659,14 @@ export async function processTurn(
         turnId,
         "We could not hear an answer in that recording. Please check your microphone and record again.",
       );
+      return;
+    }
+
+    // Asked to hear the question again rather than answering it. Checked
+    // before anything is scored or the language is inferred — "sorry, say
+    // that again" says nothing about either.
+    if (isRepeatRequest(transcript)) {
+      await repeatTurn(attemptId, turnId);
       return;
     }
 
@@ -590,9 +805,81 @@ export async function chooseLanguage(
 
   const turns = await getTurns(attempt.id);
   const next = LANGUAGE_PROBE_TURN + 1;
-  if (turns.some((t) => t.turnNumber === next)) return;
 
-  await generateNextQuestion(attempt.id, interview, next);
+  // Nothing asked yet: the first real question is simply written in the
+  // language that was just chosen.
+  if (!turns.some((t) => t.turnNumber === next)) {
+    await generateNextQuestion(attempt.id, interview, next);
+    return;
+  }
+
+  // Mid-interview switch. Re-ask what is on screen right now in the new
+  // language rather than waiting for the next question — a candidate who
+  // says they cannot follow the language is telling us about the question
+  // in front of them, and leaving it there makes them answer it anyway.
+  const current = turns.find(
+    (t) => t.turnNumber === attempt.currentQuestionNumber,
+  );
+  if (!current || current.status !== "awaiting_answer") return;
+  if (current.kind === "language_probe") return;
+
+  await reaskInLanguage(attempt.id, current, language);
+}
+
+/**
+ * Rewrite one pending question into another language and re-voice it.
+ *
+ * Best-effort in both halves: if translation fails the question stays as it
+ * was, which is worse than switching but far better than blanking the
+ * question the candidate is looking at.
+ */
+async function reaskInLanguage(
+  attemptId: string,
+  turn: InterviewTurn,
+  language: ReturnType<typeof resolveInterviewLanguage>,
+): Promise<void> {
+  // The English original is the best source to translate from — going
+  // language A -> B directly compounds whatever A already lost.
+  const source = turn.questionTranslation ?? turn.question;
+
+  let rewritten;
+  try {
+    rewritten = await translateQuestion(
+      {
+        questionCount: 0,
+        language,
+        candidateIntroduction: null,
+      },
+      source,
+    );
+  } catch (error) {
+    console.error(
+      `[attempt] re-ask translation failed turn=${turn.id}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+    return;
+  }
+
+  // Voiced first, then swapped in as one update. Writing the new text with
+  // the audio cleared and filling it in afterwards would leave the question
+  // briefly captioned "audio unavailable"; a null here means TTS genuinely
+  // failed, which is what the retry button is for.
+  const questionAudioId = await synthesiseQuestionAudio(
+    attemptId,
+    rewritten.question,
+    language.code,
+  );
+
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      question: rewritten.question,
+      questionTranslation: rewritten.translation,
+      questionAudioId,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turn.id));
 }
 
 /** Create and voice one skill question. */
@@ -608,6 +895,13 @@ async function generateNextQuestion(
   const ctx = contextFor(attempt, interview, await introductionFor(attemptId));
   const generated = await generateFirstQuestion(ctx, skill);
 
+  // Voiced before the turn is written, so it is never current without audio.
+  const questionAudioId = await synthesiseQuestionAudio(
+    attemptId,
+    generated.question,
+    ctx.language.code,
+  );
+
   await db
     .insert(interviewTurnsTable)
     .values({
@@ -618,6 +912,7 @@ async function generateNextQuestion(
       isFollowUp: isAttemptFollowUp(turnNumber, interview.questionCount),
       question: generated.question,
       questionTranslation: generated.translation,
+      questionAudioId,
       status: "awaiting_answer",
     })
     .onConflictDoNothing();
@@ -630,13 +925,6 @@ async function generateNextQuestion(
       updatedAt: new Date(),
     })
     .where(eq(interviewAttemptsTable.id, attemptId));
-
-  await tryAttachQuestionAudio(
-    attemptId,
-    turnNumber,
-    generated.question,
-    ctx.language.code,
-  );
 }
 
 /** Score one answer and prepare the next question, or finish. */
@@ -680,6 +968,18 @@ async function evaluateSkillTurn(args: {
 
   const willComplete = evaluation.interviewComplete || !nextSkill;
 
+  // Voiced before the transaction that reveals it. The client advances the
+  // moment `currentQuestionNumber` moves, so anything done after that point
+  // is something the candidate can already see missing.
+  const nextQuestionAudioId =
+    !willComplete && evaluation.nextQuestion && nextSkill
+      ? await synthesiseQuestionAudio(
+          attempt.id,
+          evaluation.nextQuestion,
+          ctx.language.code,
+        )
+      : null;
+
   await db.transaction(async (tx) => {
     await tx
       .update(interviewTurnsTable)
@@ -711,6 +1011,7 @@ async function evaluateSkillTurn(args: {
           ),
           question: evaluation.nextQuestion,
           questionTranslation: evaluation.questionTranslation.trim() || null,
+          questionAudioId: nextQuestionAudioId,
           status: "awaiting_answer",
         })
         .onConflictDoNothing();
@@ -726,16 +1027,7 @@ async function evaluateSkillTurn(args: {
     }
   });
 
-  if (willComplete) {
-    await finaliseAttempt(attempt.id, interview);
-  } else if (evaluation.nextQuestion) {
-    await tryAttachQuestionAudio(
-      attempt.id,
-      nextTurnNumber,
-      evaluation.nextQuestion,
-      ctx.language.code,
-    );
-  }
+  if (willComplete) await finaliseAttempt(attempt.id, interview);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -805,32 +1097,13 @@ async function finaliseAttempt(
 /*                             Skill aggregation                              */
 /* -------------------------------------------------------------------------- */
 
-export interface SkillScore {
-  skillId: WorkSkillId;
-  score: number | null;
-  turnNumbers: number[];
-}
-
-/** All ten skills, in framework order, so nothing is silently omitted. */
-export function aggregateSkillScores(turns: InterviewTurn[]): SkillScore[] {
-  return WORK_SKILLS.map((skill) => {
-    const forSkill = turns.filter((t) => t.skillId === skill.id);
-    const scored = forSkill.filter(
-      (t) => t.status === "completed" && t.score !== null,
-    );
-    return {
-      skillId: skill.id,
-      score:
-        scored.length === 0
-          ? null
-          : Math.round(
-              scored.reduce((sum, t) => sum + (t.score ?? 0), 0) /
-                scored.length,
-            ),
-      turnNumbers: forSkill.map((t) => t.turnNumber),
-    };
-  });
-}
+/**
+ * Re-exported from `~/lib/scoring`, which is where it now lives so the report
+ * component can call it in the browser too. Kept here so existing server-side
+ * callers do not all need rewriting.
+ */
+export { aggregateSkillScores };
+export type { SkillScore } from "~/lib/scoring";
 
 /* -------------------------------------------------------------------------- */
 /*                             Status and recovery                            */
@@ -844,7 +1117,6 @@ export interface AttemptStatus {
   language: string | null;
   isComplete: boolean;
   /** Sarvam's transcript of the previous answer, shown back to confirm it. */
-  lastTranscript: string | null;
   turn: {
     turnNumber: number;
     kind: InterviewTurn["kind"];
@@ -896,9 +1168,6 @@ export async function getAttemptStatus(
     needsLanguageChoice: attempt.needsLanguageChoice,
     language: attempt.language,
     isComplete: attempt.status === "completed",
-    lastTranscript:
-      turns.filter((t) => t.status === "completed" && t.answerTranscript).at(-1)
-        ?.answerTranscript ?? null,
     turn: current
       ? {
           turnNumber: current.turnNumber,

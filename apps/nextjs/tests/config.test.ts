@@ -8,7 +8,12 @@ import {
   TRANSLATED_LANGUAGE_KEYS,
   resolveLanguage,
 } from "~/config/languages";
+import {
+  PROBE_SPOKEN_LANGUAGE_CODE,
+  PROBE_SPOKEN_TEXT,
+} from "~/config/greeting";
 import { MESSAGES, t } from "~/config/messages";
+import { isRepeatRequest } from "~/config/repeat-requests";
 import { en } from "~/config/messages/en";
 import {
   WORK_SKILLS,
@@ -53,6 +58,19 @@ describe("interview language registry", () => {
       (k) => INTERVIEW_LANGUAGES[k].code,
     );
     expect(new Set(codes).size).toBe(codes.length);
+  });
+
+  // The picker identifies each language by this glyph, so a missing or
+  // shared one would leave two rows looking identical.
+  it("gives every language a distinct, short script symbol", () => {
+    const symbols = INTERVIEW_LANGUAGE_KEYS.map(
+      (k) => INTERVIEW_LANGUAGES[k].symbol,
+    );
+    for (const symbol of symbols) {
+      expect(symbol.length).toBeGreaterThan(0);
+      expect([...symbol].length).toBeLessThanOrEqual(2);
+    }
+    expect(new Set(symbols).size).toBe(symbols.length);
   });
 
   it("resolves Marathi to mr-IN", () => {
@@ -100,6 +118,64 @@ function leafKeys(obj: object, prefix = ""): string[] {
       : [`${prefix}${k}`],
   );
 }
+
+describe("language probe opener", () => {
+  it("is spoken in English", () => {
+    expect(PROBE_SPOKEN_LANGUAGE_CODE).toBe("en-IN");
+  });
+
+  // Detection reads whatever language the candidate replies in, so the
+  // question does not need to mention language — and mentioning it makes
+  // the opener feel like a test rather than an interview question.
+  it("does not instruct the candidate about which language to use", () => {
+    expect(PROBE_SPOKEN_TEXT.toLowerCase()).not.toMatch(/language/);
+  });
+
+  it("still asks for a spoken introduction", () => {
+    expect(PROBE_SPOKEN_TEXT.toLowerCase()).toMatch(/name/);
+  });
+});
+
+describe("repeat requests", () => {
+  it.each([
+    "Repeat",
+    "Can you repeat that?",
+    "Say that again please",
+    "Sorry, what was that?",
+    "One more time",
+    "phir se boliye",
+    "vapas bolo",
+    "dobara bolo",
+    "punha sanga",
+    "फिर से बोलिए",
+    "वापस बोलो",
+    "पुन्हा सांगा",
+    "மீண்டும் சொல்லுங்கள்",
+    "మళ్లీ చెప్పండి",
+  ])("recognises %s", (text) => {
+    expect(isRepeatRequest(text)).toBe(true);
+  });
+
+  /**
+   * The costly mistake is the false positive: discarding a real answer.
+   * These all contain a trigger word but are answers, not requests.
+   */
+  it.each([
+    "I repeat the stock checklist every morning before the shop opens, so nothing is missed.",
+    "When a customer could not hear me over the noise, I walked closer and said it again clearly.",
+    "My manager asked me to repeat the order back to the customer every time to avoid mistakes.",
+    "Once again the delivery was late, so I called the supplier myself and arranged a new slot.",
+  ])("does not fire on a real answer: %s", (text) => {
+    expect(isRepeatRequest(text)).toBe(false);
+  });
+
+  it.each(["I always arrive on time", "Yes", "", "   "])(
+    "does not fire on %s",
+    (text) => {
+      expect(isRepeatRequest(text)).toBe(false);
+    },
+  );
+});
 
 describe("message dictionaries", () => {
   const expected = leafKeys(en).sort();

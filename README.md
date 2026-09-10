@@ -1,13 +1,12 @@
 # Skill Passport
 
-pnpm + Turborepo monorepo for the Skill Passport web and mobile apps.
+pnpm + Turborepo monorepo for the Skill Passport web app.
 
 ## Layout
 
 ```
 .
 ├── apps
-│   ├── expo      # Expo SDK 57 app (expo-router)  -> @skill-passport/expo
 │   └── nextjs    # Next.js 16 web app + AI interviews -> @skill-passport/nextjs
 ├── packages
 │   └── shared    # Platform-agnostic shared code  -> @skill-passport/shared
@@ -28,7 +27,6 @@ pnpm install
 
 pnpm dev         # every app at once
 pnpm dev:next    # Next.js only, http://localhost:3000
-pnpm dev:expo    # Expo only (press a / i / w in the Expo CLI)
 ```
 
 ## Scripts
@@ -43,14 +41,15 @@ pnpm dev:expo    # Expo only (press a / i / w in the Expo CLI)
 | `pnpm lint:ws`                    | Audit workspace deps with `sherif`  |
 | `pnpm clean`                      | Remove all `node_modules`           |
 
-## Version policy
-
-Native and React versions are pinned to the **Expo SDK 57** matrix, not to `latest`.
-Expo is the authority here because the native modules must match the SDK. Verify with:
+## Running in Docker
 
 ```bash
-cd apps/expo && npx expo install --check
+docker build -t skill-passport .
+docker run --rm -p 3000:3000 --env-file .env skill-passport
 ```
+
+See [`docs/docker.md`](apps/nextjs/docs/docker.md) for the image layout,
+migrations, and what to set in production.
 
 ## AI interview system (web app)
 
@@ -58,7 +57,7 @@ The Next.js app hosts a turn-based AI interview: a question is shown and
 spoken, the candidate records an answer, the server transcribes it (Sarvam
 STT), evaluates it and picks the next question (OpenAI), then synthesises that
 question (Sarvam TTS). Everything AI- or database-related lives inside
-`apps/nextjs`; the Expo app is not involved.
+`apps/nextjs`.
 
 ### The framework
 
@@ -181,13 +180,14 @@ R2 credentials they skip. They never call OpenAI or Sarvam.
 - **Versions live in `pnpm-workspace.yaml`.** Shared dependency versions use pnpm
   catalogs — write `"typescript": "catalog:"` or `"react": "catalog:react19"`
   in a package instead of hardcoding a version, so every workspace stays in sync.
-- **`node-linker=hoisted`** is set in `.npmrc`. React Native's Metro bundler does
-  not follow pnpm's symlinked store reliably, so the workspace uses a flat
-  `node_modules`. Do not remove this.
-- **Shared code must be platform-agnostic.** `packages/shared` is consumed by
-  Next.js (via `transpilePackages`) and by Metro, so it must not import `next`,
-  `react-native`, or DOM globals. Put web-only or native-only code in the app,
-  or add a dedicated package.
+- **`node-linker=hoisted`** is set in `.npmrc`. It was originally required by
+  Metro and is kept because the lockfile and the Docker build assume a flat
+  `node_modules`. Moving to pnpm's default isolated linker is safe but needs a
+  clean reinstall, so treat it as a deliberate change.
+- **Shared code stays framework-agnostic.** `packages/shared` is consumed by
+  Next.js via `transpilePackages` and must not import `next` or DOM globals,
+  so it remains usable from a script, a worker, or a second app later. Put
+  web-only code in the app, or add a dedicated package.
 - **Workspace packages ship TypeScript source, not build output.** There is no
   build step for `packages/*`; the app bundlers compile them.
 
@@ -206,7 +206,8 @@ Next.js app, also add the name to `transpilePackages` in `apps/nextjs/next.confi
 
 ```bash
 pnpm add <pkg> --filter @skill-passport/nextjs
-pnpm add <pkg> --filter @skill-passport/expo    # prefer: cd apps/expo && npx expo install <pkg>
 ```
 
-Use `npx expo install` for anything native so the version matches the Expo SDK.
+Versions shared across workspaces live in the `catalog:` block of
+`pnpm-workspace.yaml`; reference them as `"catalog:"` rather than pinning
+twice.

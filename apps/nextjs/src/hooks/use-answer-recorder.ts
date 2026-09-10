@@ -54,6 +54,21 @@ const VIDEO_MIME_TYPES = [
   "video/mp4",
 ];
 
+/**
+ * Length of one transcription segment, in seconds.
+ *
+ * Sarvam's synchronous speech-to-text refuses anything over 30 seconds
+ * outright ("use the batch API for longer audio files"), so a two-minute
+ * answer cannot be sent as one file. The audio recorder is therefore
+ * stopped and restarted on this interval, which yields a series of
+ * complete, independently decodable WebM files — unlike MediaRecorder's own
+ * timeslice chunks, where only the first carries the container header.
+ *
+ * Twenty-five leaves room for the clock and the encoder to disagree
+ * slightly without tripping the limit.
+ */
+const AUDIO_SEGMENT_SECONDS = 25;
+
 /** Keep webcam files small enough to upload on a modest connection. */
 const VIDEO_BITS_PER_SECOND = 600_000;
 const AUDIO_BITS_PER_SECOND = 64_000;
@@ -72,6 +87,20 @@ export function useAnswerRecorder({
   onMaxDurationReached,
 }: UseAnswerRecorderOptions) {
   const [state, setState] = useState<RecorderState>("idle");
+  /**
+   * Mirror of `state` for callbacks to read.
+   *
+   * `startRecording` needs the current state for its re-entry guard, but
+   * depending on `state` would give it a new identity every time recording
+   * starts or stops. Callers wire that identity into effects, so the churn
+   * made those effects re-run mid-answer — which is what used to replay the
+   * question over the candidate while they were talking.
+   */
+  const stateRef = useRef<RecorderState>("idle");
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [blob, setBlob] = useState<Blob | null>(null);
@@ -95,20 +124,39 @@ export function useAnswerRecorder({
   const audioRecorderRef = useRef<MediaRecorder | null>(null);
   const videoRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  /** Finished audio segments for this take, in order. */
+  const audioSegmentsRef = useRef<Blob[]>([]);
+  const segmentTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** Set while rolling over, so `onstop` knows not to finish the take. */
+  const rollingOverRef = useRef(false);
   const videoChunksRef = useRef<Blob[]>([]);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewUrlRef = useRef<string | null>(null);
+  /** When the current take started, for its measured duration. */
+  const startedAtRef = useRef<number | null>(null);
   const maxReachedRef = useRef(onMaxDurationReached);
   /** Live camera feed, attached to the <video> preview element. */
   const previewStreamRef = useRef<MediaStream | null>(null);
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
+  /**
+   * The captured stream itself, camera or not.
+   *
+   * `previewStream` is only set when there is a camera to show; silence
+   * detection needs the audio track whether or not the webcam was granted.
+   */
+  const [stream, setStream] = useState<MediaStream | null>(null);
   /**
    * Resolved when both recorders have flushed. `stop()` is fire-and-forget in
    * the MediaRecorder API, so this is how a caller can await the blobs and
    * submit them in one action.
    */
   const stopResolveRef = useRef<
-    ((value: { audio: Blob | null; video: Blob | null }) => void) | null
+    | ((value: {
+        audio: Blob | null;
+        audioSegments: Blob[];
+        video: Blob | null;
+      }) => void)
+    | null
   >(null);
   const finishedAudioRef = useRef<Blob | null>(null);
   const finishedVideoRef = useRef<Blob | null>(null);
@@ -122,6 +170,7 @@ export function useAnswerRecorder({
     stopResolveRef.current = null;
     resolve?.({
       audio: finishedAudioRef.current,
+      audioSegments: audioSegmentsRef.current,
       video: finishedVideoRef.current,
     });
   }, []);
@@ -135,6 +184,14 @@ export function useAnswerRecorder({
     streamRef.current = null;
     previewStreamRef.current = null;
     setPreviewStream(null);
+    setStream(null);
+  }, []);
+
+  const clearSegmentTimer = useCallback(() => {
+    if (segmentTimerRef.current) {
+      clearInterval(segmentTimerRef.current);
+      segmentTimerRef.current = null;
+    }
   }, []);
 
   const clearTick = useCallback(() => {
@@ -155,13 +212,14 @@ export function useAnswerRecorder({
   useEffect(() => {
     return () => {
       clearTick();
+      clearSegmentTimer();
       stopTracks();
       revokePreview();
       for (const rec of [audioRecorderRef.current, videoRecorderRef.current]) {
         if (rec && rec.state !== "inactive") rec.stop();
       }
     };
-  }, [clearTick, stopTracks, revokePreview]);
+  }, [clearTick, clearSegmentTimer, stopTracks, revokePreview]);
 
   /**
    * Explicit permission request — also used by the device check.
@@ -244,6 +302,7 @@ export function useAnswerRecorder({
       }
 
       streamRef.current = stream;
+      setStream(stream);
       hasCameraRef.current = camera;
       setHasCamera(camera);
       if (camera) {
@@ -275,7 +334,7 @@ export function useAnswerRecorder({
   const startRecording = useCallback(async (): Promise<boolean> => {
     // Re-entry guard: never run two recordings at once.
     if (
-      state === "recording" ||
+      stateRef.current === "recording" ||
       audioRecorderRef.current?.state === "recording"
     ) {
       return false;
@@ -313,44 +372,84 @@ export function useAnswerRecorder({
     }
     const audioOnly = new MediaStream(audioTracks);
 
-    let audioRecorder: MediaRecorder;
-    try {
-      audioRecorder = new MediaRecorder(audioOnly, { mimeType: audioMime });
-    } catch {
+    audioSegmentsRef.current = [];
+    rollingOverRef.current = false;
+
+    /**
+     * Start one segment.
+     *
+     * Each call makes a fresh MediaRecorder, so every segment is a complete
+     * file rather than a fragment. `onstop` either rolls straight into the
+     * next segment or finishes the take, depending on why it stopped.
+     */
+    const startSegment = (): MediaRecorder | null => {
+      let segment: MediaRecorder;
       try {
-        audioRecorder = new MediaRecorder(audioOnly);
+        segment = new MediaRecorder(audioOnly, { mimeType: audioMime });
       } catch {
-        setState("error");
-        setErrorMessage("Recording could not be started in this browser.");
-        return false;
+        try {
+          segment = new MediaRecorder(audioOnly);
+        } catch {
+          setState("error");
+          setErrorMessage("Recording could not be started in this browser.");
+          return null;
+        }
       }
-    }
 
-    audioRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) audioChunksRef.current.push(event.data);
-    };
-    audioRecorder.onstop = () => {
-      clearTick();
-      const type = audioRecorder.mimeType || audioMime;
-      const recorded = new Blob(audioChunksRef.current, { type });
-      audioChunksRef.current = [];
+      segment.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
 
-      const url = URL.createObjectURL(recorded);
-      previewUrlRef.current = url;
-      finishedAudioRef.current = recorded;
-      setBlob(recorded);
-      setPreviewUrl(url);
-      setState("recorded");
-      // Devices stay open: the next question starts recording immediately.
-      settleStop();
+      segment.onstop = () => {
+        const type = segment.mimeType || audioMime;
+        const recorded = new Blob(audioChunksRef.current, { type });
+        audioChunksRef.current = [];
+        if (recorded.size > 0) audioSegmentsRef.current.push(recorded);
+
+        // Mid-answer rollover: pick straight back up, do not settle.
+        if (rollingOverRef.current) {
+          rollingOverRef.current = false;
+          const next = startSegment();
+          if (next) {
+            audioRecorderRef.current = next;
+            next.start(1000);
+          }
+          return;
+        }
+
+        clearTick();
+        clearSegmentTimer();
+
+        // The last segment is what the preview plays; the transcript is
+        // assembled server-side from all of them.
+        const last = audioSegmentsRef.current.at(-1) ?? null;
+        if (last) {
+          const url = URL.createObjectURL(last);
+          previewUrlRef.current = url;
+          setPreviewUrl(url);
+        }
+        finishedAudioRef.current = last;
+        setBlob(last);
+        setState("recorded");
+        // Devices stay open: the next question starts recording immediately.
+        settleStop();
+      };
+
+      segment.onerror = () => {
+        clearTick();
+        clearSegmentTimer();
+        rollingOverRef.current = false;
+        setState("error");
+        setErrorMessage("Recording stopped unexpectedly. Please try again.");
+        finishedAudioRef.current = null;
+        settleStop();
+      };
+
+      return segment;
     };
-    audioRecorder.onerror = () => {
-      clearTick();
-      setState("error");
-      setErrorMessage("Recording stopped unexpectedly. Please try again.");
-      finishedAudioRef.current = null;
-      settleStop();
-    };
+
+    const audioRecorder = startSegment();
+    if (!audioRecorder) return false;
 
     // One for the audio recorder, plus one if the video recorder starts.
     let startedRecorders = 1;
@@ -397,8 +496,19 @@ export function useAnswerRecorder({
 
     audioRecorderRef.current = audioRecorder;
     pendingStopsRef.current = startedRecorders;
+    startedAtRef.current = Date.now();
     audioRecorder.start(1000);
     setState("recording");
+
+    // Roll over before the transcription limit. The video recorder is left
+    // alone: it is one continuous file and never goes near Sarvam.
+    clearSegmentTimer();
+    segmentTimerRef.current = setInterval(() => {
+      const current = audioRecorderRef.current;
+      if (!current || current.state !== "recording") return;
+      rollingOverRef.current = true;
+      current.stop();
+    }, AUDIO_SEGMENT_SECONDS * 1000);
 
     clearTick();
     tickRef.current = setInterval(() => {
@@ -420,10 +530,10 @@ export function useAnswerRecorder({
 
     return true;
   }, [
-    state,
     requestPermission,
     revokePreview,
     clearTick,
+    clearSegmentTimer,
     maxSeconds,
     settleStop,
   ]);
@@ -436,9 +546,21 @@ export function useAnswerRecorder({
    */
   const stopRecording = useCallback((): Promise<{
     audio: Blob | null;
+    audioSegments: Blob[];
     video: Blob | null;
+    durationMs: number;
   }> => {
     clearTick();
+    // Must come first: a rollover firing between here and `stop()` would
+    // start a new segment nobody is waiting on.
+    clearSegmentTimer();
+    rollingOverRef.current = false;
+    // Wall-clock length of this take. Read here, before `reset()` can zero
+    // it, because MediaRecorder's WebM carries no duration header and the
+    // browser reports such a file as `Infinity` until fully played.
+    const durationMs = startedAtRef.current
+      ? Date.now() - startedAtRef.current
+      : 0;
 
     const audioActive = audioRecorderRef.current?.state === "recording";
     const videoActive = videoRecorderRef.current?.state === "recording";
@@ -446,21 +568,25 @@ export function useAnswerRecorder({
     if (!audioActive && !videoActive) {
       return Promise.resolve({
         audio: finishedAudioRef.current,
+        audioSegments: audioSegmentsRef.current,
         video: finishedVideoRef.current,
+        durationMs,
       });
     }
 
-    const promise = new Promise<{ audio: Blob | null; video: Blob | null }>(
-      (resolve) => {
-        stopResolveRef.current = resolve;
-      },
-    );
+    const promise = new Promise<{
+      audio: Blob | null;
+      audioSegments: Blob[];
+      video: Blob | null;
+    }>((resolve) => {
+      stopResolveRef.current = resolve;
+    }).then((blobs) => ({ ...blobs, durationMs }));
 
     if (videoActive) videoRecorderRef.current?.stop();
     if (audioActive) audioRecorderRef.current?.stop();
 
     return promise;
-  }, [clearTick]);
+  }, [clearTick, clearSegmentTimer]);
 
   /**
    * Clear the last take but KEEP the camera and microphone open, ready for the
@@ -468,6 +594,8 @@ export function useAnswerRecorder({
    */
   const reset = useCallback(() => {
     clearTick();
+    clearSegmentTimer();
+    audioSegmentsRef.current = [];
     revokePreview();
     setBlob(null);
     setVideoBlob(null);
@@ -477,15 +605,16 @@ export function useAnswerRecorder({
     setElapsedSeconds(0);
     setErrorMessage(null);
     setState(streamRef.current ? "ready" : "idle");
-  }, [clearTick, revokePreview]);
+  }, [clearTick, clearSegmentTimer, revokePreview]);
 
   /** Hand the devices back — turns off the camera light. */
   const release = useCallback(() => {
     clearTick();
+    clearSegmentTimer();
     revokePreview();
     stopTracks();
     setState("idle");
-  }, [clearTick, revokePreview, stopTracks]);
+  }, [clearTick, clearSegmentTimer, revokePreview, stopTracks]);
 
   // NOTE: `hasCameraRef` is intentionally NOT cleared by reset — the grant
   // survives between turns, and clearing it would drop video on turn 2.
@@ -498,6 +627,7 @@ export function useAnswerRecorder({
     videoBlob,
     previewUrl,
     previewStream,
+    stream,
     hasCamera,
     cameraError,
     isRecording: state === "recording",

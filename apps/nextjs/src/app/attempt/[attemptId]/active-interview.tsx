@@ -9,7 +9,10 @@ import type { Messages } from "~/config/messages";
 import type { WorkSkillId } from "~/config/work-skills";
 import { useAnswerRecorder } from "~/hooks/use-answer-recorder";
 import { useLiveCaptions } from "~/hooks/use-live-captions";
+import { useSpeechActivity } from "~/hooks/use-speech-activity";
 import { uploadAnswerVideo } from "./upload-video";
+import { LanguagePicker } from "./language-picker";
+import type { PickableLanguage } from "./language-picker";
 import { preventCapture, useCaptureDeterrent } from "./capture-guard";
 import {
   chooseLanguageAction,
@@ -24,6 +27,7 @@ import {
   MIN_ANSWER_SECONDS,
   POLL_INTERVAL_MS,
   POLL_TIMEOUT_MS,
+  SILENCE_ADVANCE_SECONDS,
 } from "./constants";
 
 interface TurnView {
@@ -39,7 +43,6 @@ interface TurnView {
 
 interface StatusResponse {
   attemptStatus: string;
-  lastTranscript: string | null;
   currentQuestionNumber: number;
   totalTurns: number;
   needsLanguageChoice: boolean;
@@ -58,6 +61,7 @@ export function ActiveInterview({
   initialAttemptStatus,
   initialNeedsLanguage,
   languages,
+  currentLanguage,
   m,
   languageCode,
 }: {
@@ -67,8 +71,10 @@ export function ActiveInterview({
   initialQuestionNumber: number;
   initialAttemptStatus: string;
   initialNeedsLanguage: boolean;
-  /** Offered when detection is unusable — never guessed at. */
-  languages: { key: string; displayName: string; promptName: string }[];
+  /** Offered when detection is unusable, and in the picker as a backup. */
+  languages: PickableLanguage[];
+  /** Detected (or chosen) language key; null until the probe is scored. */
+  currentLanguage: string | null;
   m: Messages;
   /** BCP-47 code of the session language, for correct text rendering. */
   languageCode: string;
@@ -92,8 +98,6 @@ export function ActiveInterview({
   /** Set when detection failed and the candidate must pick a language. */
   const [needsLanguage, setNeedsLanguage] = useState(initialNeedsLanguage);
   const [choosingLanguage, setChoosingLanguage] = useState(false);
-  /** Sarvam's transcript of the previous answer — the authoritative one. */
-  const [lastTranscript, setLastTranscript] = useState<string | null>(null);
   const [retryingAudio, setRetryingAudio] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -160,7 +164,20 @@ export function ActiveInterview({
    * playing so the interviewer's voice is not captured in the answer.
    */
   const autoStartedForTurnRef = useRef<number | null>(null);
+  const playedForTurnRef = useRef<number | null>(null);
   const startRecordingFn = recorder.startRecording;
+
+  /**
+   * Forget that this turn has already been played and recorded.
+   *
+   * Both guards are keyed by turn number, which is exactly right for moving
+   * forwards and exactly wrong for staying put — a repeat has to clear them
+   * or the question would sit there silently.
+   */
+  const allowReplay = useCallback(() => {
+    autoStartedForTurnRef.current = null;
+    playedForTurnRef.current = null;
+  }, []);
 
   const beginAnswer = useCallback(() => {
     const current = turnRef.current;
@@ -184,15 +201,103 @@ export function ActiveInterview({
     onLeave: noteLeftTab,
   });
 
+  /* ------------------------------ recordings queue --------------------------- */
+
+  /**
+   * Webcam recordings, held in the browser until the interview is over.
+   *
+   * Nothing is uploaded between questions. A 1–2 MB upload starting the
+   * moment an answer is submitted competes with the very requests the
+   * candidate is waiting on, and on a modest connection that is the
+   * difference between a pause and a stall. They all go up once, at the end,
+   * when nothing else is happening.
+   *
+   * The trade is that these exist only in this tab until then: closing it
+   * mid-interview loses the video. Transcripts, scores and the report do not
+   * depend on them — they are written per turn, server side — so what is at
+   * risk is the recording, never the assessment.
+   */
+  const pendingVideosRef = useRef<
+    { turnNumber: number; video: Blob; durationMs: number }[]
+  >([]);
+  const [savingRecordings, setSavingRecordings] = useState(false);
+  /** One flush at a time, or an interruption could upload a clip twice. */
+  const flushingRef = useRef(false);
+
+  /**
+   * Send whatever is queued.
+   *
+   * `visible` distinguishes the two callers: the end-of-interview flush,
+   * which the candidate is waiting on and should be told about, from a
+   * salvage flush triggered by them leaving, where there is no one to show
+   * a spinner to.
+   *
+   * A clip that fails goes back on the queue rather than being dropped, so
+   * a blip mid-interview costs a retry rather than the recording.
+   */
+  const flushRecordings = useCallback(
+    async (visible = true) => {
+      if (flushingRef.current) return;
+      const queued = pendingVideosRef.current.splice(0);
+      if (queued.length === 0) return;
+
+      flushingRef.current = true;
+      if (visible) setSavingRecordings(true);
+      try {
+        // One at a time: several multi-megabyte uploads at once on a slow
+        // link finish no sooner and are far more likely to time out.
+        for (const item of queued) {
+          const sent = await uploadAnswerVideo(
+            attemptId,
+            item.turnNumber,
+            item.video,
+            item.durationMs,
+          );
+          if (!sent) pendingVideosRef.current.push(item);
+        }
+      } finally {
+        flushingRef.current = false;
+        if (visible) setSavingRecordings(false);
+      }
+    },
+    [attemptId],
+  );
+
+  /**
+   * Salvage the recordings when the candidate goes away.
+   *
+   * Holding them until the end is the plan; losing them because a laptop
+   * lid closed is not. `visibilitychange` fires while the page is still
+   * alive and able to make requests, which is the last moment a
+   * multi-megabyte upload can realistically start — `beforeunload` is too
+   * late, and the 64KB cap on `keepalive` requests rules out finishing one
+   * there. It is best-effort by nature: what completes, completes.
+   */
+  useEffect(() => {
+    function salvage() {
+      if (document.visibilityState !== "hidden") return;
+      if (pendingVideosRef.current.length === 0) return;
+      void flushRecordings(false);
+    }
+    document.addEventListener("visibilitychange", salvage);
+    window.addEventListener("pagehide", salvage);
+    return () => {
+      document.removeEventListener("visibilitychange", salvage);
+      window.removeEventListener("pagehide", salvage);
+    };
+  }, [flushRecordings]);
+
   /* ---------------------------- leave confirmation --------------------------- */
 
   useEffect(() => {
     const handler = (event: BeforeUnloadEvent) => {
-      // Only nag when there is something to lose.
+      // Only nag when there is something to lose — which now includes
+      // recordings still waiting to be uploaded.
       if (
         phase === "answering" &&
         !recorder.isRecording &&
-        !recorder.hasRecording
+        !recorder.hasRecording &&
+        pendingVideosRef.current.length === 0
       ) {
         return;
       }
@@ -247,6 +352,10 @@ export function ActiveInterview({
 
       if (data.isComplete) {
         stopPolling();
+        // The recordings live only in this tab until now, and navigating
+        // away would abort an upload in flight — so they go up first and
+        // the candidate is told what the wait is for.
+        await flushRecordings();
         router.replace(`/attempt/${attemptId}/result`);
         return;
       }
@@ -260,9 +369,25 @@ export function ActiveInterview({
       }
 
       setNeedsLanguage(data.needsLanguageChoice);
-      if (data.lastTranscript) setLastTranscript(data.lastTranscript);
       if (data.needsLanguageChoice) {
         stopPolling();
+        setPhase("answering");
+        return;
+      }
+
+      // Same question, back to unanswered: the candidate asked to hear it
+      // again, so play it and start listening rather than waiting for a
+      // next question that is not coming.
+      if (
+        data.turn &&
+        data.turn.turnNumber === questionNumber &&
+        data.turn.status === "awaiting_answer"
+      ) {
+        stopPolling();
+        setTurn(data.turn);
+        setError(null);
+        resetRecorder();
+        allowReplay();
         setPhase("answering");
         return;
       }
@@ -275,6 +400,7 @@ export function ActiveInterview({
         setAudioError(false);
         setError(null);
         resetRecorder();
+        allowReplay();
         setPhase("answering");
         return;
       }
@@ -298,6 +424,9 @@ export function ActiveInterview({
         stopPolling();
         setError(genericError);
         setPhase("error");
+        // Whatever is recorded is worth keeping even though this turn
+        // failed — do not sit on it waiting for an end that may not come.
+        void flushRecordings(false);
         return;
       }
       // Transient network blip — keep polling.
@@ -311,6 +440,8 @@ export function ActiveInterview({
     scheduleNextPoll,
     resetRecorder,
     genericError,
+    flushRecordings,
+    allowReplay,
   ]);
 
   useEffect(() => {
@@ -323,19 +454,32 @@ export function ActiveInterview({
     scheduleNextPoll();
   }, [scheduleNextPoll, stopPolling]);
 
-  // Resume polling if the page was reloaded mid-processing.
+  /**
+   * Polling is owned entirely by the phase.
+   *
+   * It used to be started by hand inside `submitAnswer` as well, and this
+   * effect's cleanup then ran on the very next render and cleared the timer
+   * that had just been set — without nulling the ref, so the
+   * `!pollTimerRef.current` guard blocked it from ever restarting. The
+   * interview sat on "Processing your answer…" until the page was reloaded.
+   *
+   * Driving it from one place removes the race: entering `processing` starts
+   * it, leaving `processing` stops it, and `startPolling` clears any previous
+   * timer so running twice is harmless.
+   */
   useEffect(() => {
-    if (phase === "processing" && !pollTimerRef.current) startPolling();
-    return () => {
-      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+    if (phase !== "processing") return;
+    startPolling();
+    return stopPolling;
+  }, [phase, startPolling, stopPolling]);
+
+  // Never leave a timer running after the screen goes away.
+  useEffect(() => stopPolling, [stopPolling]);
 
   /* -------------------------------- submitting ------------------------------- */
 
   const submitAnswer = useCallback(
-    async (audio: Blob, video: Blob | null) => {
+    async (segments: Blob[], video: Blob | null, durationMs: number) => {
       if (submittingRef.current) return;
       if (!turn) return;
 
@@ -344,10 +488,16 @@ export function ActiveInterview({
       setError(null);
 
       try {
+        // One part per segment, in order. A long answer arrives as several
+        // files because the transcriber will not take more than 30 seconds
+        // in one go — see AUDIO_SEGMENT_SECONDS.
         const form = new FormData();
-        const extension = audio.type.includes("mp4") ? "m4a" : "webm";
-        form.append("audio", audio, `answer.${extension}`);
+        segments.forEach((segment, index) => {
+          const extension = segment.type.includes("mp4") ? "m4a" : "webm";
+          form.append("audio", segment, `answer-${index}.${extension}`);
+        });
         form.append("turnNumber", String(turn.turnNumber));
+        form.append("durationMs", String(durationMs));
 
         const response = await fetch(`/api/attempt/${attemptId}/answer`, {
           method: "POST",
@@ -368,14 +518,18 @@ export function ActiveInterview({
           return;
         }
 
-        // Audio is accepted; the interview can proceed. The webcam file is
-        // uploaded in the background and never blocks the candidate.
+        // Held back rather than uploaded now — see `pendingVideosRef`.
         if (video && video.size > 0) {
-          void uploadAnswerVideo(attemptId, turn.turnNumber, video);
+          pendingVideosRef.current.push({
+            turnNumber: turn.turnNumber,
+            video,
+            durationMs,
+          });
         }
 
+        // Polling begins from the phase effect, not here — see the note
+        // on that effect.
         setPhase("processing");
-        startPolling();
       } catch {
         setError(genericError);
         setPhase("error");
@@ -383,7 +537,7 @@ export function ActiveInterview({
         submittingRef.current = false;
       }
     },
-    [turn, attemptId, router, startPolling, genericError],
+    [turn, attemptId, router, genericError],
   );
 
   /**
@@ -394,15 +548,36 @@ export function ActiveInterview({
    */
   const handleNext = useCallback(async () => {
     if (submittingRef.current) return;
-    const { audio, video } = await recorder.stopRecording();
+    const { audioSegments, video, durationMs } = await recorder.stopRecording();
 
-    if (!audio || audio.size < MIN_ANSWER_BLOB_BYTES) {
+    // Judged on the whole answer, not the last segment: a reply that rolls
+    // over at 25s can leave a final fragment far below this on its own.
+    const recorded = audioSegments.reduce((sum, part) => sum + part.size, 0);
+    if (recorded < MIN_ANSWER_BLOB_BYTES) {
       setError(m.interview.tooShort);
       setPhase("error");
       return;
     }
-    await submitAnswer(audio, video);
+    await submitAnswer(audioSegments, video, durationMs);
   }, [recorder, submitAnswer, m.interview.tooShort]);
+
+  /* ---------------------------- finished speaking ---------------------------- */
+
+  /**
+   * Move on by itself once the candidate stops talking.
+   *
+   * A real interviewer does not wait to be told an answer is over, and
+   * asking someone to press a button after every reply is the part of this
+   * that felt least like an interview. Next is still there for anyone who
+   * wants it, and the countdown resets the moment they speak again.
+   */
+  const speech = useSpeechActivity({
+    stream: recorder.stream,
+    active: recorder.isRecording && !isBusy,
+    silenceSeconds: SILENCE_ADVANCE_SECONDS,
+    minSpeechSeconds: MIN_ANSWER_SECONDS,
+    onSilence: () => void handleNext(),
+  });
 
   /* ------------------------------ question audio ----------------------------- */
 
@@ -420,13 +595,22 @@ export function ActiveInterview({
    * no audio at all if TTS failed — both fall through to a short timer so the
    * candidate is never left with a question and no recording running.
    */
+  const turnNumber = turn?.turnNumber ?? null;
+
   useEffect(() => {
-    if (phase !== "answering" || !turn) return;
+    if (phase !== "answering" || turnNumber === null) return;
+    // Exactly once per question. Re-entering this effect for any other
+    // reason must never restart the audio: calling `play()` on an element
+    // that has already ended plays the question again, over the candidate's
+    // answer, and the microphone records it.
+    if (playedForTurnRef.current === turnNumber) return;
+    playedForTurnRef.current = turnNumber;
 
     let timer: ReturnType<typeof setTimeout> | null = null;
     const el = audioRef.current;
 
-    if (turn.questionAudioId && el) {
+    if (el && turnRef.current?.questionAudioId) {
+      el.currentTime = 0;
       void el.play().catch(() => {
         timer = setTimeout(beginAnswer, 400);
       });
@@ -443,7 +627,7 @@ export function ActiveInterview({
       if (timer) clearTimeout(timer);
       clearTimeout(backstop);
     };
-  }, [turn, phase, beginAnswer]);
+  }, [turnNumber, phase, beginAnswer]);
 
   async function handleRetryAudio() {
     if (!turn) return;
@@ -454,8 +638,21 @@ export function ActiveInterview({
     else setAudioError(true);
   }
 
+  /**
+   * "Record again" after a failed turn.
+   *
+   * Has to put the turn back to how it looked before the candidate spoke,
+   * not just clear the message. The recorder is sitting in its finished
+   * state and both once-per-turn guards have already fired, so without
+   * resetting them the question never replays, recording never restarts,
+   * and Next stays disabled behind `canFinish` — a dead end with "Getting
+   * ready…" underneath it, which is exactly what this button was leaving
+   * behind.
+   */
   function handleRetrySubmit() {
     setError(null);
+    resetRecorder();
+    allowReplay();
     setPhase("answering");
   }
 
@@ -491,16 +688,33 @@ export function ActiveInterview({
               </p>
             </div>
 
+            {/* A grid rather than the dropdown used mid-interview: here
+                choosing is the only thing on screen, so every option should
+                be visible at once instead of behind a click. */}
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {languages.map((lang) => (
-                <Button
+                <button
                   key={lang.key}
-                  variant="secondary"
+                  type="button"
                   onClick={() => void pickLanguage(lang.key)}
                   disabled={choosingLanguage}
+                  className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border-subtle bg-surface px-3 py-2.5 text-left transition-colors hover:border-border-strong hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {lang.displayName}
-                </Button>
+                  <span
+                    aria-hidden
+                    className="grid size-7 shrink-0 place-items-center rounded-md bg-surface-muted text-[13px] leading-none font-semibold text-content-muted"
+                  >
+                    {lang.symbol}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">
+                      {lang.displayName}
+                    </span>
+                    <span className="block truncate text-xs text-content-muted">
+                      {lang.promptName}
+                    </span>
+                  </span>
+                </button>
               ))}
             </div>
 
@@ -523,6 +737,21 @@ export function ActiveInterview({
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
+      {/* Backup for automatic detection. Kept at the very top so a candidate
+          being interviewed in the wrong language can fix it immediately,
+          without hunting for the control while a timer runs. */}
+      <div className="flex justify-end">
+        <LanguagePicker
+          languages={languages}
+          value={currentLanguage}
+          onSelect={(key) => void pickLanguage(key)}
+          busy={choosingLanguage}
+          disabled={isBusy}
+          label={m.interview.languageLabel}
+          hint={m.interview.languageHint}
+        />
+      </div>
+
       <div>
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-sm font-medium text-content-muted">
@@ -676,15 +905,17 @@ export function ActiveInterview({
                 }
               />
               <span className="text-sm font-medium">
-                {phase === "processing"
-                  ? m.interview.processingStatus
-                  : phase === "submitting"
-                    ? m.interview.uploading
-                    : recorder.isRecording
-                      ? m.interview.recording
-                      : recorder.hasRecording
-                        ? m.interview.recorded
-                        : m.interview.ready}
+                {savingRecordings
+                  ? m.interview.savingRecordings
+                  : phase === "processing"
+                    ? m.interview.processingStatus
+                    : phase === "submitting"
+                      ? m.interview.uploading
+                      : recorder.isRecording
+                        ? m.interview.recording
+                        : recorder.hasRecording
+                          ? m.interview.recorded
+                          : m.interview.ready}
               </span>
             </div>
 
@@ -736,9 +967,8 @@ export function ActiveInterview({
             </div>
           ) : null}
 
-          {/* One control. Recording starts on its own once the question has
-              been read out, so the candidate only has to say when they are
-              done — the same as a real interview. */}
+          {/* The interview moves on by itself when the candidate stops
+              talking; this is here for anyone who would rather not wait. */}
           <div className="flex flex-wrap items-center gap-3">
             <Button
               size="lg"
@@ -752,7 +982,13 @@ export function ActiveInterview({
                   : m.interview.next}
             </Button>
 
-            {!canFinish && !isBusy ? (
+            {speech.secondsRemaining !== null && !isBusy ? (
+              <p className="text-sm font-medium text-accent" aria-live="polite">
+                {t(m.interview.advancingIn, {
+                  seconds: speech.secondsRemaining,
+                })}
+              </p>
+            ) : !canFinish && !isBusy ? (
               <p className="text-sm text-content-muted">
                 {recorder.isRecording
                   ? m.interview.keepSpeaking
@@ -761,26 +997,14 @@ export function ActiveInterview({
             ) : null}
           </div>
 
-          {phase === "processing" ? (
+          {savingRecordings ? (
+            <p className="text-sm text-content-muted" aria-live="polite">
+              {m.interview.savingRecordings}
+            </p>
+          ) : phase === "processing" ? (
             <p className="text-sm text-content-muted">
               {m.interview.processingHint}
             </p>
-          ) : null}
-
-          {/* What Sarvam actually heard last time — this is what was stored
-              and scored, so showing it lets the candidate correct course. */}
-          {lastTranscript && !recorder.isRecording ? (
-            <div className="rounded-lg bg-surface-muted px-3 py-2.5">
-              <p className="text-xs font-medium text-content-muted">
-                {m.interview.previousTranscript}
-              </p>
-              <p
-                className="mt-1 text-sm leading-relaxed whitespace-pre-wrap"
-                lang={languageCode}
-              >
-                {lastTranscript}
-              </p>
-            </div>
           ) : null}
         </CardContent>
       </Card>

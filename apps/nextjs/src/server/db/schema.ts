@@ -294,6 +294,15 @@ export const interviewAudioTable = pgTable(
     kind: interviewAudioKindEnum("kind").notNull(),
     mimeType: text("mime_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
+    /**
+     * How long the clip runs, as measured while recording.
+     *
+     * Taken from the recorder rather than read back out of the container:
+     * MediaRecorder WebM is written without a duration header, so a browser
+     * reports it as `Infinity` until the whole file has been played through.
+     * Nullable — clips predating this, and question audio, have none.
+     */
+    durationMs: integer("duration_ms"),
     /** Object key in Cloudflare R2. Bytes are never stored in Postgres. */
     storageKey: text("storage_key").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })

@@ -10,7 +10,7 @@ import {
   processTurn,
   submitAnswer,
 } from "~/server/attempt/service";
-import { uuidSchema } from "~/server/interview/validation";
+import { MAX_ANSWER_SECONDS, uuidSchema } from "~/server/interview/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,10 +52,20 @@ export async function POST(
     );
   }
 
-  const file = formData.get("audio");
+  const files = formData.getAll("audio").filter((f) => f instanceof File);
+  const file = files[0];
   const turnNumber = Number(formData.get("turnNumber"));
+  // Recorded length, measured in the browser. Untrusted and cosmetic — it
+  // labels the clip for the admin, so a bad value is dropped, not rejected.
+  const declaredDuration = Number(formData.get("durationMs"));
+  const durationMs =
+    Number.isFinite(declaredDuration) &&
+    declaredDuration > 0 &&
+    declaredDuration <= MAX_ANSWER_SECONDS * 1000 * 2
+      ? Math.round(declaredDuration)
+      : null;
 
-  if (!(file instanceof File)) {
+  if (!file) {
     return NextResponse.json(
       { error: "No recording was attached." },
       { status: 400 },
@@ -64,16 +74,23 @@ export async function POST(
   if (!Number.isInteger(turnNumber) || turnNumber < 1) {
     return NextResponse.json({ error: "Invalid question." }, { status: 400 });
   }
-  // Check the declared size before buffering the body into memory.
-  if (file.size > MAX_ANSWER_BYTES) {
+  // Check declared sizes before buffering anything into memory.
+  const declaredTotal = files.reduce((sum, f) => sum + f.size, 0);
+  if (declaredTotal > MAX_ANSWER_BYTES) {
     return NextResponse.json(
       { error: "That recording is too large. Please keep answers shorter." },
       { status: 413 },
     );
   }
 
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const validation = validateAnswerAudio(buffer.byteLength, file.type);
+  const segments = await Promise.all(
+    files.map(async (f) => Buffer.from(await f.arrayBuffer())),
+  );
+
+  // Validated on the total: a long answer arrives as several segments, and
+  // the last one can be a fraction of a second on its own.
+  const totalBytes = segments.reduce((sum, b) => sum + b.byteLength, 0);
+  const validation = validateAnswerAudio(totalBytes, file.type);
   if (!validation.ok || !validation.mimeType) {
     return NextResponse.json(
       { error: validation.error ?? "That recording could not be used." },
@@ -81,18 +98,26 @@ export async function POST(
     );
   }
 
+  // Hoisted so the narrowing above survives into the `after()` closure.
+  const mimeType = validation.mimeType;
+
   try {
     const result = await submitAnswer({
       attempt: found.attempt,
       turnNumber,
-      audio: buffer,
-      mimeType: validation.mimeType,
+      mimeType,
     });
 
     // Only the request that actually claimed the turn schedules the work.
     if (result.status === "processing") {
       after(async () => {
-        await processTurn(found.attempt.id, result.turnId, found.interview);
+        // The bytes go with it: transcription and archiving both happen
+        // out here, so neither is on the path the candidate waits on.
+        await processTurn(found.attempt.id, result.turnId, found.interview, {
+          segments,
+          mimeType,
+          durationMs,
+        });
       });
     }
 

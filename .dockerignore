@@ -1,0 +1,47 @@
+# Everything here is either rebuilt inside the image, useless to it, or
+# must never be baked into it. Keeping the build context small also keeps
+# `docker build` from shipping a gigabyte of node_modules to the daemon
+# before it runs the first instruction.
+
+# Installed inside the image, for the image's own platform. Copying a host
+# node_modules in would also bring host-native binaries.
+node_modules
+**/node_modules
+
+# Build output and caches
+.next
+**/.next
+.turbo
+**/.turbo
+dist
+**/dist
+out
+**/out
+*.tsbuildinfo
+
+# Secrets. The image takes its configuration at runtime (--env-file, or the
+# platform's own secret store); anything copied in here would be readable by
+# anyone who can pull the image.
+.env
+.env.*
+!.env.example
+
+# Version control and CI
+.git
+.gitignore
+.github
+
+# Editor and OS noise
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Local-only tooling
+.claude
+scratchpad
+
+# Tests and docs do not run or serve from the image
+**/*.test.ts
+**/*.test.tsx
+coverage

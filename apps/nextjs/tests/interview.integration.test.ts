@@ -10,11 +10,16 @@ import {
   usersTable,
 } from "~/server/db/schema";
 import { deleteAudioObject } from "~/server/interview/storage";
+import {
+  createAnswerVideoUpload,
+  relayAnswerVideo,
+} from "~/server/interview/video";
 import { hashPassword, verifyPassword } from "~/server/auth/password";
 import { isUniqueViolation } from "~/lib/auth-errors";
 import { lucia } from "~/server/auth/lucia";
 import { loginSchema } from "~/server/interview/validation";
 import {
+  createGeneralInterview,
   createInterview,
   generateToken,
   getAttemptForAdmin,
@@ -35,7 +40,7 @@ import { LANGUAGE_PROBE_TURN, skillForAttemptTurn } from "~/config/work-skills";
  * Integration tests for the admin/candidate split.
  *
  * These need a real Postgres with migrations applied and real R2 credentials
- * (answer submission writes a recording). They skip, rather than fail, when
+ * (voicing a question writes a clip). They skip, rather than fail, when
  * either is absent so the default run stays hermetic.
  *
  * `startAttempt` does make one real Sarvam TTS call to voice the language
@@ -44,8 +49,6 @@ import { LANGUAGE_PROBE_TURN, skillForAttemptTurn } from "~/config/work-skills";
  */
 const hasDb = process.env.__SKILL_PASSPORT_HAS_DB === "1";
 const hasR2 = process.env.__SKILL_PASSPORT_HAS_R2 === "1";
-
-const fakeAudio = Buffer.alloc(2048, 1);
 
 describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
   let alice = "";
@@ -252,13 +255,11 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
     const first = await submitAnswer({
       attempt,
       turnNumber: 1,
-      audio: fakeAudio,
       mimeType: "audio/webm",
     });
     const second = await submitAnswer({
       attempt,
       turnNumber: 1,
-      audio: fakeAudio,
       mimeType: "audio/webm",
     });
 
@@ -279,7 +280,6 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
         submitAnswer({
           attempt,
           turnNumber: 1,
-          audio: fakeAudio,
           mimeType: "audio/webm",
         }),
       ),
@@ -299,7 +299,6 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
       submitAnswer({
         attempt,
         turnNumber: 5,
-        audio: fakeAudio,
         mimeType: "audio/webm",
       }),
     ).rejects.toBeInstanceOf(AttemptError);
@@ -321,10 +320,179 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
       submitAnswer({
         attempt,
         turnNumber: 1,
-        audio: fakeAudio,
         mimeType: "audio/webm",
       }),
     ).rejects.toBeInstanceOf(AttemptError);
+  });
+
+  /* ---------------------------- one-click creation -------------------------- */
+
+  it("creates a ready-to-share interview with no input", async () => {
+    const interview = await createGeneralInterview(alice);
+
+    expect(interview.title).toMatch(/^General interview \d+$/);
+    expect(interview.description).toBeNull();
+    expect(interview.isOpen).toBe(true);
+    expect(interview.questionCount).toBeGreaterThan(0);
+    // The link is the whole point of the button.
+    expect(interview.publicToken.length).toBeGreaterThanOrEqual(32);
+  });
+
+  it("numbers generated titles per admin, not globally", async () => {
+    const before = await listInterviews(mallory);
+    const created = await createGeneralInterview(mallory);
+
+    expect(created.title).toBe(`General interview ${before.length + 1}`);
+  });
+
+  /* ----------------------------- webcam recording --------------------------- */
+
+  /**
+   * The direct browser->R2 upload needs a CORS rule on the bucket, which the
+   * app cannot create for itself; without one it fails silently and leaves a
+   * reserved 0-byte row behind. These cover the relay that makes video work
+   * regardless — see docs/r2-cors.md.
+   */
+  it("relays a webcam recording to storage and links it to the turn", async () => {
+    const { attemptId } = await newAttempt(alice);
+    await startAttempt(attemptId);
+
+    const ticket = await createAnswerVideoUpload({
+      attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      mimeType: "video/webm",
+    });
+
+    const body = Buffer.alloc(4096, 7);
+    const result = await relayAnswerVideo({
+      attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      videoId: ticket.videoId,
+      body,
+    });
+
+    expect(result.linked).toBe(true);
+
+    // Size comes from the stored object, never from the client's claim.
+    const stored = await db.query.interviewAudioTable.findFirst({
+      where: eq(interviewAudioTable.id, ticket.videoId),
+    });
+    expect(stored?.sizeBytes).toBe(body.byteLength);
+    expect(stored?.kind).toBe("answer_video");
+
+    const turns = await getTurns(attemptId);
+    const probe = turns.find((t) => t.turnNumber === LANGUAGE_PROBE_TURN);
+    expect(probe?.answerVideoId).toBe(ticket.videoId);
+  });
+
+  it("discards an empty recording instead of linking it", async () => {
+    const { attemptId } = await newAttempt(alice);
+    await startAttempt(attemptId);
+
+    const ticket = await createAnswerVideoUpload({
+      attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      mimeType: "video/webm",
+    });
+
+    const result = await relayAnswerVideo({
+      attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      videoId: ticket.videoId,
+      body: Buffer.alloc(0),
+    });
+
+    expect(result.linked).toBe(false);
+
+    // No orphan left behind — that was the original bug's fingerprint.
+    const stored = await db.query.interviewAudioTable.findFirst({
+      where: eq(interviewAudioTable.id, ticket.videoId),
+    });
+    expect(stored).toBeUndefined();
+  });
+
+  // Reloading the page mid-upload aborts the request and strands the row
+  // that was reserved for it. The next upload clears them.
+  it("clears rows left behind by an abandoned upload", async () => {
+    const { attemptId } = await newAttempt(alice);
+    await startAttempt(attemptId);
+
+    const abandoned = await createAnswerVideoUpload({
+      attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      mimeType: "video/webm",
+    });
+
+    // Second ticket, as the next answer would request.
+    const fresh = await createAnswerVideoUpload({
+      attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      mimeType: "video/webm",
+    });
+
+    const rows = await db.query.interviewAudioTable.findMany({
+      where: eq(interviewAudioTable.attemptId, attemptId),
+    });
+    const ids = rows.map((r) => r.id);
+
+    expect(ids).not.toContain(abandoned.videoId);
+    expect(ids).toContain(fresh.videoId);
+  });
+
+  it("keeps a linked recording when a later upload starts", async () => {
+    const { attemptId } = await newAttempt(alice);
+    await startAttempt(attemptId);
+
+    const ticket = await createAnswerVideoUpload({
+      attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      mimeType: "video/webm",
+    });
+    await relayAnswerVideo({
+      attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      videoId: ticket.videoId,
+      body: Buffer.alloc(4096, 7),
+    });
+
+    await createAnswerVideoUpload({
+      attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      mimeType: "video/webm",
+    });
+
+    const kept = await db.query.interviewAudioTable.findFirst({
+      where: eq(interviewAudioTable.id, ticket.videoId),
+    });
+    expect(kept?.sizeBytes).toBe(4096);
+  });
+
+  it("refuses to relay a recording belonging to another attempt", async () => {
+    const mine = await newAttempt(alice);
+    const theirs = await newAttempt(mallory);
+    await startAttempt(mine.attemptId);
+    await startAttempt(theirs.attemptId);
+
+    const ticket = await createAnswerVideoUpload({
+      attemptId: theirs.attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      mimeType: "video/webm",
+    });
+
+    // Same videoId, but claimed under an attempt that does not own it.
+    const result = await relayAnswerVideo({
+      attemptId: mine.attemptId,
+      turnNumber: LANGUAGE_PROBE_TURN,
+      videoId: ticket.videoId,
+      body: Buffer.alloc(4096, 7),
+    });
+
+    expect(result.linked).toBe(false);
+
+    const turns = await getTurns(mine.attemptId);
+    expect(
+      turns.find((t) => t.turnNumber === LANGUAGE_PROBE_TURN)?.answerVideoId,
+    ).toBeNull();
   });
 
   /* -------------------------------- reporting ------------------------------ */

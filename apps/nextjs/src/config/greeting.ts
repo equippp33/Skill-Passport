@@ -3,11 +3,12 @@ import { INTERVIEW_LANGUAGES } from "./languages";
 /**
  * The language probe: turn 1 of every attempt.
  *
- * At this point we do not know what the candidate speaks, so the opener is
- * deliberately language-neutral. It is shown in several scripts and spoken in
- * a configurable neutral language, and it invites the candidate to reply in
- * whichever language they are comfortable with. Sarvam then identifies the
- * language from that reply.
+ * The opener is asked in English and says nothing about language. Telling a
+ * candidate to "answer in whichever language you like" makes the choice feel
+ * like a test in itself; a real interviewer just asks the question. Whatever
+ * language the candidate replies in is the answer, and Sarvam identifies it
+ * from that reply — so the detection works exactly the same without the
+ * instruction.
  *
  * It is NOT scored — it exists to hear the candidate speak.
  */
@@ -16,16 +17,18 @@ import { INTERVIEW_LANGUAGES } from "./languages";
 export const PROBE_SPOKEN_LANGUAGE_CODE = INTERVIEW_LANGUAGES.english.code;
 
 export const PROBE_SPOKEN_TEXT =
-  "Hello, and welcome to your interview. Please answer in the language you " +
-  "are most comfortable with. To begin, tell me your name and a little " +
-  "about the work you have done.";
+  "Hello, and welcome to your interview. To begin, please tell me your name " +
+  "and a little about the work you have done.";
 
 /**
- * Shown on screen alongside the spoken opener.
+ * Shown on the pre-start page, NOT with the question itself.
  *
- * A candidate who does not read English still sees the invitation in a script
- * they recognise. Kept short on purpose — this is a prompt to start talking,
- * not instructions to study.
+ * The reassurance that any language is welcome belongs before the interview
+ * begins, where it is context. Inside the interview it would be an
+ * instruction attached to the first question — see the note above.
+ *
+ * A candidate who does not read English still sees it in a script they
+ * recognise. Kept short on purpose.
  */
 export const PROBE_PROMPTS: { code: string; text: string }[] = [
   {

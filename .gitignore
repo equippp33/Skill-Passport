@@ -14,9 +14,6 @@ build/
 .cache/
 .eslintcache
 
-# expo / react native
-.expo/
-.expo-shared/
 android/
 ios/
 *.jks

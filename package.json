@@ -10,7 +10,6 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "dev:next": "turbo run dev -F @skill-passport/nextjs...",
-    "dev:expo": "turbo run dev -F @skill-passport/expo...",
     "lint": "turbo run lint --continue",
     "lint:ws": "pnpm dlx sherif@latest",
     "typecheck": "turbo run typecheck",

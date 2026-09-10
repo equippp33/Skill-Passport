@@ -25,3 +25,21 @@ export function formatDate(value: Date | string | null): string {
     year: "numeric",
   }).format(date);
 }
+
+/**
+ * Date and time to the minute.
+ *
+ * Used where the ordering of things within one sitting matters — which
+ * answer came when — and a date alone would say nothing.
+ */
+export function formatDateTime(value: Date | string | null): string {
+  if (!value) return "—";
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}

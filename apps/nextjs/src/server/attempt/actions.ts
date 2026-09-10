@@ -2,13 +2,13 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 
 import {
   getAttemptForCandidate,
   getInterviewByPublicToken,
   setAttemptCookie,
 } from "./access";
+import { candidateDetailsSchema } from "~/server/interview/validation";
 import {
   chooseLanguage,
   createAttempt,
@@ -20,28 +20,6 @@ export interface CandidateFormState {
   error: string | null;
   fieldErrors?: Record<string, string>;
 }
-
-const detailsSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(2, "Enter your full name.")
-    .max(120, "Keep your name under 120 characters."),
-  email: z
-    .string()
-    .trim()
-    .max(255)
-    .email("Enter a valid email address.")
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v && v.length > 0 ? v.toLowerCase() : null)),
-  phone: z
-    .string()
-    .trim()
-    .max(32, "Keep the phone number under 32 characters.")
-    .optional()
-    .transform((v) => (v && v.length > 0 ? v : null)),
-});
 
 /**
  * Candidate starts an attempt from a shared link.
@@ -60,7 +38,7 @@ export async function beginAttemptAction(
     return { error: "This interview link is not valid or has been closed." };
   }
 
-  const parsed = detailsSchema.safeParse({
+  const parsed = candidateDetailsSchema.safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
     phone: formData.get("phone"),

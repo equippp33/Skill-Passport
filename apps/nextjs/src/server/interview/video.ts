@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, notExists, sql } from "drizzle-orm";
 
 import { db } from "~/server/db";
 import { interviewAudioTable, interviewTurnsTable } from "~/server/db/schema";
@@ -9,19 +9,26 @@ import {
   deleteAudioObject,
   headAudioObject,
   presignUploadUrl,
+  putAudioObject,
 } from "./storage";
 import { AttemptError } from "~/server/attempt/service";
 
 /**
  * Webcam recording of an answer.
  *
- * Video never passes through the app server: it is an order of magnitude
- * larger than the audio and would exceed the platform request-body limit. The
- * browser uploads straight to R2 with a presigned PUT, then calls back so the
- * server can verify the real size and link it to the turn.
+ * Preferred path: the browser PUTs straight to R2 with a presigned URL, so
+ * the bytes never touch the app server. That is a cross-origin request, so it
+ * only works when the bucket has a CORS rule allowing PUT from the app's
+ * origin — without one the preflight is refused and nothing uploads.
  *
- * It is deliberately supplementary — the interview scores from the audio
- * transcript, so a failed camera or a failed upload never blocks progress.
+ * Because that is external configuration the app cannot make for itself,
+ * `relayAnswerVideo` provides a fallback that streams the file through the
+ * server instead. Slower and bounded by the platform request-body limit, but
+ * it works with no bucket configuration at all. See docs/r2-cors.md.
+ *
+ * Either way the recording is supplementary — the interview scores from the
+ * audio transcript, so a failed camera or a failed upload never blocks
+ * progress.
  */
 
 /** Generous: 120s of 480p VP8 lands well under this. */
@@ -60,6 +67,34 @@ export interface VideoUploadTicket {
 }
 
 /**
+ * Drop rows that were reserved but never filled.
+ *
+ * A row is created before the bytes are sent, so anything that kills the
+ * request in between — closing the tab, reloading mid-upload, losing the
+ * connection — strands a 0-byte row that is linked to no turn. Clearing
+ * them as the next upload starts keeps the attempt's media list honest
+ * without needing a sweep job.
+ *
+ * Only unlinked rows are touched: a linked row always has real bytes behind
+ * it, because `finaliseAnswerVideo` is what links it.
+ */
+async function discardAbandonedUploads(attemptId: string): Promise<void> {
+  await db.delete(interviewAudioTable).where(
+    and(
+      eq(interviewAudioTable.attemptId, attemptId),
+      eq(interviewAudioTable.kind, "answer_video"),
+      eq(interviewAudioTable.sizeBytes, 0),
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(interviewTurnsTable)
+          .where(eq(interviewTurnsTable.answerVideoId, interviewAudioTable.id)),
+      ),
+    ),
+  );
+}
+
+/**
  * Reserve a row and hand back a presigned PUT URL.
  *
  * `sizeBytes` starts at 0 and is filled in by `finaliseAnswerVideo` from the
@@ -69,8 +104,10 @@ export async function createAnswerVideoUpload(input: {
   attemptId: string;
   turnNumber: number;
   mimeType: string;
+  durationMs?: number | null;
 }): Promise<VideoUploadTicket> {
   await requireTurn(input);
+  await discardAbandonedUploads(input.attemptId);
 
   const videoId = crypto.randomUUID();
   const key = buildAudioKey({
@@ -86,6 +123,7 @@ export async function createAnswerVideoUpload(input: {
     kind: "answer_video",
     mimeType: input.mimeType,
     sizeBytes: 0,
+    durationMs: input.durationMs ?? null,
     storageKey: key,
   });
 
@@ -94,6 +132,48 @@ export async function createAnswerVideoUpload(input: {
     contentType: input.mimeType,
   });
   return { videoId, uploadUrl };
+}
+
+/**
+ * Fallback upload: take the bytes from the browser and write them to R2 here.
+ *
+ * Used when the direct presigned PUT could not run — in practice, when the
+ * bucket has no CORS rule for this origin. The row was already reserved by
+ * `createAnswerVideoUpload`, so this only fills in the object it points at
+ * and then goes through the same verify-and-link step as the direct path.
+ */
+export async function relayAnswerVideo(input: {
+  attemptId: string;
+  turnNumber: number;
+  videoId: string;
+  body: Buffer;
+}): Promise<{ linked: boolean }> {
+  await requireTurn(input);
+
+  const row = await db.query.interviewAudioTable.findFirst({
+    where: and(
+      eq(interviewAudioTable.id, input.videoId),
+      eq(interviewAudioTable.attemptId, input.attemptId),
+    ),
+  });
+  if (!row) return { linked: false };
+
+  // Checked here as well as at the route, because the row's own key is what
+  // decides how much we are willing to store.
+  if (input.body.byteLength === 0 || input.body.byteLength > MAX_VIDEO_BYTES) {
+    await db
+      .delete(interviewAudioTable)
+      .where(eq(interviewAudioTable.id, row.id));
+    return { linked: false };
+  }
+
+  await putAudioObject({
+    key: row.storageKey,
+    body: input.body,
+    mimeType: row.mimeType,
+  });
+
+  return finaliseAnswerVideo(input);
 }
 
 /**

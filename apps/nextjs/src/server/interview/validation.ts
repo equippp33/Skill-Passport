@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { PHONE_DIGITS, phoneDigits } from "~/lib/phone";
+
 import { WORK_SKILL_COUNT } from "~/config/work-skills";
 
 /**
@@ -48,3 +50,47 @@ export const signupSchema = loginSchema;
 
 /** UUID guard for route params before they ever reach a query. */
 export const uuidSchema = z.string().uuid();
+
+/**
+ * The details a candidate gives before starting.
+ *
+ * Lives here rather than beside the action because a `"use server"` module
+ * may only export async functions, and this is the sort of rule that should
+ * be pinned down by tests.
+ */
+export const candidateDetailsSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Enter your full name.")
+    .max(120, "Keep your name under 120 characters."),
+  email: z
+    .string()
+    .trim()
+    .max(255)
+    .email("Enter a valid email address.")
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v && v.length > 0 ? v.toLowerCase() : null)),
+  /**
+   * Exactly ten digits.
+   *
+   * Separators and a leading +91 or 0 are stripped rather than rejected,
+   * because that is how people actually type a number — refusing
+   * "98765 43210" would be pedantry, not validation. Anything that is not
+   * ten digits after that is rejected rather than trimmed: quietly cutting
+   * a long number down to ten would store one nobody owns.
+   */
+  phone: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => {
+      if (!v) return null;
+      const digits = phoneDigits(v);
+      return digits.length > 0 ? digits : null;
+    })
+    .refine((v) => v === null || v.length === PHONE_DIGITS, {
+      message: "Enter a 10-digit phone number.",
+    }),
+});

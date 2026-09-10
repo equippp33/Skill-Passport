@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { Alert, Button } from "~/components/ui";
+import { Button } from "~/components/ui";
 import { logoutAction } from "~/server/auth/actions";
 import { requireAdmin } from "~/server/admin/service";
 import { uiMessages } from "~/server/language";
@@ -71,13 +71,6 @@ export default async function AdminLayout({
           id="main"
           className="mx-auto max-w-5xl space-y-6 px-4 py-8 sm:px-8"
         >
-          {admin.mustChangePassword ? (
-            <Alert tone="warning" title="Change the seeded password">
-              This account still uses the seeded temporary password. Rotate it
-              before putting this deployment in front of real candidates.
-            </Alert>
-          ) : null}
-
           {children}
         </main>
       </div>

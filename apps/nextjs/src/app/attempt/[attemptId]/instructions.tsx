@@ -14,6 +14,7 @@ import {
 } from "~/components/ui";
 import { t } from "~/config/messages";
 import type { Messages } from "~/config/messages";
+import { PROBE_PROMPTS } from "~/config/greeting";
 import { useAnswerRecorder } from "~/hooks/use-answer-recorder";
 import { startAttemptAction } from "~/server/attempt/actions";
 import { MAX_ANSWER_SECONDS } from "./constants";
@@ -31,6 +32,8 @@ export function Instructions({
   aiReady,
   m,
   languageName,
+  interviewTitle,
+  interviewDescription,
 }: {
   attemptId: string;
   questionCount: number;
@@ -38,6 +41,9 @@ export function Instructions({
   aiReady: boolean;
   m: Messages;
   languageName: string;
+  /** Named here too, so the candidate knows which interview they are in. */
+  interviewTitle: string;
+  interviewDescription: string | null;
 }) {
   const router = useRouter();
   const [consented, setConsented] = useState(false);
@@ -79,44 +85,99 @@ export function Instructions({
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">
+      <header>
+        <p className="text-xs font-medium tracking-widest text-content-muted uppercase">
           {m.instructions.title}
-        </h1>
-        <p className="mt-1 text-sm text-content-muted">
-          {m.dashboard.assessmentName} · {questionCount} {m.dashboard.questions}
         </p>
-      </div>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-balance">
+          {interviewTitle}
+        </h1>
+        <p className="mt-2 text-sm text-content-muted">
+          {m.dashboard.assessmentName} · {questionCount} {m.dashboard.questions}{" "}
+          ·{" "}
+          {t(m.instructions.duration, {
+            minutes: estimatedMinutes,
+            count: questionCount,
+          })}
+        </p>
+        {interviewDescription ? (
+          <p className="mt-3 max-w-prose text-sm leading-relaxed text-content-muted text-pretty">
+            {interviewDescription}
+          </p>
+        ) : null}
+      </header>
 
+      {/* Shown before any language is known, so it is offered in several
+          scripts rather than assuming the candidate reads English. This is
+          the last screen before the first question, which is where the
+          reassurance is actually worth something. */}
+      <Card>
+        <CardContent className="pt-5">
+          <p className="text-xs font-medium tracking-widest text-content-muted uppercase">
+            {m.instructions.ownLanguageTitle}
+          </p>
+          <ul className="mt-2.5 space-y-1.5">
+            {PROBE_PROMPTS.slice(0, 4).map((prompt) => (
+              <li
+                key={prompt.code}
+                lang={prompt.code}
+                className="text-sm leading-relaxed text-pretty"
+              >
+                {prompt.text}
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+
+      {/* Grouped rather than one flat list of nine bullets: the points
+          answer three different questions, and a reader scanning for "what
+          do I need" should not have to filter out "what happens after". */}
       <Card>
         <CardHeader>
           <CardTitle>{m.instructions.expectTitle}</CardTitle>
           <CardDescription>{m.instructions.expectSubtitle}</CardDescription>
         </CardHeader>
-        <CardContent>
-          <ul className="space-y-2.5 text-sm">
-            {[
-              t(m.instructions.duration, {
-                minutes: estimatedMinutes,
-                count: questionCount,
-              }),
-              m.instructions.skillsCovered,
-              t(m.instructions.answerLimit, { seconds: MAX_ANSWER_SECONDS }),
-              m.instructions.microphone,
-              m.instructions.camera,
-              m.instructions.noRetake,
-              m.instructions.recorded,
-              t(m.instructions.languageNotice, { language: languageName }),
-              m.instructions.notHiring,
-            ].map((line, i) => (
-              <li key={i} className="flex gap-2.5">
-                <span aria-hidden className="text-content-muted">
-                  •
-                </span>
-                <span>{line}</span>
-              </li>
-            ))}
-          </ul>
+        <CardContent className="space-y-5">
+          {[
+            {
+              heading: m.instructions.groupHowItWorks,
+              points: [
+                m.instructions.skillsCovered,
+                t(m.instructions.answerLimit, { seconds: MAX_ANSWER_SECONDS }),
+                m.instructions.noRetake,
+              ],
+            },
+            {
+              heading: m.instructions.groupWhatYouNeed,
+              points: [m.instructions.microphone, m.instructions.camera],
+            },
+            {
+              heading: m.instructions.groupYourAnswers,
+              points: [
+                m.instructions.recorded,
+                t(m.instructions.languageNotice, { language: languageName }),
+                m.instructions.notHiring,
+              ],
+            },
+          ].map((group) => (
+            <section key={group.heading}>
+              <h3 className="text-xs font-medium tracking-widest text-content-muted uppercase">
+                {group.heading}
+              </h3>
+              <ul className="mt-2 space-y-2">
+                {group.points.map((line, i) => (
+                  <li key={i} className="flex gap-2.5 text-sm leading-relaxed">
+                    <span
+                      aria-hidden
+                      className="mt-2 size-1 shrink-0 rounded-full bg-border-strong"
+                    />
+                    <span className="text-pretty">{line}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
         </CardContent>
       </Card>
 
