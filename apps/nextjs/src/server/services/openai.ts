@@ -256,21 +256,42 @@ export interface GeneratedQuestion {
   translation: string | null;
 }
 
-export async function generateFirstQuestion(
-  ctx: InterviewContext,
-  skill: WorkSkill,
-): Promise<GeneratedQuestion> {
+/**
+ * Generate a fresh question for a given skill and turn, WITHOUT needing the
+ * previous answer.
+ *
+ * This is what makes look-ahead possible: because a non-follow-up question
+ * only depends on the skill, the framework and the questions already asked
+ * (to avoid repeats), it can be prepared before the candidate has answered the
+ * question in front of them. `history` is passed so the model does not repeat
+ * itself; it is allowed to be empty for the opening question.
+ */
+export async function generateQuestion(args: {
+  ctx: InterviewContext;
+  skill: WorkSkill;
+  /** 1-based skill-question number (the language probe is not counted). */
+  turnNumber: number;
+  history: PriorTurn[];
+}): Promise<GeneratedQuestion> {
+  const { ctx, skill, turnNumber, history } = args;
+  const isFirst = turnNumber <= 1;
+
   const result = await requestStructured({
     instructions: interviewerRules(ctx),
     input: [
       contextBlock(ctx),
       "",
       frameworkBlock(),
+      ...(history.length > 0
+        ? ["", "## Questions already asked (never repeat these)", historyBlock(history)]
+        : []),
       "",
       skillBlock(skill),
       "",
-      `This is the START of the interview and question 1 of ${ctx.questionCount}.`,
-      `Produce the FIRST question, written in ${ctx.language.promptName}.`,
+      isFirst
+        ? `This is the START of the interview and question 1 of ${ctx.questionCount}.`
+        : `This is question ${turnNumber} of ${ctx.questionCount}. It moves on to a new skill.`,
+      `Produce the question, written in ${ctx.language.promptName}.`,
       `Set score to 0, evaluation to a single neutral word, strengths and`,
       `improvements to empty arrays, interviewComplete to false, put the`,
       `question in nextQuestion and its English translation in`,
@@ -285,12 +306,20 @@ export async function generateFirstQuestion(
   if (!question) {
     throw new ProviderError({
       provider: "openai",
-      message: "openai returned no opening question",
-      userMessage: "We could not start the interview. Please try again.",
+      message: "openai returned no question",
+      userMessage: "We could not prepare the next question. Please try again.",
       retryable: true,
     });
   }
   return { question, translation: normaliseTranslation(ctx, result) };
+}
+
+/** Opening question, assessing the first skill in the framework. */
+export async function generateFirstQuestion(
+  ctx: InterviewContext,
+  skill: WorkSkill,
+): Promise<GeneratedQuestion> {
+  return generateQuestion({ ctx, skill, turnNumber: 1, history: [] });
 }
 
 /**

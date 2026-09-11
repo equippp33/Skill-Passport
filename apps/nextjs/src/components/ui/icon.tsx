@@ -14,6 +14,10 @@ const paths = {
   logout: "M15 17l5-5-5-5M20 12H9M12 20H4V4h8",
   spark: "m12 3 2.3 6.7L21 12l-6.7 2.3L12 21l-2.3-6.7L3 12l6.7-2.3L12 3Z",
   clock: "M12 8v5l3 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z",
+  camera:
+    "M3 8a1 1 0 0 1 1-1h3l2-2h6l2 2h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8Zm9 9a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z",
+  volume:
+    "M4 9v6h4l5 4V5L8 9H4Zm12.5-.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14",
 } as const;
 
 export function Icon({

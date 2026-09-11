@@ -1,7 +1,7 @@
 "use client";
 
 import { Icon } from "~/components/ui/icon";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -9,10 +9,11 @@ import {
   Button,
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "~/components/ui";
+import { CandidateSplit } from "~/components/candidate-split";
+import { CameraPreview } from "~/components/camera-preview";
 import { t } from "~/config/messages";
 import type { Messages } from "~/config/messages";
 import { PROBE_PROMPTS } from "~/config/greeting";
@@ -23,9 +24,11 @@ import { MAX_ANSWER_SECONDS } from "./constants";
 /**
  * Pre-interview instructions and device check.
  *
- * Nothing is recorded here — the mic test only opens and immediately releases
- * the stream, and the interview itself does not begin until the candidate has
- * ticked consent and pressed Start.
+ * Nothing is recorded here. The mic test opens the camera and microphone and
+ * keeps them on so the candidate can see their own self-view while they read —
+ * a real device check, not a one-shot permission prompt. The interview itself
+ * does not begin until consent is ticked and Start is pressed; the devices are
+ * released again when this screen unmounts.
  */
 export function Instructions({
   attemptId,
@@ -62,14 +65,18 @@ export function Instructions({
 
   const estimatedMinutes = Math.max(2, Math.round(questionCount * 2));
 
+  // Hand the devices back when leaving the check — the interview screen opens
+  // its own stream, so holding the camera past here is a needless red light.
+  const releaseDevices = recorder.release;
+  useEffect(() => releaseDevices, [releaseDevices]);
+
   async function handleMicTest() {
     // Read the outcome from the return value: the hook's state has not
     // re-rendered yet at this point.
     const { granted, hasCamera } = await recorder.requestPermission();
     setMicTested(granted);
     setCameraReady(hasCamera);
-    // Release the devices again until the interview actually starts.
-    if (granted) recorder.reset();
+    // Devices are left on so the self-view stays live while they read.
   }
 
   function handleStart() {
@@ -84,16 +91,31 @@ export function Instructions({
     });
   }
 
+  const canStart = consented && micTested && aiReady && !isStarting;
+
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <header className="lg:col-span-2">
+    <CandidateSplit
+      step={2}
+      camera={
+        <CameraPreview
+          stream={recorder.previewStream}
+          className="h-56 w-full lg:h-full lg:aspect-auto"
+          hint={
+            micTested
+              ? undefined
+              : "Test your microphone below to turn on your camera."
+          }
+        />
+      }
+    >
+      <header>
         <p className="text-xs font-medium tracking-widest text-content-muted uppercase">
           {m.instructions.title}
         </p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-balance">
+        <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
           {interviewTitle}
         </h1>
-        <p className="mt-2 text-sm text-content-muted">
+        <p className="mt-1.5 text-sm text-content-muted">
           {m.dashboard.assessmentName} · {questionCount} {m.dashboard.questions}{" "}
           ·{" "}
           {t(m.instructions.duration, {
@@ -101,23 +123,22 @@ export function Instructions({
             count: questionCount,
           })}
         </p>
-        {interviewDescription ? (
-          <p className="mt-3 max-w-prose text-sm leading-relaxed text-content-muted text-pretty">
-            {interviewDescription}
-          </p>
-        ) : null}
       </header>
 
-      {/* Shown before any language is known, so it is offered in several
-          scripts rather than assuming the candidate reads English. This is
-          the last screen before the first question, which is where the
-          reassurance is actually worth something. */}
-      <Card className="border-accent/15 bg-accent-soft lg:col-span-2">
+      {interviewDescription ? (
+        <p className="max-w-prose text-sm leading-relaxed text-content-muted text-pretty">
+          {interviewDescription}
+        </p>
+      ) : null}
+
+      {/* Offered in several scripts rather than assuming the candidate
+          reads English. */}
+      <Card className="border-accent/15 bg-accent-soft">
         <CardContent className="pt-5">
           <p className="text-xs font-medium tracking-widest text-content-muted uppercase">
             {m.instructions.ownLanguageTitle}
           </p>
-          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+          <ul className="mt-3 grid gap-2.5 sm:grid-cols-2">
             {PROBE_PROMPTS.slice(0, 4).map((prompt) => (
               <li
                 key={prompt.code}
@@ -132,20 +153,20 @@ export function Instructions({
       </Card>
 
       {/* Grouped rather than one flat list of nine bullets: the points
-          answer three different questions, and a reader scanning for "what
-          do I need" should not have to filter out "what happens after". */}
-      <Card className="lg:col-span-2">
+          answer three different questions. */}
+      <Card>
         <CardHeader>
           <CardTitle>{m.instructions.expectTitle}</CardTitle>
-          <CardDescription>{m.instructions.expectSubtitle}</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-6 sm:grid-cols-3">
+        <CardContent className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {[
             {
               heading: m.instructions.groupHowItWorks,
               points: [
                 m.instructions.skillsCovered,
-                t(m.instructions.answerLimit, { seconds: MAX_ANSWER_SECONDS }),
+                t(m.instructions.answerLimit, {
+                  seconds: MAX_ANSWER_SECONDS,
+                }),
                 m.instructions.noRetake,
               ],
             },
@@ -157,7 +178,9 @@ export function Instructions({
               heading: m.instructions.groupYourAnswers,
               points: [
                 m.instructions.recorded,
-                t(m.instructions.languageNotice, { language: languageName }),
+                t(m.instructions.languageNotice, {
+                  language: languageName,
+                }),
                 m.instructions.notHiring,
               ],
             },
@@ -182,65 +205,67 @@ export function Instructions({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Icon name="mic" className="text-accent" />
-            {m.instructions.micCheckTitle}
-          </CardTitle>
-          <CardDescription>{m.instructions.micCheckSubtitle}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              variant="secondary"
-              onClick={handleMicTest}
-              disabled={recorder.state === "requesting"}
-            >
-              {recorder.state === "requesting"
-                ? m.instructions.micTesting
-                : micTested
-                  ? m.instructions.micRetest
-                  : m.instructions.micTest}
-            </Button>
-
-            <span className="text-sm" role="status" aria-live="polite">
-              {micTested ? (
-                <span className="text-success">
-                  {cameraReady
-                    ? m.instructions.micAndCameraReady
-                    : m.instructions.micReadyNoCamera}
-                </span>
-              ) : (
-                <span className="text-content-muted">
-                  {m.instructions.micUntested}
-                </span>
-              )}
-            </span>
-          </div>
-
-          {micTested && !cameraReady && recorder.cameraError ? (
-            <p className="text-sm text-content-muted">
-              {recorder.cameraError} {m.instructions.cameraOptional}
-            </p>
-          ) : null}
-
-          {recorder.errorMessage ? (
-            <Alert tone="danger" title={m.instructions.micUnavailable}>
-              {recorder.errorMessage}
-            </Alert>
-          ) : null}
-        </CardContent>
-      </Card>
-
+      {/* The "am I ready" controls: mic test, consent and Start, grouped so
+          the whole decision reads as one block at the end of the details. */}
       <Card>
         <CardContent className="space-y-4 pt-5">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+              <Icon name="mic" className="size-4 text-accent" />
+              {m.instructions.micCheckTitle}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Button
+                variant="secondary"
+                onClick={handleMicTest}
+                disabled={recorder.state === "requesting"}
+              >
+                {recorder.state === "requesting"
+                  ? m.instructions.micTesting
+                  : micTested
+                    ? m.instructions.micRetest
+                    : m.instructions.micTest}
+              </Button>
+
+              <span className="text-sm" role="status" aria-live="polite">
+                {micTested ? (
+                  <span className="text-success">
+                    {cameraReady
+                      ? m.instructions.micAndCameraReady
+                      : m.instructions.micReadyNoCamera}
+                  </span>
+                ) : (
+                  <span className="text-content-muted">
+                    {m.instructions.micUntested}
+                  </span>
+                )}
+              </span>
+            </div>
+
+            {micTested && !cameraReady && recorder.cameraError ? (
+              <p className="mt-2 text-sm text-content-muted">
+                {recorder.cameraError} {m.instructions.cameraOptional}
+              </p>
+            ) : null}
+
+            {recorder.errorMessage ? (
+              <Alert
+                tone="danger"
+                title={m.instructions.micUnavailable}
+                className="mt-3"
+              >
+                {recorder.errorMessage}
+              </Alert>
+            ) : null}
+          </div>
+
           <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border-subtle bg-canvas p-4 text-sm leading-relaxed">
             <input
               type="checkbox"
               checked={consented}
               onChange={(e) => setConsented(e.target.checked)}
-              className="mt-0.5 size-5 shrink-0 cursor-pointer accent-[var(--accent)]"
+              className="mt-0.5 size-5 shrink-0 cursor-pointer accent-accent"
             />
             <span>{m.instructions.consent}</span>
           </label>
@@ -253,18 +278,18 @@ export function Instructions({
 
           {startError ? <Alert tone="danger">{startError}</Alert> : null}
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div>
             <Button
               size="lg"
               className="w-full"
               aria-busy={isStarting}
               onClick={handleStart}
-              disabled={!consented || !micTested || isStarting || !aiReady}
+              disabled={!canStart}
             >
               {isStarting ? m.instructions.starting : m.instructions.start}
             </Button>
             {aiReady && (!consented || !micTested) ? (
-              <p className="text-sm text-content-muted">
+              <p className="mt-2 text-center text-sm text-content-muted">
                 {!micTested
                   ? m.instructions.needMic
                   : m.instructions.needConsent}
@@ -273,6 +298,6 @@ export function Instructions({
           </div>
         </CardContent>
       </Card>
-    </div>
+    </CandidateSplit>
   );
 }

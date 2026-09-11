@@ -123,58 +123,64 @@ export function AttemptReport({
         </CardContent>
       </Card>
 
-      {/* All ten skills, always — unassessed ones are shown, not hidden. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{m.result.skillBreakdown}</CardTitle>
-          <p className="mt-1 text-sm text-content-muted">
-            {m.result.skillBreakdownHint}
-          </p>
-        </CardHeader>
-        <CardContent>
-          <ul className="divide-y divide-border-subtle">
-            {skillScores.map((s) => (
-              <SkillRow
-                key={s.skillId}
-                label={m.skills[s.skillId]}
-                score={s.score}
-                notAssessed={m.result.notAssessed}
-              />
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-
-      {attempt.summary ? (
+      {/* Skills on one side, the written verdict on the other, so the width
+          carries two columns of report instead of one tall stack. */}
+      <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+        {/* All ten skills, always — unassessed ones are shown, not hidden. */}
         <Card>
           <CardHeader>
-            <CardTitle>{m.result.summary}</CardTitle>
+            <CardTitle>{m.result.skillBreakdown}</CardTitle>
+            <p className="mt-1 text-sm text-content-muted">
+              {m.result.skillBreakdownHint}
+            </p>
           </CardHeader>
           <CardContent>
-            <p className="text-sm leading-relaxed" lang={langCode}>
-              {attempt.summary}
-            </p>
+            <ul className="divide-y divide-border-subtle">
+              {skillScores.map((s) => (
+                <SkillRow
+                  key={s.skillId}
+                  label={m.skills[s.skillId]}
+                  score={s.score}
+                  notAssessed={m.result.notAssessed}
+                />
+              ))}
+            </ul>
           </CardContent>
         </Card>
-      ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <ListCard
-          title={m.result.strengths}
-          items={attempt.strengths}
-          empty={m.result.noStrengths}
-          marker="✓"
-          markerClass="text-success"
-          lang={langCode}
-        />
-        <ListCard
-          title={m.result.improvements}
-          items={attempt.improvements}
-          empty={m.result.noImprovements}
-          marker="→"
-          markerClass="text-warning"
-          lang={langCode}
-        />
+        <div className="space-y-6">
+          {attempt.summary ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>{m.result.summary}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm leading-relaxed" lang={langCode}>
+                  {attempt.summary}
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <ListCard
+              title={m.result.strengths}
+              items={attempt.strengths}
+              empty={m.result.noStrengths}
+              marker="✓"
+              markerClass="text-success"
+              lang={langCode}
+            />
+            <ListCard
+              title={m.result.improvements}
+              items={attempt.improvements}
+              empty={m.result.noImprovements}
+              marker="→"
+              markerClass="text-warning"
+              lang={langCode}
+            />
+          </div>
+        </div>
       </div>
 
       {showCandidate && probe?.answerTranscript ? (
@@ -201,7 +207,8 @@ export function AttemptReport({
         {answered.length === 0 ? (
           <Alert tone="warning">{m.result.noAnswers}</Alert>
         ) : (
-          answered.map((turn) => (
+          <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+            {answered.map((turn) => (
             <Card key={turn.id}>
               <CardHeader>
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -300,7 +307,8 @@ export function AttemptReport({
                 ) : null}
               </CardContent>
             </Card>
-          ))
+            ))}
+          </div>
         )}
       </section>
     </div>

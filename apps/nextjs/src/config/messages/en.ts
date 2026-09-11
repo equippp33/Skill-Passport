@@ -111,7 +111,7 @@ export const en = {
   interview: {
     questionProgress: "Question {current} of {total}",
     assessing: "Assessing: {skill}",
-    playQuestion: "Play question",
+    playQuestion: "Hear the question",
     audioUnavailable: "Audio unavailable for this question.",
     retryAudio: "Retry audio",
     generatingAudio: "Generating…",

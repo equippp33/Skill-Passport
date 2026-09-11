@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 
 import { Card, CardContent, EmptyState } from "~/components/ui";
+import { CandidateSplit } from "~/components/candidate-split";
+import { CameraPreview } from "~/components/camera-preview";
 import { getInterviewByPublicToken } from "~/server/attempt/access";
 import { StartForm } from "./start-form";
 
@@ -41,52 +43,39 @@ export default async function CandidateLandingPage({
   }
 
   return (
-    <main className="mx-auto max-w-xl space-y-7 px-4 py-8 sm:py-12">
-      <header className="text-center">
-        <p className="eyebrow">YOUR SKILLS. YOUR VOICE.</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-balance">
-          {interview.title}
-        </h1>
-        {interview.description ? (
-          <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-content-muted text-pretty">
-            {interview.description}
-          </p>
-        ) : null}
-      </header>
-
-      <ol
-        aria-label="Interview steps"
-        className="grid grid-cols-3 gap-2 text-center text-xs font-medium"
+    <main className="w-full">
+      <CandidateSplit
+        step={1}
+        align="center"
+        camera={
+          <CameraPreview
+            className="h-56 w-full lg:h-full lg:aspect-auto"
+            hint="We'll check your camera and microphone on the next step. Nothing is recorded yet."
+          />
+        }
       >
-        <li
-          aria-current="step"
-          className="rounded-xl bg-accent-soft px-2 py-3 text-accent"
-        >
-          1 / Your details
-        </li>
-        <li className="rounded-xl bg-surface-muted px-2 py-3 text-content-muted">
-          2 / Device check
-        </li>
-        <li className="rounded-xl bg-surface-muted px-2 py-3 text-content-muted">
-          3 / Interview
-        </li>
-      </ol>
+        <header>
+          <p className="eyebrow">YOUR SKILLS. YOUR VOICE.</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+            {interview.title}
+          </h1>
+          <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-content-muted text-pretty">
+            {interview.description ??
+              "So we know whose assessment this is — nothing is recorded on this step."}
+          </p>
+        </header>
 
-      <Card>
-        <CardContent className="space-y-5 pt-6">
-          <div>
-            <h2 className="text-base font-semibold tracking-tight">
-              Your details
-            </h2>
-            <p className="mt-1 text-sm leading-relaxed text-content-muted">
-              So we know whose assessment this is. You will see what to expect
-              on the next page before anything is recorded.
+        <Card className="min-w-0">
+          <CardContent className="space-y-4 pt-5">
+            <StartForm token={token} />
+
+            <p className="text-xs leading-relaxed text-content-muted">
+              The interview is spoken. Find a quiet, well-lit spot and have your
+              camera ready.
             </p>
-          </div>
-
-          <StartForm token={token} />
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </CandidateSplit>
     </main>
   );
 }

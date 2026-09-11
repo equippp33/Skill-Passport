@@ -49,10 +49,17 @@ export function interviewerRules(ctx: InterviewContext): string {
     `- Write the question, the evaluation, the strengths and the improvements in ${lang}.`,
     `- Use plain, everyday ${lang} that someone without higher education understands.`,
     `- Do NOT translate the candidate's answer into English, and do not comment on their language ability.`,
-    `- Do not mix in English words unless they are the words ordinarily used in ${lang} for that thing.`,
     ...(ctx.language.promptName === "English"
       ? [`- Leave questionTranslation empty; the interview is already English.`]
       : [
+          `- Speak the natural, code-mixed register people actually use in ${lang}.`,
+          `  Keep common English workplace words in English — for example`,
+          `  "work environment", "deadline", "team", "manager", "shift", "customer",`,
+          `  "target", "feedback", "meeting" — instead of forcing a stilted literal`,
+          `  translation into ${lang}. This is how ${lang} speakers really talk`,
+          `  (Hinglish, Tinglish, and so on); write those English words in Latin`,
+          `  script inside the ${lang} sentence. Only translate a term when the`,
+          `  translated word is the one people ordinarily say.`,
           `- ALSO fill questionTranslation with a plain English translation of`,
           `  the question you wrote, for reviewers who do not read ${lang}.`,
           `  Translate only the question — never the candidate's answer.`,

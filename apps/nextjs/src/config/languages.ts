@@ -34,6 +34,13 @@ export interface InterviewLanguage {
    * allows per-language tuning without touching the service layer.
    */
   speaker?: string;
+  /**
+   * A short spoken thank-you the interviewer says the moment the candidate
+   * finishes an answer. Deliberately just gratitude — it never mentions the
+   * recording, the next question, or anything procedural. In the interview
+   * language, because it is the interviewer speaking.
+   */
+  acknowledgement: string;
 }
 
 /** Every language both Sarvam models can handle. */
@@ -43,66 +50,77 @@ export const INTERVIEW_LANGUAGES = {
     displayName: "English",
     promptName: "English",
     symbol: "Aa",
+    acknowledgement: "Thank you for answering.",
   },
   hindi: {
     code: "hi-IN",
     displayName: "हिंदी",
     promptName: "Hindi",
     symbol: "हि",
+    acknowledgement: "जवाब देने के लिए धन्यवाद।",
   },
   marathi: {
     code: "mr-IN",
     displayName: "मराठी",
     promptName: "Marathi",
     symbol: "म",
+    acknowledgement: "उत्तर दिल्याबद्दल धन्यवाद.",
   },
   bengali: {
     code: "bn-IN",
     displayName: "বাংলা",
     promptName: "Bengali",
     symbol: "বা",
+    acknowledgement: "উত্তর দেওয়ার জন্য ধন্যবাদ।",
   },
   gujarati: {
     code: "gu-IN",
     displayName: "ગુજરાતી",
     promptName: "Gujarati",
     symbol: "ગુ",
+    acknowledgement: "જવાબ આપવા બદલ આભાર.",
   },
   kannada: {
     code: "kn-IN",
     displayName: "ಕನ್ನಡ",
     promptName: "Kannada",
     symbol: "ಕ",
+    acknowledgement: "ಉತ್ತರಿಸಿದ್ದಕ್ಕಾಗಿ ಧನ್ಯವಾದಗಳು.",
   },
   malayalam: {
     code: "ml-IN",
     displayName: "മലയാളം",
     promptName: "Malayalam",
     symbol: "മ",
+    acknowledgement: "ഉത്തരം നൽകിയതിന് നന്ദി.",
   },
   odia: {
     code: "od-IN",
     displayName: "ଓଡ଼ିଆ",
     promptName: "Odia",
     symbol: "ଓ",
+    acknowledgement: "ଉତ୍ତର ଦେଇଥିବାରୁ ଧନ୍ୟବାଦ।",
   },
   punjabi: {
     code: "pa-IN",
     displayName: "ਪੰਜਾਬੀ",
     promptName: "Punjabi",
     symbol: "ਪੰ",
+    acknowledgement: "ਜਵਾਬ ਦੇਣ ਲਈ ਧੰਨਵਾਦ।",
   },
   tamil: {
     code: "ta-IN",
     displayName: "தமிழ்",
     promptName: "Tamil",
     symbol: "த",
+    acknowledgement: "பதிலளித்ததற்கு நன்றி.",
   },
   telugu: {
     code: "te-IN",
     displayName: "తెలుగు",
     promptName: "Telugu",
     symbol: "తె",
+    acknowledgement: "సమాధానం ఇచ్చినందుకు ధన్యవాదాలు.",
   },
 } as const satisfies Record<string, InterviewLanguage>;
 

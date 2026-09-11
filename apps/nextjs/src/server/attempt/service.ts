@@ -35,8 +35,8 @@ import { aggregateSkillScores } from "~/lib/scoring";
 import { ProviderError, toUserMessage } from "~/server/services/errors";
 import {
   evaluateAnswerAndGetNextQuestion,
-  generateFirstQuestion,
   generateInterviewSummary,
+  generateQuestion,
   translateQuestion,
 } from "~/server/services/openai";
 import type { InterviewContext, PriorTurn } from "~/server/services/openai";
@@ -518,9 +518,13 @@ async function archiveAnswerAudio(
 /**
  * Transcribe an answer that may have arrived in several pieces.
  *
- * Sent one at a time rather than in parallel: the pieces are consecutive
- * speech and the transcript has to read in order, and firing five requests
- * at once is a good way to meet a rate limit mid-answer.
+ * The pieces are transcribed IN PARALLEL, not one after another — a long
+ * answer is cut into ~25-second segments, and transcribing them serially made
+ * the wait scale with how long the candidate spoke (five segments meant five
+ * Sarvam calls back to back). Firing them together turns that into roughly the
+ * time of a single segment. Order still matters for the final transcript, so
+ * the results are stitched back together in segment order regardless of which
+ * finished first.
  *
  * The language reported is the one from the longest-transcribing segment —
  * the opening few words of a reply are the least reliable place to judge
@@ -532,43 +536,55 @@ async function transcribeSegments(answer: AnswerAudio): Promise<{
   languageCode: string | null;
   languageProbability: number | null;
 }> {
+  const settled = await Promise.all(
+    answer.segments.map(async (segment) => {
+      try {
+        const result = await transcribeAudio({
+          audio: segment,
+          mimeType: answer.mimeType,
+          languageCode: "unknown",
+        });
+        return {
+          ok: true as const,
+          text: result.transcript?.trim() ?? "",
+          code: result.languageCode,
+          probability: result.languageProbability,
+        };
+      } catch (error) {
+        // One bad slice must not lose the whole answer — a rollover can leave
+        // a final fragment of a fraction of a second, which is exactly the
+        // sort of thing a transcriber rejects.
+        console.error(
+          `[attempt] segment transcription failed: ${
+            error instanceof Error ? error.message : "unknown"
+          }`,
+        );
+        return { ok: false as const };
+      }
+    }),
+  );
+
   const parts: string[] = [];
   let best: { code: string | null; probability: number | null; len: number } = {
     code: null,
     probability: null,
     len: -1,
   };
-
   let failures = 0;
 
-  for (const segment of answer.segments) {
-    let result;
-    try {
-      result = await transcribeAudio({
-        audio: segment,
-        mimeType: answer.mimeType,
-        languageCode: "unknown",
-      });
-    } catch (error) {
-      // One bad slice must not lose the whole answer — a rollover can leave
-      // a final fragment of a fraction of a second, which is exactly the
-      // sort of thing a transcriber rejects.
+  // In segment order, so the transcript reads the way it was spoken even
+  // though the calls finished in whatever order Sarvam returned them.
+  for (const result of settled) {
+    if (!result.ok) {
       failures += 1;
-      console.error(
-        `[attempt] segment transcription failed: ${
-          error instanceof Error ? error.message : "unknown"
-        }`,
-      );
       continue;
     }
-
-    const text = result.transcript?.trim() ?? "";
-    if (text) parts.push(text);
-    if (text.length > best.len) {
+    if (result.text) parts.push(result.text);
+    if (result.text.length > best.len) {
       best = {
-        code: result.languageCode,
-        probability: result.languageProbability,
-        len: text.length,
+        code: result.code,
+        probability: result.probability,
+        len: result.text.length,
       };
     }
   }
@@ -712,7 +728,7 @@ export async function processTurn(
       return;
     }
 
-    await evaluateSkillTurn({
+    await handleAnsweredTurn({
       attempt: { ...attempt, language: activeLanguage },
       interview,
       turn,
@@ -783,7 +799,7 @@ async function completeProbe(args: {
     })
     .where(eq(interviewAttemptsTable.id, attempt.id));
 
-  await generateNextQuestion(attempt.id, interview, LANGUAGE_PROBE_TURN + 1);
+  await deliverTurn(attempt.id, interview, LANGUAGE_PROBE_TURN + 1);
 }
 
 /** Candidate picked a language after detection failed. */
@@ -809,7 +825,7 @@ export async function chooseLanguage(
   // Nothing asked yet: the first real question is simply written in the
   // language that was just chosen.
   if (!turns.some((t) => t.turnNumber === next)) {
-    await generateNextQuestion(attempt.id, interview, next);
+    await deliverTurn(attempt.id, interview, next);
     return;
   }
 
@@ -882,8 +898,16 @@ async function reaskInLanguage(
     .where(eq(interviewTurnsTable.id, turn.id));
 }
 
-/** Create and voice one skill question. */
-async function generateNextQuestion(
+/* -------------------------------------------------------------------------- */
+/*                           Question preparation                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Generate and voice one skill question and insert it, WITHOUT making it the
+ * current question. Idempotent: a turn that already exists (because it was
+ * prepared ahead of time) is left as it is.
+ */
+async function buildAndInsertQuestion(
   attemptId: string,
   interview: Interview,
   turnNumber: number,
@@ -892,8 +916,21 @@ async function generateNextQuestion(
   const skill = skillForAttemptTurn(turnNumber, interview.questionCount);
   if (!skill) return;
 
+  const priorTurns = await db.query.interviewTurnsTable.findMany({
+    where: and(
+      eq(interviewTurnsTable.attemptId, attemptId),
+      lt(interviewTurnsTable.turnNumber, turnNumber),
+    ),
+    orderBy: asc(interviewTurnsTable.turnNumber),
+  });
+
   const ctx = contextFor(attempt, interview, await introductionFor(attemptId));
-  const generated = await generateFirstQuestion(ctx, skill);
+  const generated = await generateQuestion({
+    ctx,
+    skill,
+    turnNumber: turnNumber - LANGUAGE_PROBE_TURN,
+    history: toHistory(priorTurns),
+  });
 
   // Voiced before the turn is written, so it is never current without audio.
   const questionAudioId = await synthesiseQuestionAudio(
@@ -916,6 +953,53 @@ async function generateNextQuestion(
       status: "awaiting_answer",
     })
     .onConflictDoNothing();
+}
+
+/**
+ * Prepare the NEXT question in the background, so it is ready the instant the
+ * candidate finishes the one in front of them.
+ *
+ * Only non-follow-up questions can be prepared ahead — a follow-up has to be
+ * built from an answer that does not exist yet. Best-effort: if it fails, the
+ * question is simply generated the normal way when the answer arrives.
+ */
+async function prefetchNextQuestion(
+  attemptId: string,
+  interview: Interview,
+  currentTurnNumber: number,
+): Promise<void> {
+  const nextTurnNumber = currentTurnNumber + 1;
+  if (nextTurnNumber > totalTurns(interview.questionCount)) return;
+  if (isAttemptFollowUp(nextTurnNumber, interview.questionCount)) return;
+
+  const turns = await getTurns(attemptId);
+  if (turns.some((t) => t.turnNumber === nextTurnNumber)) return;
+
+  try {
+    await buildAndInsertQuestion(attemptId, interview, nextTurnNumber);
+  } catch (error) {
+    console.error(
+      `[attempt] prefetch failed attempt=${attemptId} turn=${nextTurnNumber}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
+}
+
+/**
+ * Make a question current — generating it first only if it was not already
+ * prepared — then look ahead and start preparing the one after it.
+ */
+async function deliverTurn(
+  attemptId: string,
+  interview: Interview,
+  turnNumber: number,
+): Promise<void> {
+  const turns = await getTurns(attemptId);
+  if (!turns.some((t) => t.turnNumber === turnNumber)) {
+    if (!skillForAttemptTurn(turnNumber, interview.questionCount)) return;
+    await buildAndInsertQuestion(attemptId, interview, turnNumber);
+  }
 
   await db
     .update(interviewAttemptsTable)
@@ -925,9 +1009,143 @@ async function generateNextQuestion(
       updatedAt: new Date(),
     })
     .where(eq(interviewAttemptsTable.id, attemptId));
+
+  await prefetchNextQuestion(attemptId, interview, turnNumber);
 }
 
-/** Score one answer and prepare the next question, or finish. */
+/* -------------------------------------------------------------------------- */
+/*                             Answer processing                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Score one answered skill turn against its skill. No next question is asked
+ * here — that is prepared separately — so this can safely run in the
+ * background after the candidate has already moved on.
+ */
+async function scoreTurn(args: {
+  attempt: InterviewAttempt;
+  interview: Interview;
+  turn: InterviewTurn;
+  transcript: string;
+  languageCode: string | null;
+}): Promise<void> {
+  const { attempt, interview, turn, transcript, languageCode } = args;
+  const ctx = contextFor(attempt, interview, await introductionFor(attempt.id));
+
+  const priorTurns = await db.query.interviewTurnsTable.findMany({
+    where: and(
+      eq(interviewTurnsTable.attemptId, attempt.id),
+      lt(interviewTurnsTable.turnNumber, turn.turnNumber),
+    ),
+    orderBy: asc(interviewTurnsTable.turnNumber),
+  });
+
+  // `nextSkill: null` tells the evaluator to score only and not spend tokens
+  // on a next question — that job belongs to the look-ahead pipeline.
+  const evaluation = await evaluateAnswerAndGetNextQuestion({
+    ctx,
+    history: toHistory(priorTurns),
+    currentSkill: getWorkSkill(turn.skillId as WorkSkillId),
+    currentQuestion: turn.question,
+    answerTranscript: transcript,
+    turnNumber: turn.turnNumber - LANGUAGE_PROBE_TURN,
+    nextSkill: null,
+    nextIsFollowUp: false,
+  });
+
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      answerTranscript: transcript,
+      detectedLanguageCode: languageCode,
+      score: evaluation.score,
+      evaluation: evaluation.evaluation,
+      strengths: evaluation.strengths,
+      improvements: evaluation.improvements,
+      status: "completed",
+      errorMessage: null,
+      processingStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turn.id));
+}
+
+/**
+ * What happens once a skill answer has been transcribed.
+ *
+ * The split here is the whole latency win: for an ordinary question the next
+ * one is already prepared, so we advance to it FIRST and score the answer we
+ * just left behind afterwards — the candidate never waits on the score. A
+ * follow-up, which must be built from this specific answer, keeps the original
+ * one-shot path; and the final turn is scored before the report is written.
+ */
+async function handleAnsweredTurn(args: {
+  attempt: InterviewAttempt;
+  interview: Interview;
+  turn: InterviewTurn;
+  transcript: string;
+  languageCode: string | null;
+}): Promise<void> {
+  const { attempt, interview, turn, transcript, languageCode } = args;
+
+  const nextTurnNumber = turn.turnNumber + 1;
+  const hasNext = nextTurnNumber <= totalTurns(interview.questionCount);
+  const nextIsFollowUp =
+    hasNext && isAttemptFollowUp(nextTurnNumber, interview.questionCount);
+
+  // Final turn: nothing to advance to, so score it and write the report. The
+  // candidate is on their way to the results page, where a short wait is fine.
+  if (!hasNext) {
+    await scoreTurn({ attempt, interview, turn, transcript, languageCode });
+    await finaliseAttempt(attempt.id, interview);
+    return;
+  }
+
+  // A follow-up must be built from this answer, so it cannot have been prepared
+  // ahead. Keep the original path (score + generate + advance together), then
+  // look ahead from the follow-up to the question after it.
+  if (nextIsFollowUp) {
+    await evaluateSkillTurn({ attempt, interview, turn, transcript, languageCode });
+    await prefetchNextQuestion(attempt.id, interview, nextTurnNumber);
+    return;
+  }
+
+  // Ordinary case: the next question is already prepared. Save the transcript,
+  // advance immediately, then score the answer we moved past in the background.
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      answerTranscript: transcript,
+      detectedLanguageCode: languageCode,
+      status: "completed",
+      errorMessage: null,
+      processingStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turn.id));
+
+  await deliverTurn(attempt.id, interview, nextTurnNumber);
+
+  // The candidate has already moved on, so a scoring failure must not fail the
+  // turn — an unscored answer is shown as such in the report and no more.
+  await scoreTurn({ attempt, interview, turn, transcript, languageCode }).catch(
+    (error) => {
+      console.error(
+        `[attempt] background scoring failed attempt=${attempt.id} turn=${turn.id}: ${
+          error instanceof Error ? error.message : "unknown"
+        }`,
+      );
+    },
+  );
+}
+
+/**
+ * Score one answer and prepare the next question in a single step, then
+ * finish if it was the last.
+ *
+ * Retained for FOLLOW-UP turns, whose next question must be built from the
+ * answer just given and so cannot be prepared ahead of time.
+ */
 async function evaluateSkillTurn(args: {
   attempt: InterviewAttempt;
   interview: Interview;

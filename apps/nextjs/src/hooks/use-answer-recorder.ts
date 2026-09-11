@@ -252,6 +252,12 @@ export function useAnswerRecorder({
       const context = mixContextRef.current;
       if (!bus || !context) return;
 
+      // The context can be created suspended by the autoplay policy; a
+      // suspended context routes the question to silence, so the candidate
+      // sees the player "playing" but hears nothing. Resume it before the
+      // question is voiced.
+      if (context.state === "suspended") void context.resume().catch(() => {});
+
       try {
         const source = context.createMediaElementSource(element);
         source.connect(context.destination);

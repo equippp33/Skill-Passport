@@ -40,7 +40,7 @@ export function StartForm({ token }: { token: string }) {
   );
 
   return (
-    <form action={formAction} className="space-y-4" noValidate>
+    <form action={formAction} className="space-y-3" noValidate>
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
 
       <div>
@@ -51,6 +51,7 @@ export function StartForm({ token }: { token: string }) {
           autoComplete="name"
           maxLength={120}
           required
+          className="min-h-11"
           aria-invalid={state.fieldErrors?.name ? true : undefined}
           aria-describedby="name-error"
         />
@@ -70,6 +71,7 @@ export function StartForm({ token }: { token: string }) {
           type="email"
           autoComplete="email"
           maxLength={255}
+          className="min-h-11"
           aria-invalid={state.fieldErrors?.email ? true : undefined}
           aria-describedby="email-error"
         />
@@ -98,6 +100,7 @@ export function StartForm({ token }: { token: string }) {
           onChange={(event) =>
             setPhone(normalisePhoneInput(event.target.value))
           }
+          className="min-h-11"
           placeholder={`${PHONE_DIGITS} digits`}
           aria-invalid={state.fieldErrors?.phone ? true : undefined}
           aria-describedby="phone-hint phone-error"

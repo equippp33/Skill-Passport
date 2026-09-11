@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
 import { Alert } from "~/components/ui";
+import { HeaderProfile } from "~/components/header-profile";
+import { PreventBackNavigation } from "~/components/prevent-back-navigation";
 import {
   SELECTABLE_INTERVIEW_LANGUAGES,
   resolveInterviewLanguage,
@@ -48,7 +50,9 @@ export default async function AttemptPage({
 
   if (attempt.status === "not_started" || turns.length === 0) {
     return (
-      <main className="candidate-main">
+      <main className="w-full">
+        <HeaderProfile name={attempt.candidateName} />
+        <PreventBackNavigation />
         <Instructions
           attemptId={attempt.id}
           questionCount={interview.questionCount}
@@ -65,6 +69,7 @@ export default async function AttemptPage({
   if (attempt.status === "failed") {
     return (
       <main className="candidate-main">
+        <HeaderProfile name={attempt.candidateName} />
         <Alert tone="danger" title={m.interview.errorTitle}>
           {attempt.errorMessage ?? m.errors.generic}
         </Alert>
@@ -81,7 +86,9 @@ export default async function AttemptPage({
     : PROBE_SPOKEN_LANGUAGE_CODE;
 
   return (
-    <main className="candidate-main">
+    <main className="w-full">
+      <HeaderProfile name={attempt.candidateName} />
+      <PreventBackNavigation />
       <ActiveInterview
         attemptId={attempt.id}
         totalTurns={totalTurns(interview.questionCount)}

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
 import { AttemptReport } from "~/components/attempt-report";
+import { HeaderProfile } from "~/components/header-profile";
 import { getAttemptForCandidate } from "~/server/attempt/access";
 import { getTurns } from "~/server/attempt/service";
 import { uiMessages } from "~/server/language";
@@ -40,7 +41,8 @@ export default async function AttemptResultPage({
   const m = uiMessages();
 
   return (
-    <main className="candidate-main space-y-6">
+    <main className="mx-auto w-full max-w-350 space-y-6 px-4 py-8 sm:px-8">
+      <HeaderProfile name={attempt.candidateName} />
       <div className="rounded-2xl border border-success/20 bg-success-soft p-6">
         <span className="mb-4 grid size-11 place-items-center rounded-full bg-surface text-success">
           <Icon name="check" className="size-6" />

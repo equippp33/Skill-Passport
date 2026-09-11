@@ -57,11 +57,11 @@ export function Brand({ className }: { className?: string }) {
 export function CandidateHeader() {
   return (
     <header className="border-b border-border-subtle bg-surface px-4 py-4 sm:px-8">
-      <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
+      <div className="flex w-full items-center justify-between gap-3">
         <Brand />
-        <span className="hidden rounded-full border border-border-subtle px-3 py-1 text-xs font-medium text-content-muted sm:inline-flex">
-          AI-powered interviews
-        </span>
+        {/* Filled by <HeaderProfile> once the candidate is known (from the
+            device-check step on); empty on the first page. */}
+        <div id="candidate-header-slot" className="flex items-center" />
       </div>
     </header>
   );

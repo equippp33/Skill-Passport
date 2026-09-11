@@ -10,8 +10,12 @@ export { MAX_ANSWER_SECONDS } from "~/server/interview/validation";
 /** Warn the candidate as the duration cap approaches. */
 export const ANSWER_WARN_SECONDS = 100;
 
-/** Poll interval while an answer is being processed. */
-export const POLL_INTERVAL_MS = 2000;
+/**
+ * Poll interval while an answer is being processed. Kept fairly tight so the
+ * next question appears soon after the server has it ready, rather than up to a
+ * full two seconds later — that tail was pure perceived latency.
+ */
+export const POLL_INTERVAL_MS = 1000;
 
 /** Give up polling after this long and offer a manual retry. */
 export const POLL_TIMEOUT_MS = 3 * 60 * 1000;
