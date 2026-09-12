@@ -1,10 +1,11 @@
 import "server-only";
 
-import { and, asc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
 import { db } from "~/server/db";
 import {
   interviewAttemptsTable,
+  interviewAudioTable,
   interviewTurnsTable,
 } from "~/server/db/schema";
 import type {
@@ -42,6 +43,7 @@ import {
 import type { InterviewContext, PriorTurn } from "~/server/services/openai";
 import { generateSpeech, transcribeAudio } from "~/server/services/sarvam";
 import { loadAudioBytes, storeAudio } from "~/server/interview/audio";
+import { deleteAudioObject } from "~/server/interview/storage";
 import { generateToken } from "~/server/admin/service";
 
 /**
@@ -819,13 +821,24 @@ export async function chooseLanguage(
     })
     .where(eq(interviewAttemptsTable.id, attempt.id));
 
+  // Before anything else, and regardless of what the candidate is looking
+  // at: questions are prepared an answer ahead, so a switch has to reach
+  // past the one on screen. Anything already written for a later turn is in
+  // the language they just rejected.
+  //
+  // This used to sit below the guards further down, which meant switching
+  // while the current answer was still processing — exactly when someone
+  // realises the language is wrong — skipped it, and the next question came
+  // back in the old language.
+  await discardPreparedQuestions(attempt.id, attempt.currentQuestionNumber);
+
   const turns = await getTurns(attempt.id);
   const next = LANGUAGE_PROBE_TURN + 1;
 
   // Nothing asked yet: the first real question is simply written in the
   // language that was just chosen.
   if (!turns.some((t) => t.turnNumber === next)) {
-    await deliverTurn(attempt.id, interview, next);
+    await deliverTurn(attempt.id, interview, next, false);
     return;
   }
 
@@ -836,10 +849,57 @@ export async function chooseLanguage(
   const current = turns.find(
     (t) => t.turnNumber === attempt.currentQuestionNumber,
   );
+  // Only the question actually on screen can be rewritten in place; one
+  // being processed or already answered is left alone. The discard above
+  // has already dealt with everything after it either way.
   if (!current || current.status !== "awaiting_answer") return;
   if (current.kind === "language_probe") return;
 
   await reaskInLanguage(attempt.id, current, language);
+}
+
+/**
+ * Drop questions prepared ahead of where the candidate actually is.
+ *
+ * Only unanswered turns past the current one: an answered turn is part of
+ * the record, and the current one is rewritten in place by
+ * `reaskInLanguage` so the candidate is not left staring at a blank card.
+ *
+ * The voiced clips those turns pointed at are deleted too, otherwise they
+ * sit in storage forever with nothing referencing them.
+ */
+async function discardPreparedQuestions(
+  attemptId: string,
+  currentTurnNumber: number,
+): Promise<void> {
+  const stale = await db.query.interviewTurnsTable.findMany({
+    where: and(
+      eq(interviewTurnsTable.attemptId, attemptId),
+      gt(interviewTurnsTable.turnNumber, currentTurnNumber),
+      isNull(interviewTurnsTable.answerTranscript),
+    ),
+  });
+  if (stale.length === 0) return;
+
+  await db.delete(interviewTurnsTable).where(
+    inArray(
+      interviewTurnsTable.id,
+      stale.map((t) => t.id),
+    ),
+  );
+
+  const audioIds = stale
+    .map((t) => t.questionAudioId)
+    .filter((id): id is string => Boolean(id));
+  if (audioIds.length === 0) return;
+
+  const clips = await db.query.interviewAudioTable.findMany({
+    where: inArray(interviewAudioTable.id, audioIds),
+  });
+  await Promise.all(clips.map((clip) => deleteAudioObject(clip.storageKey)));
+  await db
+    .delete(interviewAudioTable)
+    .where(inArray(interviewAudioTable.id, audioIds));
 }
 
 /**
@@ -907,7 +967,42 @@ async function reaskInLanguage(
  * current question. Idempotent: a turn that already exists (because it was
  * prepared ahead of time) is left as it is.
  */
-async function buildAndInsertQuestion(
+/**
+ * Generations currently in flight, keyed by attempt and turn.
+ *
+ * Questions are prepared an answer ahead, so two callers can want the same
+ * turn at once: the look-ahead starts turn N+2, and a candidate who answers
+ * quickly has `deliverTurn` reach for N+2 before that finishes. Without
+ * this both would call OpenAI and Sarvam, and one insert would then be
+ * dropped by `onConflictDoNothing` — after its clip had been generated,
+ * paid for and stored with nothing left pointing at it.
+ *
+ * Sharing the promise makes the second caller wait for the first instead.
+ * In-process only, which covers the case that actually happens; the
+ * conflict clause below remains the backstop across instances.
+ */
+const questionsInFlight = new Map<string, Promise<void>>();
+
+function buildAndInsertQuestion(
+  attemptId: string,
+  interview: Interview,
+  turnNumber: number,
+): Promise<void> {
+  const key = `${attemptId}:${turnNumber}`;
+  const existing = questionsInFlight.get(key);
+  if (existing) return existing;
+
+  const work = generateAndInsertQuestion(
+    attemptId,
+    interview,
+    turnNumber,
+  ).finally(() => questionsInFlight.delete(key));
+
+  questionsInFlight.set(key, work);
+  return work;
+}
+
+async function generateAndInsertQuestion(
   attemptId: string,
   interview: Interview,
   turnNumber: number,
@@ -939,7 +1034,17 @@ async function buildAndInsertQuestion(
     ctx.language.code,
   );
 
-  await db
+  // A switch may have landed while this was being written and voiced. The
+  // question in hand is in the old language, and the discard that cleared
+  // the other prepared turns ran before this one existed — so check the
+  // language again here rather than reinstating what was just thrown away.
+  const current = await reload(attemptId);
+  if (current.language !== attempt.language) {
+    if (questionAudioId) await discardAudioClip(questionAudioId);
+    return;
+  }
+
+  const [inserted] = await db
     .insert(interviewTurnsTable)
     .values({
       attemptId,
@@ -952,7 +1057,35 @@ async function buildAndInsertQuestion(
       questionAudioId,
       status: "awaiting_answer",
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: interviewTurnsTable.id });
+
+  // Another instance got there first. The clip we just made belongs to a
+  // turn that will never exist, so take it back out rather than leave it
+  // billed and unreferenced.
+  if (!inserted && questionAudioId) {
+    await discardAudioClip(questionAudioId);
+  }
+}
+
+/** Delete a stored clip and its row. Best-effort; never throws. */
+async function discardAudioClip(audioId: string): Promise<void> {
+  try {
+    const clip = await db.query.interviewAudioTable.findFirst({
+      where: eq(interviewAudioTable.id, audioId),
+    });
+    if (!clip) return;
+    await deleteAudioObject(clip.storageKey);
+    await db
+      .delete(interviewAudioTable)
+      .where(eq(interviewAudioTable.id, audioId));
+  } catch (error) {
+    console.error(
+      `[attempt] could not discard audio ${audioId}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
 }
 
 /**
@@ -994,6 +1127,16 @@ async function deliverTurn(
   attemptId: string,
   interview: Interview,
   turnNumber: number,
+  /**
+   * Whether to wait for the look-ahead before returning.
+   *
+   * True from the background pipeline, where waiting keeps the work inside
+   * the `after()` window that is keeping the process alive. False from a
+   * request the candidate is sitting in front of — they need THIS question,
+   * not the one after it, and making them wait on a second OpenAI and TTS
+   * round trip is the opposite of what preparing ahead is for.
+   */
+  awaitPrefetch = true,
 ): Promise<void> {
   const turns = await getTurns(attemptId);
   if (!turns.some((t) => t.turnNumber === turnNumber)) {
@@ -1010,7 +1153,8 @@ async function deliverTurn(
     })
     .where(eq(interviewAttemptsTable.id, attemptId));
 
-  await prefetchNextQuestion(attemptId, interview, turnNumber);
+  const lookAhead = prefetchNextQuestion(attemptId, interview, turnNumber);
+  if (awaitPrefetch) await lookAhead;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1040,8 +1184,10 @@ async function scoreTurn(args: {
     orderBy: asc(interviewTurnsTable.turnNumber),
   });
 
-  // `nextSkill: null` tells the evaluator to score only and not spend tokens
-  // on a next question — that job belongs to the look-ahead pipeline.
+  // Scored in isolation: the next question comes from the look-ahead
+  // pipeline, so no tokens are spent on one here. `scoreOnly` rather than a
+  // null skill — a null skill used to read as "this was the last question",
+  // which framed every mid-interview answer as a closing one.
   const evaluation = await evaluateAnswerAndGetNextQuestion({
     ctx,
     history: toHistory(priorTurns),
@@ -1051,6 +1197,7 @@ async function scoreTurn(args: {
     turnNumber: turn.turnNumber - LANGUAGE_PROBE_TURN,
     nextSkill: null,
     nextIsFollowUp: false,
+    scoreOnly: true,
   });
 
   await db
@@ -1068,6 +1215,37 @@ async function scoreTurn(args: {
       updatedAt: new Date(),
     })
     .where(eq(interviewTurnsTable.id, turn.id));
+}
+
+/**
+ * Scoring that is still running, per attempt.
+ *
+ * An ordinary turn is scored in the background after the candidate has been
+ * moved on. Answer the next question quickly enough and the report can be
+ * written while the previous answer is still being marked — the score lands
+ * after `aggregateSkillScores` has already read the turns, so that skill
+ * reads as unassessed in a finished report.
+ *
+ * `finaliseAttempt` waits on these first.
+ */
+const scoringInFlight = new Map<string, Set<Promise<unknown>>>();
+
+function trackScoring(attemptId: string, work: Promise<unknown>): void {
+  const pending = scoringInFlight.get(attemptId) ?? new Set();
+  pending.add(work);
+  scoringInFlight.set(attemptId, pending);
+
+  void work.finally(() => {
+    pending.delete(work);
+    if (pending.size === 0) scoringInFlight.delete(attemptId);
+  });
+}
+
+/** Wait for any outstanding scoring for this attempt to land. */
+async function settleScoring(attemptId: string): Promise<void> {
+  const pending = scoringInFlight.get(attemptId);
+  if (!pending || pending.size === 0) return;
+  await Promise.allSettled([...pending]);
 }
 
 /**
@@ -1097,6 +1275,9 @@ async function handleAnsweredTurn(args: {
   // candidate is on their way to the results page, where a short wait is fine.
   if (!hasNext) {
     await scoreTurn({ attempt, interview, turn, transcript, languageCode });
+    // An earlier answer may still be being scored in the background; the
+    // report must not be aggregated around a score that has not landed.
+    await settleScoring(attempt.id);
     await finaliseAttempt(attempt.id, interview);
     return;
   }
@@ -1105,7 +1286,13 @@ async function handleAnsweredTurn(args: {
   // ahead. Keep the original path (score + generate + advance together), then
   // look ahead from the follow-up to the question after it.
   if (nextIsFollowUp) {
-    await evaluateSkillTurn({ attempt, interview, turn, transcript, languageCode });
+    await evaluateSkillTurn({
+      attempt,
+      interview,
+      turn,
+      transcript,
+      languageCode,
+    });
     await prefetchNextQuestion(attempt.id, interview, nextTurnNumber);
     return;
   }
@@ -1128,15 +1315,34 @@ async function handleAnsweredTurn(args: {
 
   // The candidate has already moved on, so a scoring failure must not fail the
   // turn — an unscored answer is shown as such in the report and no more.
-  await scoreTurn({ attempt, interview, turn, transcript, languageCode }).catch(
-    (error) => {
-      console.error(
-        `[attempt] background scoring failed attempt=${attempt.id} turn=${turn.id}: ${
-          error instanceof Error ? error.message : "unknown"
-        }`,
-      );
-    },
-  );
+  const scoring = scoreTurn({
+    attempt,
+    interview,
+    turn,
+    transcript,
+    languageCode,
+  }).catch(async (error) => {
+    console.error(
+      `[attempt] background scoring failed attempt=${attempt.id} turn=${turn.id}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+    // Recorded on the turn, not just in a log nobody reads: the answer
+    // keeps its transcript and shows as unscored in the report, which is
+    // honest. Silently leaving a null score looks identical to a question
+    // that was never reached.
+    await db
+      .update(interviewTurnsTable)
+      .set({
+        errorMessage: "This answer could not be scored automatically.",
+        updatedAt: new Date(),
+      })
+      .where(eq(interviewTurnsTable.id, turn.id))
+      .catch(() => undefined);
+  });
+
+  trackScoring(attempt.id, scoring);
+  await scoring;
 }
 
 /**
@@ -1334,6 +1540,11 @@ export interface AttemptStatus {
   needsLanguageChoice: boolean;
   language: string | null;
   isComplete: boolean;
+  /**
+   * Clip for the question after this one, if it is already prepared, so the
+   * browser can fetch it while the candidate is still answering.
+   */
+  nextQuestionAudioId: string | null;
   /** Sarvam's transcript of the previous answer, shown back to confirm it. */
   turn: {
     turnNumber: number;
@@ -1379,6 +1590,21 @@ export async function getAttemptStatus(
   const current =
     turns.find((t) => t.turnNumber === attempt.currentQuestionNumber) ?? null;
 
+  /**
+   * The clip for the question after this one, when it has already been
+   * prepared.
+   *
+   * Questions are written and voiced an answer ahead, but the browser only
+   * learns the clip's address when the turn becomes current — so it starts
+   * downloading at the exact moment the candidate is waiting to hear it.
+   * Handing the id over early lets the browser fetch it during the answer,
+   * and question audio is served from a stable, cacheable URL precisely so
+   * that this works.
+   */
+  const upcoming =
+    turns.find((t) => t.turnNumber === attempt.currentQuestionNumber + 1) ??
+    null;
+
   return {
     attemptStatus: attempt.status,
     currentQuestionNumber: attempt.currentQuestionNumber,
@@ -1386,6 +1612,7 @@ export async function getAttemptStatus(
     needsLanguageChoice: attempt.needsLanguageChoice,
     language: attempt.language,
     isComplete: attempt.status === "completed",
+    nextQuestionAudioId: upcoming?.questionAudioId ?? null,
     turn: current
       ? {
           turnNumber: current.turnNumber,

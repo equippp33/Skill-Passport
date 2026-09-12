@@ -134,8 +134,6 @@ export const mr: Messages = {
     finish: "मूल्यांकन पूर्ण करा",
     keepSpeaking: "बोलत राहा — तुम्ही थांबताच हे आपोआप पुढे जाईल.",
     advancingIn: "{seconds} मध्ये पुढे जात आहोत…",
-    leftTab:
-      "तुम्ही मुलाखतीचे पान {count} वेळा सोडले. याची नोंद होते. कृपया पूर्ण होईपर्यंत याच पानावर रहा.",
     introduction: "ओळख",
     chooseLanguageTitle: "तुम्हाला कोणत्या भाषेत पुढे जायचे आहे?",
     chooseLanguageBody:

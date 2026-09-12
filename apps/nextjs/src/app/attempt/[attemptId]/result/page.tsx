@@ -1,24 +1,25 @@
-import { Icon } from "~/components/ui/icon";
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
-import { AttemptReport } from "~/components/attempt-report";
+import { Icon } from "~/components/ui/icon";
 import { HeaderProfile } from "~/components/header-profile";
 import { getAttemptForCandidate } from "~/server/attempt/access";
-import { getTurns } from "~/server/attempt/service";
-import { uiMessages } from "~/server/language";
 import { uuidSchema } from "~/server/interview/validation";
-import { formatDate } from "~/lib/utils";
-import { t } from "~/config/messages";
 
-export const metadata: Metadata = { title: "Your result" };
+export const metadata: Metadata = { title: "Interview submitted" };
 export const dynamic = "force-dynamic";
 
 /**
- * The candidate's own report.
+ * What the candidate sees when they finish.
  *
- * `showCandidate` is off: they do not need their own contact details read
- * back, and the proctoring signal is for the admin, not for them.
+ * Deliberately NOT their report. Scores, per-skill marks and the written
+ * evaluation are for the admin deciding on them — showing a number to the
+ * person it judges invites them to argue with it, to re-take the interview
+ * hunting for a better one, or to leave demoralised by a machine's opinion
+ * they cannot question. None of that is the point of the assessment.
+ *
+ * So: confirmation that it arrived, and what happens next. The report still
+ * exists in full on the admin side.
  */
 export default async function AttemptResultPage({
   params,
@@ -37,30 +38,30 @@ export default async function AttemptResultPage({
     redirect(`/attempt/${attempt.id}`);
   }
 
-  const turns = await getTurns(attempt.id);
-  const m = uiMessages();
-
   return (
-    <main className="mx-auto w-full max-w-350 space-y-6 px-4 py-8 sm:px-8">
+    <main className="mx-auto w-full max-w-2xl px-4 py-10 sm:px-8">
       <HeaderProfile name={attempt.candidateName} />
-      <div className="rounded-2xl border border-success/20 bg-success-soft p-6">
-        <span className="mb-4 grid size-11 place-items-center rounded-full bg-surface text-success">
-          <Icon name="check" className="size-6" />
+
+      <div className="mt-6 rounded-2xl border border-success/20 bg-success-soft p-8 text-center">
+        <span className="mx-auto mb-5 grid size-14 place-items-center rounded-full bg-surface text-success">
+          <Icon name="check" className="size-7" />
         </span>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {m.result.title}
+
+        <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+          Interview submitted
         </h1>
-        <p className="mt-1 text-sm text-content-muted">
-          {interview.title} ·{" "}
-          {t(m.result.completedOn, { date: formatDate(attempt.completedAt) })}
+
+        <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-content-muted text-pretty">
+          Thanks for your time, {attempt.candidateName.split(" ")[0]}. Your
+          answers for {interview.title} have been received and are with the team
+          now.
+        </p>
+
+        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-content-muted text-pretty">
+          Someone will review them and get back to you. There is nothing more to
+          do — you can close this page.
         </p>
       </div>
-
-      <AttemptReport attempt={attempt} turns={turns} m={m} />
-
-      <p className="rounded-xl border border-border-subtle bg-surface p-4 text-center text-sm text-content-muted">
-        Thank you for completing the interview. You can close this page.
-      </p>
     </main>
   );
 }

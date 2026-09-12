@@ -177,6 +177,7 @@ export async function loadAudioForAttempt(audioId: string, attemptId: string) {
   const rows = await db
     .select({
       id: interviewAudioTable.id,
+      kind: interviewAudioTable.kind,
       mimeType: interviewAudioTable.mimeType,
       storageKey: interviewAudioTable.storageKey,
     })
@@ -202,6 +203,7 @@ export async function loadAudioForAdmin(audioId: string, adminId: string) {
   const rows = await db
     .select({
       id: interviewAudioTable.id,
+      kind: interviewAudioTable.kind,
       mimeType: interviewAudioTable.mimeType,
       storageKey: interviewAudioTable.storageKey,
     })

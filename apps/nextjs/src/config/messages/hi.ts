@@ -131,8 +131,6 @@ export const hi: Messages = {
     finish: "मूल्यांकन पूरा करें",
     keepSpeaking: "बोलते रहिए — आपके रुकते ही यह अपने आप आगे बढ़ जाएगा।",
     advancingIn: "{seconds} में आगे बढ़ रहे हैं…",
-    leftTab:
-      "आपने इंटरव्यू टैब {count} बार छोड़ा। यह दर्ज होता है। कृपया पूरा होने तक इसी पेज पर रहें।",
     introduction: "परिचय",
     chooseLanguageTitle: "आप किस भाषा में आगे बढ़ना चाहेंगे?",
     chooseLanguageBody:

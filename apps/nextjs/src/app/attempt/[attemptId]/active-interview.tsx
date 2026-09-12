@@ -50,6 +50,7 @@ interface StatusResponse {
   language: string | null;
   turn: TurnView | null;
   isComplete: boolean;
+  nextQuestionAudioId: string | null;
 }
 
 type Phase = "answering" | "submitting" | "processing" | "error";
@@ -95,7 +96,6 @@ export function ActiveInterview({
   );
   const [audioError, setAudioError] = useState(false);
   /** How often the candidate left the tab. Shown to them as a nudge. */
-  const [awayCount, setAwayCount] = useState(0);
   /** Set when detection failed and the candidate must pick a language. */
   const [needsLanguage, setNeedsLanguage] = useState(initialNeedsLanguage);
   const [choosingLanguage, setChoosingLanguage] = useState(false);
@@ -154,6 +154,7 @@ export function ActiveInterview({
   const playedForTurnRef = useRef<number | null>(null);
   const startRecordingFn = recorder.startRecording;
   const startQuestionCapture = recorder.startQuestionCapture;
+  const playIntoRecording = recorder.playIntoRecording;
 
   /**
    * Forget that this turn has already been played and recorded.
@@ -177,9 +178,14 @@ export function ActiveInterview({
 
   /* ------------------------------ capture guard ------------------------------ */
 
+  /**
+   * Leaving the tab is recorded for the admin, and no longer shown to the
+   * candidate. The warning it used to raise accused someone of cheating for
+   * an alt-tab or a notification, mid-interview, when they could do nothing
+   * about it — which unsettles an honest candidate and does not stop a
+   * dishonest one.
+   */
   const noteLeftTab = useCallback(() => {
-    setAwayCount((n) => n + 1);
-    // Recorded server-side too, so it survives a refresh and reaches the admin.
     void fetch(`/api/attempt/${attemptId}/away`, { method: "POST" }).catch(
       () => undefined,
     );
@@ -319,6 +325,29 @@ export function ActiveInterview({
     );
   }, []);
 
+  /**
+   * Clips already pulled into cache, so a repeated poll does not refetch.
+   * Holds the element too: a bare `new Audio()` can be collected before the
+   * download finishes, which would quietly defeat the whole point.
+   */
+  const warmedAudioRef = useRef(new Map<string, HTMLAudioElement>());
+
+  const warmNextQuestionAudio = useCallback(
+    (audioId: string | null) => {
+      if (!audioId || warmedAudioRef.current.has(audioId)) return;
+      try {
+        const warm = new Audio();
+        warm.preload = "auto";
+        warm.src = `/api/media/${audioId}?attempt=${attemptId}`;
+        warm.load();
+        warmedAudioRef.current.set(audioId, warm);
+      } catch {
+        // Warming is an optimisation; the question still plays without it.
+      }
+    },
+    [attemptId],
+  );
+
   const resetRecorder = recorder.reset;
   // Hoisted so the poll/submit callbacks depend on a stable string rather
   // than the whole messages object.
@@ -355,6 +384,11 @@ export function ActiveInterview({
         setPhase("error");
         return;
       }
+
+      // Pull the next question's audio into the browser cache while the
+      // candidate is still answering this one. Without this the download
+      // starts at the moment the question appears, and they sit through it.
+      warmNextQuestionAudio(data.nextQuestionAudioId);
 
       setNeedsLanguage(data.needsLanguageChoice);
       if (data.needsLanguageChoice) {
@@ -427,6 +461,7 @@ export function ActiveInterview({
     stopPolling,
     scheduleNextPoll,
     resetRecorder,
+    warmNextQuestionAudio,
     genericError,
     flushRecordings,
     allowReplay,
@@ -624,13 +659,23 @@ export function ActiveInterview({
     let timer: ReturnType<typeof setTimeout> | null = null;
     const el = audioRef.current;
 
-    // Start the webcam before the question is spoken. The question player is
-    // deliberately NOT routed through the recorder's mix bus: routing it there
-    // hands the element's output to a Web Audio graph that can be suspended,
-    // which left the candidate watching a "playing" clip in total silence.
-    // Plain element playback through the speakers is what they actually need to
-    // hear; the trade is only that the saved video no longer embeds the
-    // question audio (the question text and its own clip are stored anyway).
+    /**
+     * Speak the question — twice, into two places that cannot affect each
+     * other.
+     *
+     * The candidate hears the ordinary `<audio>` element, straight to the
+     * speakers, with nothing in front of it. The recording gets a separate
+     * decoded copy mixed into the video's audio track, so playback is the
+     * interviewer asking and the candidate answering rather than a
+     * monologue against silence.
+     *
+     * They are separate on purpose. Two earlier versions fed the element
+     * itself through the audio graph, and both left the candidate unable to
+     * hear the question at all — routing an element is irreversible, and a
+     * graph that will not start makes it silent. Here the graph can fail
+     * entirely and the only casualty is the interviewer's voice in the
+     * recording.
+     */
     startQuestionCapture();
 
     if (el && turnRef.current?.questionAudioId) {
@@ -638,6 +683,9 @@ export function ActiveInterview({
       void el.play().catch(() => {
         timer = setTimeout(beginAnswer, 400);
       });
+      // Started alongside, never awaited: the candidate's playback above
+      // must not wait on the recording's copy.
+      void playIntoRecording(el.src);
     } else {
       timer = setTimeout(beginAnswer, 800);
     }
@@ -651,7 +699,7 @@ export function ActiveInterview({
       if (timer) clearTimeout(timer);
       clearTimeout(backstop);
     };
-  }, [turnNumber, phase, beginAnswer, startQuestionCapture]);
+  }, [turnNumber, phase, beginAnswer, startQuestionCapture, playIntoRecording]);
 
   async function handleRetryAudio() {
     if (!turn) return;
@@ -852,6 +900,9 @@ export function ActiveInterview({
                   // question the media stream can still be resolving when
                   // the effect above runs, and by playback it is ready.
                   // Idempotent, so this is free when it already started.
+                  // Second chance to start the webcam, at the moment audio
+                  // begins: the media stream may not have been ready when
+                  // the effect ran. Idempotent, so this is free otherwise.
                   onPlay={startQuestionCapture}
                   // Recording starts when the question finishes playing.
                   // Without this the candidate is left on "getting ready".
@@ -924,12 +975,6 @@ export function ActiveInterview({
           </p>
         ) : null}
       </div>
-
-      {awayCount > 0 ? (
-        <Alert tone="warning">
-          {t(m.interview.leftTab, { count: awayCount })}
-        </Alert>
-      ) : null}
 
       {error ? (
         <Alert tone="danger" title={m.interview.errorTitle}>

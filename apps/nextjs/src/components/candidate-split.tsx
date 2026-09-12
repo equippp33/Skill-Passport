@@ -53,9 +53,7 @@ export function CandidateSplit({
         </div>
       </section>
 
-      <aside className="p-3 pt-0 sm:p-4 lg:h-full lg:pt-4">
-        {camera}
-      </aside>
+      <aside className="p-3 pt-0 sm:p-4 lg:h-full lg:pt-4">{camera}</aside>
     </div>
   );
 }

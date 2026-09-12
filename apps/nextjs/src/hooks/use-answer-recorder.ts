@@ -121,26 +121,28 @@ export function useAnswerRecorder({
   const hasCameraRef = useRef(false);
 
   /**
-   * Web Audio graph that mixes the interviewer's voice into the video.
+   * A mix bus that feeds the VIDEO RECORDER ONLY.
    *
-   * The question is spoken through an <audio> element. Left alone, the
-   * webcam recording captures only the candidate, so playing it back is a
-   * series of answers to questions you cannot hear — long silences where
-   * the interviewer was talking. Routing the element's output into the
-   * video recorder's audio track fixes that digitally, which also works on
-   * headphones and survives the microphone's echo cancellation.
+   * The webcam clip should contain the interviewer's question as well as the
+   * answer, or playback is a monologue: the candidate replying to silence.
    *
-   * The speech-to-text recorder keeps the RAW microphone track. Mixing the
-   * question into it would transcribe the interviewer as part of the
-   * answer, which would wreck both the scoring and the repeat detection.
+   * Note what is NOT here. The candidate's own `<audio>` player is never
+   * routed through this graph. Two earlier attempts did exactly that, and
+   * both left the candidate unable to hear the question — routing an
+   * element is irreversible, and a graph that will not start turns it
+   * silent. So the question is played TWICE and independently: through the
+   * plain element for the candidate, and as a decoded copy into this bus
+   * for the recording. Nothing here connects to `context.destination`, so
+   * nothing here can ever take the candidate's audio away. If the graph
+   * fails, the recording misses the question and the interview is fine.
    */
   const mixContextRef = useRef<AudioContext | null>(null);
   const mixDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(
     null,
   );
-  const questionSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
-  const questionElementRef = useRef<HTMLAudioElement | null>(null);
   const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  /** Decoded question clips, keyed by URL, so a repeat costs nothing. */
+  const clipCacheRef = useRef(new Map<string, AudioBuffer>());
 
   const streamRef = useRef<MediaStream | null>(null);
   const audioRecorderRef = useRef<MediaRecorder | null>(null);
@@ -204,73 +206,14 @@ export function useAnswerRecorder({
   const stopTracks = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    // The mic node points at tracks that no longer exist. The context and
-    // the question source are kept: the <audio> element outlives this, and
-    // it can only be routed once.
+    // Points at tracks that no longer exist. The context and the bus stay:
+    // decoded clips are cached against them.
     micSourceRef.current?.disconnect();
     micSourceRef.current = null;
     previewStreamRef.current = null;
     setPreviewStream(null);
     setStream(null);
   }, []);
-
-  /** The shared context and mix bus, created on first use. */
-  const ensureMixBus =
-    useCallback((): MediaStreamAudioDestinationNode | null => {
-      if (mixDestinationRef.current) return mixDestinationRef.current;
-
-      const AudioCtx =
-        window.AudioContext ??
-        (window as unknown as { webkitAudioContext?: typeof AudioContext })
-          .webkitAudioContext;
-      if (!AudioCtx) return null;
-
-      try {
-        const context = new AudioCtx();
-        mixContextRef.current = context;
-        mixDestinationRef.current = context.createMediaStreamDestination();
-        return mixDestinationRef.current;
-      } catch {
-        // Mixing is an enhancement; the recording still works without it.
-        return null;
-      }
-    }, []);
-
-  /**
-   * Route the question player into the mix.
-   *
-   * `createMediaElementSource` can only be called once per element, and
-   * once called the element's audio flows ONLY through the graph — so the
-   * connection to `destination` is what keeps the candidate able to hear
-   * the question at all, and is not optional.
-   */
-  const attachQuestionAudio = useCallback(
-    (element: HTMLAudioElement | null) => {
-      if (!element || questionElementRef.current === element) return;
-
-      const bus = ensureMixBus();
-      const context = mixContextRef.current;
-      if (!bus || !context) return;
-
-      // The context can be created suspended by the autoplay policy; a
-      // suspended context routes the question to silence, so the candidate
-      // sees the player "playing" but hears nothing. Resume it before the
-      // question is voiced.
-      if (context.state === "suspended") void context.resume().catch(() => {});
-
-      try {
-        const source = context.createMediaElementSource(element);
-        source.connect(context.destination);
-        source.connect(bus);
-        questionSourceRef.current = source;
-        questionElementRef.current = element;
-      } catch {
-        // Already routed, or unsupported. The element keeps playing
-        // normally; the video just will not carry the question.
-      }
-    },
-    [ensureMixBus],
-  );
 
   const clearSegmentTimer = useCallback(() => {
     if (segmentTimerRef.current) {
@@ -417,47 +360,83 @@ export function useAnswerRecorder({
   }, [withVideo]);
 
   /**
-   * Camera track + the mix bus, as one stream for the video recorder.
+   * Camera track plus the mix bus, for the video recorder.
    *
-   * Returns null when there is nothing to gain — no bus, or no camera — so
-   * the caller can just use the capture stream unchanged.
+   * Returns null when there is nothing to mix into — the caller then uses
+   * the capture stream unchanged and simply records the candidate alone.
    */
-  const buildMixedVideoStream = useCallback(
+  const buildRecordingStream = useCallback(
     (capture: MediaStream): MediaStream | null => {
       const videoTracks = capture.getVideoTracks();
-      if (videoTracks.length === 0) return null;
+      const audioTracks = capture.getAudioTracks();
+      if (videoTracks.length === 0 || audioTracks.length === 0) return null;
 
-      const bus = ensureMixBus();
-      const context = mixContextRef.current;
-      if (!bus || !context) return null;
-
-      // Autoplay policy can leave the context suspended; a suspended graph
-      // produces silence, and — because the question player is routed
-      // through it — silence the candidate would notice.
-      if (context.state === "suspended") void context.resume();
+      const AudioCtx =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!AudioCtx) return null;
 
       try {
-        // The microphone joins the bus once and stays; connecting it again
-        // per answer would stack gain with every question.
+        const context = (mixContextRef.current ??= new AudioCtx());
+        const bus = (mixDestinationRef.current ??=
+          context.createMediaStreamDestination());
+
+        // The microphone joins once and stays; connecting per answer would
+        // stack gain with every question.
         if (!micSourceRef.current) {
-          const audioTracks = capture.getAudioTracks();
-          if (audioTracks.length === 0) return null;
           micSourceRef.current = context.createMediaStreamSource(
             new MediaStream(audioTracks),
           );
           micSourceRef.current.connect(bus);
         }
 
-        const mixedAudio = bus.stream.getAudioTracks()[0];
-        if (!mixedAudio) return null;
-
-        return new MediaStream([...videoTracks, mixedAudio]);
+        const mixed = bus.stream.getAudioTracks()[0];
+        if (!mixed) return null;
+        return new MediaStream([...videoTracks, mixed]);
       } catch {
         return null;
       }
     },
-    [ensureMixBus],
+    [],
   );
+
+  /**
+   * Play a clip into the recording, and only into the recording.
+   *
+   * Deliberately not connected to the speakers: the candidate is already
+   * hearing this from the ordinary `<audio>` element, and a second audible
+   * copy would echo. Entirely best-effort — every failure path here leaves
+   * the interview untouched.
+   */
+  const playIntoRecording = useCallback(async (url: string): Promise<void> => {
+    const context = mixContextRef.current;
+    const bus = mixDestinationRef.current;
+    if (!context || !bus) return;
+
+    try {
+      if (context.state === "suspended") {
+        // Not awaited anywhere that matters — nothing downstream of this
+        // call is on the candidate's path.
+        await context.resume();
+      }
+
+      let buffer = clipCacheRef.current.get(url);
+      if (!buffer) {
+        const response = await fetch(url);
+        if (!response.ok) return;
+        buffer = await context.decodeAudioData(await response.arrayBuffer());
+        clipCacheRef.current.set(url, buffer);
+      }
+
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(bus);
+      source.start();
+    } catch {
+      // The recording misses the question. That is the whole cost.
+    }
+  }, []);
 
   const startRecording = useCallback(async (): Promise<boolean> => {
     // Re-entry guard: never run two recordings at once.
@@ -599,17 +578,14 @@ export function useAnswerRecorder({
       stream.getVideoTracks().length > 0
     ) {
       try {
-        // Camera picture, plus the mixed audio so the recording carries the
-        // interviewer's voice as well as the candidate's. If the mix could
-        // not be built, fall back to the plain stream: a video with only
-        // the candidate is much better than no video.
-        const mixed = buildMixedVideoStream(stream);
-
-        const videoRecorder = new MediaRecorder(mixed ?? stream, {
-          mimeType: videoMime,
-          videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
-          audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
-        });
+        const videoRecorder = new MediaRecorder(
+          buildRecordingStream(stream) ?? stream,
+          {
+            mimeType: videoMime,
+            videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+            audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
+          },
+        );
         videoRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) videoChunksRef.current.push(event.data);
         };
@@ -678,7 +654,7 @@ export function useAnswerRecorder({
     clearSegmentTimer,
     maxSeconds,
     settleStop,
-    buildMixedVideoStream,
+    buildRecordingStream,
   ]);
 
   /**
@@ -708,12 +684,14 @@ export function useAnswerRecorder({
     setVideoBlob(null);
 
     try {
-      const mixed = buildMixedVideoStream(stream);
-      const videoRecorder = new MediaRecorder(mixed ?? stream, {
-        mimeType: videoMime,
-        videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
-        audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
-      });
+      const videoRecorder = new MediaRecorder(
+        buildRecordingStream(stream) ?? stream,
+        {
+          mimeType: videoMime,
+          videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+          audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
+        },
+      );
 
       videoRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) videoChunksRef.current.push(event.data);
@@ -740,7 +718,7 @@ export function useAnswerRecorder({
       videoRecorderRef.current = null;
       return false;
     }
-  }, [buildMixedVideoStream, settleStop]);
+  }, [settleStop, buildRecordingStream]);
 
   /**
    * Stop and resolve with the finished blobs.
@@ -769,7 +747,22 @@ export function useAnswerRecorder({
     const audioActive = audioRecorderRef.current?.state === "recording";
     const videoActive = videoRecorderRef.current?.state === "recording";
 
-    if (!audioActive && !videoActive) {
+    /**
+     * A recorder that has been told to stop but has not flushed yet.
+     *
+     * `MediaRecorder.stop()` flips `state` to "inactive" immediately and
+     * fires `onstop` a task later, so "not recording" does NOT mean "done".
+     * The duration cap stops both recorders and then asks for the blobs, so
+     * without this the final audio segment and the whole video were read
+     * before either had been written — a two-minute answer arrived
+     * truncated and with no recording at all.
+     *
+     * `pendingStopsRef` counts recorders that still owe a flush; a segment
+     * rollover does not touch it, so this is only true for a real stop.
+     */
+    const awaitingFlush = pendingStopsRef.current > 0;
+
+    if (!audioActive && !videoActive && !awaitingFlush) {
       return Promise.resolve({
         audio: finishedAudioRef.current,
         audioSegments: audioSegmentsRef.current,
@@ -837,7 +830,7 @@ export function useAnswerRecorder({
     isRecording: state === "recording",
     hasRecording: state === "recorded" && blob !== null,
     requestPermission,
-    attachQuestionAudio,
+    playIntoRecording,
     startQuestionCapture,
     startRecording,
     stopRecording,

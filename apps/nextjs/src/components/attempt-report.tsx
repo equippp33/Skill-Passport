@@ -209,104 +209,126 @@ export function AttemptReport({
         ) : (
           <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
             {answered.map((turn) => (
-            <Card key={turn.id}>
-              <CardHeader>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <CardTitle className="text-sm font-medium text-content-muted">
-                    {turn.skillId
-                      ? m.skills[turn.skillId as WorkSkillId]
-                      : `Question ${turn.turnNumber}`}
-                  </CardTitle>
-                  <span
-                    className={`text-sm font-semibold tabular-nums ${scoreTone(
-                      turn.score,
-                    )}`}
-                  >
-                    {turn.score === null ? "—" : `${turn.score}/10`}
-                  </span>
-                </div>
-                <p className="mt-1 text-base font-medium" lang={langCode}>
-                  {turn.question}
-                </p>
-                {turn.questionTranslation ? (
-                  <p className="mt-1 text-sm text-content-muted" lang="en">
-                    {turn.questionTranslation}
+              <Card key={turn.id}>
+                <CardHeader>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle className="text-sm font-medium text-content-muted">
+                      {turn.skillId
+                        ? m.skills[turn.skillId as WorkSkillId]
+                        : `Question ${turn.turnNumber}`}
+                    </CardTitle>
+                    <span
+                      className={`text-sm font-semibold tabular-nums ${scoreTone(
+                        turn.score,
+                      )}`}
+                    >
+                      {turn.score === null ? "—" : `${turn.score}/10`}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-base font-medium" lang={langCode}>
+                    {turn.question}
                   </p>
-                ) : null}
-              </CardHeader>
+                  {turn.questionTranslation ? (
+                    <p className="mt-1 text-sm text-content-muted" lang="en">
+                      {turn.questionTranslation}
+                    </p>
+                  ) : null}
 
-              <CardContent className="space-y-4">
-                {turn.answerVideoId ? (
-                  <div className="space-y-1.5">
-                    <video
+                  {/* The question as the candidate heard it.
+                      The answer recording deliberately captures only the
+                      candidate — routing the interviewer's voice into it
+                      meant routing the candidate's playback through a Web
+                      Audio graph, which twice left them unable to hear the
+                      question at all. Playing the stored clip here gives a
+                      reviewer the same thing with nothing at stake. */}
+                  {turn.questionAudioId ? (
+                    <audio
                       controls
-                      playsInline
                       preload="none"
-                      src={`/api/media/${turn.answerVideoId}${
+                      src={`/api/media/${turn.questionAudioId}${
                         showCandidate ? "" : `?attempt=${attempt.id}`
                       }`}
-                      aria-label={m.result.yourAnswer}
-                      className="aspect-video max-h-[400px] w-full rounded-lg border border-border-subtle bg-content/90 object-contain"
+                      aria-label="Question as asked"
+                      className="mt-2 h-8 w-full max-w-sm"
                     />
-                    {/* Says which answer this clip is, so a recording can
-                        never be read as belonging to the wrong question. */}
-                    <p className="text-xs text-content-muted">
-                      {[
-                        `Question ${turn.turnNumber}`,
-                        clipLength(clipDurations?.[turn.answerVideoId]),
-                        `answered ${formatDateTime(turn.updatedAt)}`,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
+                  ) : null}
+                </CardHeader>
 
-                    {/* A PDF cannot play a video, so the printed copy gets
+                <CardContent className="space-y-4">
+                  {turn.answerVideoId ? (
+                    <div className="space-y-1.5">
+                      <video
+                        controls
+                        playsInline
+                        preload="none"
+                        src={`/api/media/${turn.answerVideoId}${
+                          showCandidate ? "" : `?attempt=${attempt.id}`
+                        }`}
+                        aria-label={m.result.yourAnswer}
+                        className="aspect-video max-h-[400px] w-full rounded-lg border border-border-subtle bg-content/90 object-contain"
+                      />
+                      {/* Says which answer this clip is, so a recording can
+                        never be read as belonging to the wrong question. */}
+                      <p className="text-xs text-content-muted">
+                        {[
+                          `Question ${turn.turnNumber}`,
+                          clipLength(clipDurations?.[turn.answerVideoId]),
+                          `answered ${formatDateTime(turn.updatedAt)}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+
+                      {/* A PDF cannot play a video, so the printed copy gets
                         the address instead. Rendered as a real anchor so it
                         stays clickable in the exported file, and absolute so
                         it still resolves away from this browser. */}
-                    {appOrigin ? (
-                      <p className="hidden text-xs break-all print:block">
-                        Recording:{" "}
-                        {/* No `target`: Chromium drops it when converting
+                      {appOrigin ? (
+                        <p className="hidden text-xs break-all print:block">
+                          Recording:{" "}
+                          {/* No `target`: Chromium drops it when converting
                             to a PDF link annotation (verified — the output
                             is byte-identical with and without it). Whether
                             a PDF link opens in a new tab is the viewer's
                             decision; the format has no way to ask. */}
-                        <a
-                          href={`${appOrigin}/api/media/${turn.answerVideoId}?attempt=${attempt.id}`}
-                        >
-                          {`${appOrigin}/api/media/${turn.answerVideoId}?attempt=${attempt.id}`}
-                        </a>
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
+                          <a
+                            href={`${appOrigin}/api/media/${turn.answerVideoId}?attempt=${attempt.id}`}
+                          >
+                            {`${appOrigin}/api/media/${turn.answerVideoId}?attempt=${attempt.id}`}
+                          </a>
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
 
-                <div>
-                  <p className="text-xs font-medium text-content-muted">
-                    {m.result.yourAnswer}
-                  </p>
-                  {/* Original transcript, never translated. */}
-                  <p
-                    className="mt-1 text-sm leading-relaxed whitespace-pre-wrap"
-                    lang={turn.detectedLanguageCode ?? langCode}
-                  >
-                    {turn.answerTranscript ?? "—"}
-                  </p>
-                </div>
-
-                {turn.evaluation ? (
-                  <div className="rounded-xl border border-border-subtle bg-canvas p-4">
+                  <div>
                     <p className="text-xs font-medium text-content-muted">
-                      {m.result.evaluation}
+                      {m.result.yourAnswer}
                     </p>
-                    <p className="mt-1 text-sm leading-relaxed" lang={langCode}>
-                      {turn.evaluation}
+                    {/* Original transcript, never translated. */}
+                    <p
+                      className="mt-1 text-sm leading-relaxed whitespace-pre-wrap"
+                      lang={turn.detectedLanguageCode ?? langCode}
+                    >
+                      {turn.answerTranscript ?? "—"}
                     </p>
                   </div>
-                ) : null}
-              </CardContent>
-            </Card>
+
+                  {turn.evaluation ? (
+                    <div className="rounded-xl border border-border-subtle bg-canvas p-4">
+                      <p className="text-xs font-medium text-content-muted">
+                        {m.result.evaluation}
+                      </p>
+                      <p
+                        className="mt-1 text-sm leading-relaxed"
+                        lang={langCode}
+                      >
+                        {turn.evaluation}
+                      </p>
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
             ))}
           </div>
         )}

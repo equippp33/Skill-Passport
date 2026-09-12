@@ -51,7 +51,11 @@ export async function GET(
     return new Response(new Uint8Array(clip.audio), {
       headers: {
         "Content-Type": clip.mimeType,
-        "Cache-Control": "private, max-age=86400",
+        // Not cacheable by URL: the clip depends on the attempt's
+        // language, and the URL does not. Cached for a day, a candidate who
+        // switched language kept hearing the old one for the rest of the
+        // interview.
+        "Cache-Control": "no-store",
       },
     });
   } catch (error) {

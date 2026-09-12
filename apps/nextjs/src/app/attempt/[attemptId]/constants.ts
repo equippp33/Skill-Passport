@@ -7,9 +7,6 @@
  */
 export { MAX_ANSWER_SECONDS } from "~/server/interview/validation";
 
-/** Warn the candidate as the duration cap approaches. */
-export const ANSWER_WARN_SECONDS = 100;
-
 /**
  * Poll interval while an answer is being processed. Kept fairly tight so the
  * next question appears soon after the server has it ready, rather than up to a

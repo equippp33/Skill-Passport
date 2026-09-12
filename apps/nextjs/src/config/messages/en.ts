@@ -131,8 +131,6 @@ export const en = {
     finish: "Finish assessment",
     keepSpeaking: "Keep speaking — this moves on by itself when you stop.",
     advancingIn: "Moving on in {seconds}…",
-    leftTab:
-      "You left the interview tab {count} time(s). This is recorded. Please stay on this page until you finish.",
     introduction: "Introduction",
     chooseLanguageTitle: "Which language would you like to continue in?",
     chooseLanguageBody:

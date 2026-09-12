@@ -283,7 +283,11 @@ export async function generateQuestion(args: {
       "",
       frameworkBlock(),
       ...(history.length > 0
-        ? ["", "## Questions already asked (never repeat these)", historyBlock(history)]
+        ? [
+            "",
+            "## Questions already asked (never repeat these)",
+            historyBlock(history),
+          ]
         : []),
       "",
       skillBlock(skill),
@@ -312,14 +316,6 @@ export async function generateQuestion(args: {
     });
   }
   return { question, translation: normaliseTranslation(ctx, result) };
-}
-
-/** Opening question, assessing the first skill in the framework. */
-export async function generateFirstQuestion(
-  ctx: InterviewContext,
-  skill: WorkSkill,
-): Promise<GeneratedQuestion> {
-  return generateQuestion({ ctx, skill, turnNumber: 1, history: [] });
 }
 
 /**
@@ -351,6 +347,15 @@ export async function evaluateAnswerAndGetNextQuestion(args: {
   turnNumber: number;
   /** Skill for the upcoming question, or null when this is the last turn. */
   nextSkill: WorkSkill | null;
+  /**
+   * Score the answer and nothing else.
+   *
+   * Distinct from "this was the last question": the look-ahead pipeline
+   * writes the next question separately, so scoring a mid-interview answer
+   * needs none back — but saying so by passing a null skill told the model
+   * it had reached the end, framing every answer as a closing one.
+   */
+  scoreOnly?: boolean;
   nextIsFollowUp: boolean;
 }): Promise<TurnEvaluation> {
   const {
@@ -361,25 +366,32 @@ export async function evaluateAnswerAndGetNextQuestion(args: {
     answerTranscript,
     turnNumber,
     nextSkill,
+    scoreOnly = false,
     nextIsFollowUp,
   } = args;
 
-  const isFinalTurn = turnNumber >= ctx.questionCount || nextSkill === null;
+  const isFinalTurn = turnNumber >= ctx.questionCount;
 
-  const nextInstruction = isFinalTurn
+  const nextInstruction = scoreOnly
     ? [
-        `This was the FINAL question. Set interviewComplete to true and`,
-        `nextQuestion to null.`,
+        `Score this answer only. Another step writes the next question, so`,
+        `set nextQuestion to null and interviewComplete to false. This is`,
+        `NOT the end of the interview — judge the answer on its own terms.`,
       ].join("\n")
-    : [
-        `Now produce question ${turnNumber + 1} of ${ctx.questionCount}.`,
-        `That question must assess: ${nextSkill!.label} — ${nextSkill!.definition}`,
-        `Build it around this situation: ${nextSkill!.scenarioFocus}.`,
-        nextIsFollowUp
-          ? `It is a FOLLOW-UP on the same skill: refer to something specific the candidate just said and probe deeper.`
-          : `It moves on to a new skill.`,
-        `Write it in ${ctx.language.promptName}. Set interviewComplete to false.`,
-      ].join("\n");
+    : isFinalTurn
+      ? [
+          `This was the FINAL question. Set interviewComplete to true and`,
+          `nextQuestion to null.`,
+        ].join("\n")
+      : [
+          `Now produce question ${turnNumber + 1} of ${ctx.questionCount}.`,
+          `That question must assess: ${nextSkill!.label} — ${nextSkill!.definition}`,
+          `Build it around this situation: ${nextSkill!.scenarioFocus}.`,
+          nextIsFollowUp
+            ? `It is a FOLLOW-UP on the same skill: refer to something specific the candidate just said and probe deeper.`
+            : `It moves on to a new skill.`,
+          `Write it in ${ctx.language.promptName}. Set interviewComplete to false.`,
+        ].join("\n");
 
   const evaluation = await requestStructured({
     instructions: interviewerRules(ctx),
@@ -410,6 +422,17 @@ export async function evaluateAnswerAndGetNextQuestion(args: {
 
   // The question budget and completion are enforced server-side: never let the
   // model overrun the configured count or end the interview early.
+  // Scoring only: the caller wants marks, not a question, and must not be
+  // told the interview is over.
+  if (scoreOnly) {
+    return {
+      ...evaluation,
+      interviewComplete: false,
+      nextQuestion: null,
+      questionTranslation: "",
+    };
+  }
+
   if (isFinalTurn) {
     return {
       ...evaluation,
@@ -508,8 +531,16 @@ export async function translateQuestion(
   const result = await requestStructured({
     instructions: [
       "You translate interview questions between languages.",
-      "Preserve the meaning, the tone and the scenario exactly.",
+      "Preserve the meaning and the scenario exactly.",
       "Do not answer it, shorten it, or ask anything different.",
+      // Same register rule as `interviewerRules`. Without it the re-ask
+      // after a language switch came back in formal, literary language
+      // while every other question in the interview was conversational.
+      "Write SPOKEN language, the way people actually talk at work — not",
+      "literary, news-reader or textbook language. Keep ordinary workplace",
+      "words in English inside the sentence (customer, team, manager, shift,",
+      "problem, handle, solve), as people really speak. Prefer the English",
+      "verb with the local helper verb over the formal native verb.",
       "Return only the translation.",
     ].join(" "),
     input: [
