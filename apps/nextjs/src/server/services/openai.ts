@@ -517,7 +517,7 @@ export async function scoreAndMaybeFollowUp(args: {
   return { ...evaluation, interviewComplete: false };
 }
 
-/** Final report shown on the result page, in the interview language. */
+/** Final report for the reviewer, written in English. */
 export async function generateInterviewSummary(args: {
   ctx: InterviewContext;
   history: PriorTurn[];
@@ -528,7 +528,8 @@ export async function generateInterviewSummary(args: {
       interviewerRules(args.ctx),
       "",
       `## Closing report`,
-      `Write the candidate's closing report in ${args.ctx.language.promptName}.`,
+      `Write the candidate's closing report in ENGLISH — it is the reviewer's`,
+      `summary, not read back to the candidate.`,
       `Be specific and constructive, and refer to what they actually said.`,
       `Do not state a hiring decision. overallScore is 0-100 across all skills.`,
     ].join("\n"),
@@ -547,7 +548,7 @@ export async function generateInterviewSummary(args: {
         .join("\n"),
       "",
       `Produce the overall score, a short summary, the candidate's strongest`,
-      `areas and the areas to improve — all in ${args.ctx.language.promptName}.`,
+      `areas and the areas to improve — all in ENGLISH.`,
     ].join("\n"),
     schemaName: "interview_summary",
     jsonSchema: SUMMARY_JSON_SCHEMA,
@@ -638,6 +639,64 @@ export async function translateQuestion(
     question: translated,
     translation:
       ctx.language.promptName === "English" || english === translated
+        ? null
+        : english || null,
+  };
+}
+
+/**
+ * Re-ask a question the candidate did not catch — the SAME question, said
+ * again more simply.
+ *
+ * For "can you repeat that?" / "I didn't understand". It must never answer the
+ * question, hint at an answer, or drift to a different one — only restate what
+ * was asked, in plainer words.
+ */
+export async function rephraseQuestionSimpler(
+  ctx: InterviewContext,
+  question: string,
+): Promise<GeneratedQuestion> {
+  const result = await requestStructured({
+    instructions: [
+      "The candidate did not catch an interview question and asked for it",
+      `again. Say the SAME question again in ${ctx.language.promptName}, shorter`,
+      "and simpler, the way a person would rephrase when someone did not hear.",
+      "NEVER answer it, give an example answer, hint at what to say, or ask a",
+      "different question — only restate what was asked, more clearly.",
+      "Write SPOKEN language, keeping ordinary workplace words in English",
+      "(customer, team, manager, shift). One short sentence. Return only that.",
+    ].join(" "),
+    input: [
+      `Target language: ${ctx.language.promptName}.`,
+      "",
+      "Question to restate more simply:",
+      untrusted("QUESTION", question),
+      "",
+      `Put the ${ctx.language.promptName} version in "question".`,
+      ctx.language.promptName === "English"
+        ? 'Leave "questionTranslation" as an empty string.'
+        : 'Put a plain English rendering in "questionTranslation".',
+    ].join("\n"),
+    schemaName: "translated_question",
+    jsonSchema: TRANSLATED_QUESTION_JSON_SCHEMA,
+    validator: translatedQuestionSchema,
+  });
+
+  const restated = result.question.trim();
+  if (!restated) {
+    throw new ProviderError({
+      provider: "openai",
+      message: "openai returned an empty re-ask",
+      userMessage: "We could not repeat the question. Please try again.",
+      retryable: true,
+    });
+  }
+
+  const english = result.questionTranslation.trim();
+  return {
+    question: restated,
+    translation:
+      ctx.language.promptName === "English" || english === restated
         ? null
         : english || null,
   };

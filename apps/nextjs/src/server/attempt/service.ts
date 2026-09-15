@@ -38,6 +38,7 @@ import {
   evaluateAnswerAndGetNextQuestion,
   generateInterviewSummary,
   generateQuestion,
+  rephraseQuestionSimpler,
   scoreAndMaybeFollowUp,
   translateQuestion,
 } from "~/server/services/openai";
@@ -683,9 +684,15 @@ export async function processTurn(
 
     // Asked to hear the question again rather than answering it. Checked
     // before anything is scored or the language is inferred — "sorry, say
-    // that again" says nothing about either.
+    // that again" says nothing about either. Re-ask, never re-score: once the
+    // language is known, say it again more simply (dynamic); on the probe, or
+    // before detection, just replay the same clip.
     if (isRepeatRequest(transcript)) {
-      await repeatTurn(attemptId, turnId);
+      if (turn.kind !== "language_probe" && attempt.language) {
+        await reaskSimpler(attempt, interview, turn);
+      } else {
+        await repeatTurn(attemptId, turnId);
+      }
       return;
     }
 
@@ -957,6 +964,61 @@ async function reaskInLanguage(
       updatedAt: new Date(),
     })
     .where(eq(interviewTurnsTable.id, turn.id));
+}
+
+/**
+ * Re-ask the current question more simply after a "say that again" — the same
+ * question, restated, never answered. Falls back to a plain replay if the
+ * rephrase or its audio fails.
+ */
+async function reaskSimpler(
+  attempt: InterviewAttempt,
+  interview: Interview,
+  turn: InterviewTurn,
+): Promise<void> {
+  const ctx = contextFor(attempt, interview, await introductionFor(attempt.id));
+
+  let rewritten;
+  try {
+    // Restate from the English original where we have it — cleaner than
+    // simplifying the already-simplified local text.
+    rewritten = await rephraseQuestionSimpler(
+      ctx,
+      turn.questionTranslation ?? turn.question,
+    );
+  } catch (error) {
+    console.error(
+      `[attempt] re-ask rephrase failed turn=${turn.id}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+    await repeatTurn(attempt.id, turn.id);
+    return;
+  }
+
+  const questionAudioId = await synthesiseQuestionAudio(
+    attempt.id,
+    rewritten.question,
+    ctx.language.code,
+  );
+
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      question: rewritten.question,
+      questionTranslation: rewritten.translation,
+      questionAudioId,
+      status: "awaiting_answer",
+      errorMessage: null,
+      processingStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turn.id));
+
+  await db
+    .update(interviewAttemptsTable)
+    .set({ status: "in_progress", updatedAt: new Date() })
+    .where(eq(interviewAttemptsTable.id, attempt.id));
 }
 
 /* -------------------------------------------------------------------------- */

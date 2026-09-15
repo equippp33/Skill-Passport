@@ -1,6 +1,5 @@
 "use client";
 
-import { Icon } from "~/components/ui/icon";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -88,6 +87,9 @@ export function ActiveInterview({
 }) {
   const router = useRouter();
 
+  // Reactive so the picker shows the detected language once the probe is
+  // scored, instead of sitting on "Detecting…" until a full reload.
+  const [language, setLanguage] = useState<string | null>(currentLanguage);
   const [turn, setTurn] = useState<TurnView | null>(initialTurn);
   const [questionNumber, setQuestionNumber] = useState(initialQuestionNumber);
   // Progress is by skill, not turn: a follow-up keeps the same skill number.
@@ -379,6 +381,7 @@ export function ActiveInterview({
       if (!response.ok) throw new Error("status request failed");
 
       const data = (await response.json()) as StatusResponse;
+      if (data.language) setLanguage(data.language);
 
       if (data.isComplete) {
         stopPolling();
@@ -631,13 +634,6 @@ export function ActiveInterview({
 
   /* ------------------------------ question audio ----------------------------- */
 
-  const playQuestion = useCallback(() => {
-    const el = audioRef.current;
-    if (!el) return;
-    el.currentTime = 0;
-    void el.play().catch(() => setAudioError(true));
-  }, []);
-
   /**
    * Play the question when it arrives, then hand over to `beginAnswer`.
    *
@@ -737,6 +733,7 @@ export function ActiveInterview({
 
   async function pickLanguage(key: string) {
     setChoosingLanguage(true);
+    setLanguage(key); // reflect the choice at once
     const result = await chooseLanguageAction(attemptId, key);
     setChoosingLanguage(false);
     if (result.ok) {
@@ -918,10 +915,9 @@ export function ActiveInterview({
                   preload="auto"
                   className="hidden"
                 />
-                <Button variant="secondary" size="sm" onClick={playQuestion}>
-                  <Icon name="volume" className="size-4" />
-                  {m.interview.playQuestion}
-                </Button>
+                {/* No replay button — a candidate who missed the question just
+                    asks ("can you repeat that?") and the interviewer replays
+                    it. */}
               </>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
@@ -1002,7 +998,7 @@ export function ActiveInterview({
       <div className="mt-auto pt-2">
         <LanguagePicker
           languages={languages}
-          value={currentLanguage}
+          value={language}
           onSelect={(key) => void pickLanguage(key)}
           busy={choosingLanguage}
           disabled={isBusy}

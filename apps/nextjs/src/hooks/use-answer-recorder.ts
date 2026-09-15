@@ -284,7 +284,11 @@ export function useAnswerRecorder({
     const audioConstraint: MediaTrackConstraints = {
       echoCancellation: true,
       noiseSuppression: true,
-      autoGainControl: true,
+      // Off on purpose: gain control lifts the near-silence between words up
+      // toward the speech threshold, so a noisy room reads as "still talking"
+      // and the answer never ends. With it off the level reflects real
+      // loudness — speech is loud, background hiss stays low.
+      autoGainControl: false,
     };
     const videoConstraint: MediaTrackConstraints = {
       width: { ideal: 640 },

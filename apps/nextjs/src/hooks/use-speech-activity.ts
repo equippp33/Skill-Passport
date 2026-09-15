@@ -25,11 +25,13 @@ import { useEffect, useRef, useState } from "react";
 /**
  * RMS amplitude, 0–1, above which we call it speech.
  *
- * Deliberately low: `autoGainControl` on the capture stream lifts quiet
- * speech towards this, and a false "still talking" only delays the advance,
- * whereas a false "stopped" would cut someone off mid-sentence.
+ * Set well above a typical room's noise floor: with gain control off (see the
+ * recorder) background hiss and static sit low, and only speech loud enough to
+ * be transcribed clearly clears this bar — so a noisy room no longer holds the
+ * answer open forever. Tune here if real speech is being missed or noise still
+ * counts as talking.
  */
-const SPEECH_RMS_THRESHOLD = 0.015;
+const SPEECH_RMS_THRESHOLD = 0.04;
 
 /** How often the level is sampled. Fine enough for a 1s countdown. */
 const SAMPLE_INTERVAL_MS = 200;

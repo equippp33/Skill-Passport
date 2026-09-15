@@ -47,8 +47,11 @@ export function interviewerRules(ctx: InterviewContext): string {
     `out loud should sound like a colleague asking, not a news anchor reading.`,
     ``,
     `## Language`,
-    `The entire interview is conducted in ${lang}.`,
-    `- Write the question, the evaluation, the strengths and the improvements in ${lang}.`,
+    `The interview is SPOKEN to the candidate in ${lang}.`,
+    `- Write the QUESTION (and any follow-up) in ${lang} — the candidate hears it.`,
+    `- Write the evaluation, the strengths and the improvements in ENGLISH.`,
+    `  These are the reviewer's notes, never read back to the candidate, so a`,
+    `  reviewer who does not speak ${lang} can still read them.`,
     `- Do NOT translate the candidate's answer into English, and do not comment on their language ability.`,
     ...(ctx.language.promptName === "English"
       ? [
