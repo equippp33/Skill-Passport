@@ -25,6 +25,7 @@ import {
   MIN_ANSWER_BLOB_BYTES,
   AUTO_START_BACKSTOP_MS,
   MIN_ANSWER_SECONDS,
+  NO_ANSWER_WAIT_SECONDS,
   POLL_INTERVAL_MS,
   POLL_TIMEOUT_MS,
   SILENCE_ADVANCE_SECONDS,
@@ -624,11 +625,16 @@ export function ActiveInterview({
    * countdown shown — when they go quiet, the answer is sent and the next
    * question comes on its own.
    */
-  useSpeechActivity({
+  const speech = useSpeechActivity({
     stream: recorder.stream,
     active: recorder.isRecording && !isBusy,
     silenceSeconds: SILENCE_ADVANCE_SECONDS,
     minSpeechSeconds: MIN_ANSWER_SECONDS,
+    maxWaitSeconds: NO_ANSWER_WAIT_SECONDS,
+    // Fires either when they go quiet after answering, or — if they never say
+    // a word at all — once the wait itself runs out. Either way `handleNext`
+    // decides what happens: a real answer is sent, near-silence surfaces the
+    // "too short, record again" prompt instead of hanging forever.
     onSilence: () => void handleNext(),
   });
 
@@ -971,7 +977,12 @@ export function ActiveInterview({
               aria-hidden
               className="size-2.5 shrink-0 animate-pulse rounded-full bg-danger"
             />
-            {m.interview.keepSpeaking}
+            {/* Visibly different from "keep speaking": before a first word is
+                heard, that line reads as if they already started and stalled.
+                This confirms the mic is live and waiting, not frozen. */}
+            {speech.noAnswerIn !== null
+              ? m.interview.waitingForAnswer
+              : m.interview.keepSpeaking}
           </p>
         ) : null}
       </div>
