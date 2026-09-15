@@ -192,6 +192,9 @@ export async function generateSpeech(
           [languageField]: options.languageCode,
           speaker: options.speaker ?? env.SARVAM_TTS_SPEAKER,
           model: env.SARVAM_TTS_MODEL,
+          // ponytail: slightly slower than default (1.0) so questions are
+          // easier to follow. Tune here if it needs to change.
+          pace: 0.9,
         }),
       },
       TTS_TIMEOUT_MS,

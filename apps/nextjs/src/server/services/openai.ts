@@ -453,6 +453,70 @@ export async function evaluateAnswerAndGetNextQuestion(args: {
   return { ...evaluation, interviewComplete: false };
 }
 
+/**
+ * Score an answer and, only when it is worth digging into, produce ONE
+ * follow-up on the same skill.
+ *
+ * Used for skills an admin marked follow-up-eligible. The follow-up (or its
+ * absence) rides back in `nextQuestion`: a string means "ask this deeper
+ * question", null means "the answer did not warrant one, move on".
+ */
+export async function scoreAndMaybeFollowUp(args: {
+  ctx: InterviewContext;
+  history: PriorTurn[];
+  currentSkill: WorkSkill;
+  currentQuestion: string;
+  answerTranscript: string;
+  /** 1-based skill number, for "question N of …" framing only. */
+  skillNumber: number;
+}): Promise<TurnEvaluation> {
+  const {
+    ctx,
+    history,
+    currentSkill,
+    currentQuestion,
+    answerTranscript,
+    skillNumber,
+  } = args;
+
+  const evaluation = await requestStructured({
+    instructions: interviewerRules(ctx),
+    input: [
+      contextBlock(ctx),
+      "",
+      frameworkBlock(),
+      "",
+      "## Questions already asked (never repeat these)",
+      historyBlock(history),
+      "",
+      skillBlock(currentSkill),
+      "",
+      `This is skill ${skillNumber} of the interview.`,
+      `Question asked: ${currentQuestion}`,
+      `Candidate answer (in ${ctx.language.promptName}, keep it in that language): ${untrusted(
+        "ANSWER",
+        answerTranscript,
+      )}`,
+      "",
+      `Score this answer for ${currentSkill.label} only.`,
+      `Then decide whether ONE follow-up on the SAME skill is worth asking:`,
+      `- If the answer was substantial and specific — a real example with more`,
+      `  to explore — put a single follow-up in nextQuestion that refers to`,
+      `  something the candidate actually said and probes deeper, written in`,
+      `  ${ctx.language.promptName}, with its English rendering in`,
+      `  questionTranslation.`,
+      `- If the answer was thin, vague, evasive, or already complete, set`,
+      `  nextQuestion to null. Never invent a follow-up just to have one.`,
+      `Set interviewComplete to false.`,
+    ].join("\n"),
+    schemaName: "interview_turn",
+    jsonSchema: TURN_JSON_SCHEMA,
+    validator: turnEvaluationSchema,
+  });
+
+  return { ...evaluation, interviewComplete: false };
+}
+
 /** Final report shown on the result page, in the interview language. */
 export async function generateInterviewSummary(args: {
   ctx: InterviewContext;

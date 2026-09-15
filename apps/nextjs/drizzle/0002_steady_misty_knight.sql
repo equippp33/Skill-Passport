@@ -1,0 +1,1 @@
+ALTER TABLE "interviews" ADD COLUMN "follow_up_skills" "work_skill"[] DEFAULT '{}' NOT NULL;

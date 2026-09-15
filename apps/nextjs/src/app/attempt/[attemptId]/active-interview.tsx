@@ -45,7 +45,8 @@ interface TurnView {
 interface StatusResponse {
   attemptStatus: string;
   currentQuestionNumber: number;
-  totalTurns: number;
+  totalSkills: number;
+  skillNumber: number;
   needsLanguageChoice: boolean;
   language: string | null;
   turn: TurnView | null;
@@ -57,7 +58,8 @@ type Phase = "answering" | "submitting" | "processing" | "error";
 
 export function ActiveInterview({
   attemptId,
-  totalTurns,
+  totalSkills,
+  initialSkillNumber,
   initialTurn,
   initialQuestionNumber,
   initialAttemptStatus,
@@ -68,7 +70,10 @@ export function ActiveInterview({
   languageCode,
 }: {
   attemptId: string;
-  totalTurns: number;
+  /** Assessable skills — the progress denominator. */
+  totalSkills: number;
+  /** Which skill the opening turn belongs to (1..totalSkills), 0 on the probe. */
+  initialSkillNumber: number;
   initialTurn: TurnView | null;
   initialQuestionNumber: number;
   initialAttemptStatus: string;
@@ -85,6 +90,8 @@ export function ActiveInterview({
 
   const [turn, setTurn] = useState<TurnView | null>(initialTurn);
   const [questionNumber, setQuestionNumber] = useState(initialQuestionNumber);
+  // Progress is by skill, not turn: a follow-up keeps the same skill number.
+  const [skillNumber, setSkillNumber] = useState(Math.max(1, initialSkillNumber));
   const [phase, setPhase] = useState<Phase>(
     initialAttemptStatus === "processing" ||
       initialTurn?.status === "processing"
@@ -312,6 +319,12 @@ export function ActiveInterview({
     pollStartedAtRef.current = null;
   }, []);
 
+  /** Leave for the results now, abandoning any recordings still uploading. */
+  const goToResult = useCallback(() => {
+    stopPolling();
+    router.replace(`/attempt/${attemptId}/result`);
+  }, [stopPolling, router, attemptId]);
+
   /**
    * The poll loop reschedules itself. It calls through this ref rather than
    * closing over itself, so each tick runs the latest callback instead of a
@@ -369,10 +382,14 @@ export function ActiveInterview({
 
       if (data.isComplete) {
         stopPolling();
-        // The recordings live only in this tab until now, and navigating
-        // away would abort an upload in flight — so they go up first and
-        // the candidate is told what the wait is for.
-        await flushRecordings();
+        // Upload the held recordings, but never trap the candidate here: go to
+        // the results after a short cap whatever happens, and the "See your
+        // results" button (shown while saving) lets them skip immediately. The
+        // assessment is already scored server-side; the video is best-effort.
+        await Promise.race([
+          flushRecordings(),
+          new Promise((resolve) => setTimeout(resolve, 10_000)),
+        ]);
         router.replace(`/attempt/${attemptId}/result`);
         return;
       }
@@ -419,6 +436,7 @@ export function ActiveInterview({
         stopPolling();
         setTurn(data.turn);
         setQuestionNumber(data.currentQuestionNumber);
+        if (data.skillNumber > 0) setSkillNumber(data.skillNumber);
         setAudioError(false);
         setError(null);
         resetRecorder();
@@ -501,21 +519,6 @@ export function ActiveInterview({
 
   /* -------------------------------- submitting ------------------------------- */
 
-  /**
-   * The interviewer's spoken "thank you", played the instant the candidate
-   * stops answering. A fresh element straight to the speakers — never routed
-   * through the recorder — so it is heard but not captured, and best-effort:
-   * if synthesis or autoplay fails, the interview simply moves on in silence.
-   */
-  const playAcknowledgement = useCallback(() => {
-    try {
-      const audio = new Audio(`/api/attempt/${attemptId}/ack`);
-      void audio.play().catch(() => undefined);
-    } catch {
-      // No acknowledgement is better than a broken turn.
-    }
-  }, [attemptId]);
-
   const submitAnswer = useCallback(
     async (segments: Blob[], video: Blob | null, durationMs: number) => {
       if (submittingRef.current) return;
@@ -556,21 +559,21 @@ export function ActiveInterview({
           return;
         }
 
-        // Held back rather than uploaded now — see `pendingVideosRef`.
+        // Queue the clip and upload it in the background NOW, while the
+        // candidate reads and answers the next question — so nothing is left
+        // to upload at the end and no one waits on "saving your recordings".
         if (video && video.size > 0) {
           pendingVideosRef.current.push({
             turnNumber: turn.turnNumber,
             video,
             durationMs,
           });
+          void flushRecordings(false);
         }
 
         // Polling begins from the phase effect, not here — see the note
         // on that effect.
         setPhase("processing");
-        // The interviewer says thank you out loud while the next question is
-        // prepared — the spoken beat that replaces any "processing" label.
-        playAcknowledgement();
       } catch {
         setError(genericError);
         setPhase("error");
@@ -578,7 +581,7 @@ export function ActiveInterview({
         submittingRef.current = false;
       }
     },
-    [turn, attemptId, router, genericError, playAcknowledgement],
+    [turn, attemptId, router, genericError, flushRecordings],
   );
 
   /**
@@ -816,26 +819,26 @@ export function ActiveInterview({
         />
       }
     >
-      {/* Progress within the interview. */}
+      {/* Progress is by skill; a follow-up holds the same number. */}
       <div>
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-sm font-medium text-content-muted">
             {t(m.interview.questionProgress, {
-              current: turn.turnNumber,
-              total: totalTurns,
+              current: skillNumber,
+              total: totalSkills,
             })}
           </p>
           <p className="text-sm text-content-muted tabular-nums">
-            {Math.round((turn.turnNumber / totalTurns) * 100)}%
+            {Math.round((skillNumber / totalSkills) * 100)}%
           </p>
         </div>
         <div className="mt-2">
           <Progress
-            value={turn.turnNumber}
-            max={totalTurns}
+            value={skillNumber}
+            max={totalSkills}
             label={t(m.interview.questionProgress, {
-              current: turn.turnNumber,
-              total: totalTurns,
+              current: skillNumber,
+              total: totalSkills,
             })}
           />
         </div>
@@ -948,17 +951,18 @@ export function ActiveInterview({
       </Card>
 
       {/* Answer state — no bar, no timer, no clutter. A recording pulse while
-          they speak. When they finish, the interviewer says "thank you" out
-          loud (see playAcknowledgement); on screen that is only a quiet spinner
-          — never a written "preparing your next question". */}
+          they speak; a quiet spinner while the next question is prepared. */}
       <div role="status" aria-live="polite" className="min-h-6">
         {savingRecordings ? (
-          <div className="flex items-center gap-3 rounded-xl bg-accent-soft px-4 py-3 text-sm text-accent">
+          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-accent-soft px-4 py-3 text-sm text-accent">
             <span
               aria-hidden="true"
               className="size-4 shrink-0 animate-spin rounded-full border-2 border-accent/25 border-t-accent"
             />
             <span>{m.interview.savingRecordings}</span>
+            <Button size="sm" variant="secondary" onClick={goToResult}>
+              {m.dashboard.viewResult}
+            </Button>
           </div>
         ) : isBusy ? (
           <span

@@ -9,7 +9,7 @@ import {
   resolveInterviewLanguage,
 } from "~/config/languages";
 import { PROBE_SPOKEN_LANGUAGE_CODE } from "~/config/greeting";
-import { totalTurns } from "~/config/work-skills";
+import { WORK_SKILL_COUNT, WORK_SKILL_IDS } from "~/config/work-skills";
 import { getAttemptForCandidate } from "~/server/attempt/access";
 import { getTurns } from "~/server/attempt/service";
 import { uiMessages } from "~/server/language";
@@ -91,7 +91,10 @@ export default async function AttemptPage({
       <PreventBackNavigation />
       <ActiveInterview
         attemptId={attempt.id}
-        totalTurns={totalTurns(interview.questionCount)}
+        totalSkills={WORK_SKILL_COUNT}
+        initialSkillNumber={
+          current?.skillId ? WORK_SKILL_IDS.indexOf(current.skillId) + 1 : 0
+        }
         initialQuestionNumber={attempt.currentQuestionNumber}
         initialAttemptStatus={attempt.status}
         initialNeedsLanguage={attempt.needsLanguageChoice}

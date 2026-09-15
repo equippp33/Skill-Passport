@@ -53,6 +53,16 @@ const PHRASES: string[] = [
   "again please",
   "please repeat",
   "ask again",
+  // Didn't catch the meaning (distinct from didn't hear).
+  "i did not understand",
+  "i didnt understand",
+  "didnt understand",
+  "dont understand",
+  "i dont understand",
+  "not understand",
+  "understand the question",
+  "what do you mean",
+  "come again please",
 
   // Hindi / Marathi, romanised
   "phir se",

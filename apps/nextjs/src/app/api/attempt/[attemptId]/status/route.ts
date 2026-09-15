@@ -24,7 +24,7 @@ export async function GET(
   }
 
   try {
-    const status = await getAttemptStatus(found.attempt.id, found.interview);
+    const status = await getAttemptStatus(found.attempt.id);
     return NextResponse.json(status, {
       headers: { "Cache-Control": "no-store" },
     });

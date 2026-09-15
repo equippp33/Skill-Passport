@@ -7,6 +7,7 @@ import {
   requireAdmin,
   setInterviewOpen,
 } from "./service";
+import type { WorkSkillId } from "~/config/work-skills";
 import type { CreateInterviewResult } from "./dto";
 
 /**
@@ -21,11 +22,17 @@ import type { CreateInterviewResult } from "./dto";
  * `requireAdmin` runs first on every admin action, not just the pages — a
  * server action is a public endpoint and must carry its own authorization.
  */
-export async function createInterviewAction(): Promise<CreateInterviewResult> {
+export async function createInterviewAction(
+  followUpSkills: string[] = [],
+): Promise<CreateInterviewResult> {
   const admin = await requireAdmin("/admin");
 
   try {
-    const interview = await createGeneralInterview(admin.id);
+    // The service filters to real skill ids; the cast just narrows the wire type.
+    const interview = await createGeneralInterview(
+      admin.id,
+      followUpSkills as WorkSkillId[],
+    );
     revalidatePath("/admin");
     revalidatePath("/admin/interviews");
     return { ok: true, interviewId: interview.id };

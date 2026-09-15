@@ -131,6 +131,16 @@ export const interviewsTable = pgTable(
     questionCount: smallint("question_count").notNull(),
 
     /**
+     * Skills the admin allowed a follow-up on. For a skill in this list the
+     * model may ask one extra "dig deeper" question when the answer warrants
+     * it; skills not listed never get a follow-up. Empty = none (the default).
+     */
+    followUpSkills: workSkillEnum("follow_up_skills")
+      .array()
+      .notNull()
+      .default([]),
+
+    /**
      * The unguessable half of the share link. Never a sequential id — the
      * link is the only thing standing between the public and this interview.
      */

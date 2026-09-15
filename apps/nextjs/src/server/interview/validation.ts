@@ -13,8 +13,9 @@ import { WORK_SKILL_COUNT } from "~/config/work-skills";
  */
 
 /**
- * The assessment is fixed: one question per work skill, no setup step.
- * Nothing is collected from the candidate before it starts.
+ * One primary question per work skill. Follow-ups are no longer scheduled by
+ * this count — they are inserted dynamically, only for the skills an admin
+ * marked follow-up-eligible and only when the answer is worth digging into.
  */
 export const DEFAULT_QUESTION_COUNT = WORK_SKILL_COUNT;
 

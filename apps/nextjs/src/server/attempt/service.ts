@@ -25,12 +25,12 @@ import {
 } from "~/config/greeting";
 import {
   LANGUAGE_PROBE_TURN,
+  WORK_SKILLS,
+  WORK_SKILL_COUNT,
+  WORK_SKILL_IDS,
   getWorkSkill,
-  isAttemptFollowUp,
-  skillForAttemptTurn,
-  totalTurns,
 } from "~/config/work-skills";
-import type { WorkSkillId } from "~/config/work-skills";
+import type { WorkSkill, WorkSkillId } from "~/config/work-skills";
 import { isRepeatRequest } from "~/config/repeat-requests";
 import { aggregateSkillScores } from "~/lib/scoring";
 import { ProviderError, toUserMessage } from "~/server/services/errors";
@@ -38,6 +38,7 @@ import {
   evaluateAnswerAndGetNextQuestion,
   generateInterviewSummary,
   generateQuestion,
+  scoreAndMaybeFollowUp,
   translateQuestion,
 } from "~/server/services/openai";
 import type { InterviewContext, PriorTurn } from "~/server/services/openai";
@@ -1002,14 +1003,34 @@ function buildAndInsertQuestion(
   return work;
 }
 
+/** The primary (non-follow-up) skill turns asked so far. */
+function primaryTurns(turns: InterviewTurn[]): InterviewTurn[] {
+  return turns.filter((t) => t.kind === "skill" && !t.isFollowUp);
+}
+
+/**
+ * The next primary skill to ask, or null when all ten have been covered.
+ *
+ * Data-driven rather than derived from the turn number: dynamic follow-ups mean
+ * turn numbers no longer map one-to-one onto skills, so the schedule is read
+ * from how many primary questions have actually been asked.
+ */
+function nextPrimarySkill(priorTurns: InterviewTurn[]): WorkSkill | null {
+  const asked = primaryTurns(priorTurns).length;
+  return asked < WORK_SKILL_COUNT ? WORK_SKILLS[asked]! : null;
+}
+
+/** 1-based position of a skill in the fixed framework order. */
+function skillNumberOf(skillId: WorkSkillId): number {
+  return WORK_SKILL_IDS.indexOf(skillId) + 1;
+}
+
 async function generateAndInsertQuestion(
   attemptId: string,
   interview: Interview,
   turnNumber: number,
 ): Promise<void> {
   const attempt = await reload(attemptId);
-  const skill = skillForAttemptTurn(turnNumber, interview.questionCount);
-  if (!skill) return;
 
   const priorTurns = await db.query.interviewTurnsTable.findMany({
     where: and(
@@ -1019,11 +1040,16 @@ async function generateAndInsertQuestion(
     orderBy: asc(interviewTurnsTable.turnNumber),
   });
 
+  // A prepared turn is always a PRIMARY question — follow-ups are inserted
+  // straight from the answer, never prepared ahead.
+  const skill = nextPrimarySkill(priorTurns);
+  if (!skill) return;
+
   const ctx = contextFor(attempt, interview, await introductionFor(attemptId));
   const generated = await generateQuestion({
     ctx,
     skill,
-    turnNumber: turnNumber - LANGUAGE_PROBE_TURN,
+    turnNumber: skillNumberOf(skill.id),
     history: toHistory(priorTurns),
   });
 
@@ -1051,7 +1077,7 @@ async function generateAndInsertQuestion(
       turnNumber,
       kind: "skill",
       skillId: skill.id,
-      isFollowUp: isAttemptFollowUp(turnNumber, interview.questionCount),
+      isFollowUp: false,
       question: generated.question,
       questionTranslation: generated.translation,
       questionAudioId,
@@ -1101,11 +1127,26 @@ async function prefetchNextQuestion(
   interview: Interview,
   currentTurnNumber: number,
 ): Promise<void> {
-  const nextTurnNumber = currentTurnNumber + 1;
-  if (nextTurnNumber > totalTurns(interview.questionCount)) return;
-  if (isAttemptFollowUp(nextTurnNumber, interview.questionCount)) return;
-
   const turns = await getTurns(attemptId);
+  const current = turns.find((t) => t.turnNumber === currentTurnNumber);
+
+  // Don't prepare across a possible follow-up: an eligible primary may spawn a
+  // follow-up as the very next turn, and that is decided from the answer, not
+  // ahead of time. Preparing the next primary now would take the turn number
+  // the follow-up needs.
+  if (
+    current &&
+    !current.isFollowUp &&
+    current.skillId &&
+    interview.followUpSkills.includes(current.skillId as WorkSkillId)
+  ) {
+    return;
+  }
+
+  // Nothing left to prepare once every skill has its primary question.
+  if (!nextPrimarySkill(turns)) return;
+
+  const nextTurnNumber = currentTurnNumber + 1;
   if (turns.some((t) => t.turnNumber === nextTurnNumber)) return;
 
   try {
@@ -1140,7 +1181,7 @@ async function deliverTurn(
 ): Promise<void> {
   const turns = await getTurns(attemptId);
   if (!turns.some((t) => t.turnNumber === turnNumber)) {
-    if (!skillForAttemptTurn(turnNumber, interview.questionCount)) return;
+    if (!nextPrimarySkill(turns)) return;
     await buildAndInsertQuestion(attemptId, interview, turnNumber);
   }
 
@@ -1155,6 +1196,55 @@ async function deliverTurn(
 
   const lookAhead = prefetchNextQuestion(attemptId, interview, turnNumber);
   if (awaitPrefetch) await lookAhead;
+}
+
+/**
+ * Insert a follow-up the model just produced from the answer, voice it, make
+ * it current, and start preparing the primary after it.
+ *
+ * A follow-up keeps the current turn's skill and never spawns another — so the
+ * question after it is a plain primary, safe to prepare ahead.
+ */
+async function deliverFollowUp(
+  attempt: InterviewAttempt,
+  interview: Interview,
+  currentTurn: InterviewTurn,
+  followUpQuestion: string,
+  followUpTranslation: string | null,
+): Promise<void> {
+  const nextTurnNumber = currentTurn.turnNumber + 1;
+  const language = resolveInterviewLanguage(attempt.language!);
+  const questionAudioId = await synthesiseQuestionAudio(
+    attempt.id,
+    followUpQuestion,
+    language.code,
+  );
+
+  await db
+    .insert(interviewTurnsTable)
+    .values({
+      attemptId: attempt.id,
+      turnNumber: nextTurnNumber,
+      kind: "skill",
+      skillId: currentTurn.skillId,
+      isFollowUp: true,
+      question: followUpQuestion,
+      questionTranslation: followUpTranslation,
+      questionAudioId,
+      status: "awaiting_answer",
+    })
+    .onConflictDoNothing();
+
+  await db
+    .update(interviewAttemptsTable)
+    .set({
+      status: "in_progress",
+      currentQuestionNumber: nextTurnNumber,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewAttemptsTable.id, attempt.id));
+
+  await prefetchNextQuestion(attempt.id, interview, nextTurnNumber);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1194,27 +1284,13 @@ async function scoreTurn(args: {
     currentSkill: getWorkSkill(turn.skillId as WorkSkillId),
     currentQuestion: turn.question,
     answerTranscript: transcript,
-    turnNumber: turn.turnNumber - LANGUAGE_PROBE_TURN,
+    turnNumber: skillNumberOf(turn.skillId as WorkSkillId),
     nextSkill: null,
     nextIsFollowUp: false,
     scoreOnly: true,
   });
 
-  await db
-    .update(interviewTurnsTable)
-    .set({
-      answerTranscript: transcript,
-      detectedLanguageCode: languageCode,
-      score: evaluation.score,
-      evaluation: evaluation.evaluation,
-      strengths: evaluation.strengths,
-      improvements: evaluation.improvements,
-      status: "completed",
-      errorMessage: null,
-      processingStartedAt: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(interviewTurnsTable.id, turn.id));
+  await writeScoredTurn(turn.id, transcript, languageCode, evaluation);
 }
 
 /**
@@ -1248,14 +1324,59 @@ async function settleScoring(attemptId: string): Promise<void> {
   await Promise.allSettled([...pending]);
 }
 
+/** Write a computed score onto an answered turn (no model call). */
+async function writeScoredTurn(
+  turnId: string,
+  transcript: string,
+  languageCode: string | null,
+  evaluation: {
+    score: number;
+    evaluation: string;
+    strengths: string[];
+    improvements: string[];
+  },
+): Promise<void> {
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      answerTranscript: transcript,
+      detectedLanguageCode: languageCode,
+      score: evaluation.score,
+      evaluation: evaluation.evaluation,
+      strengths: evaluation.strengths,
+      improvements: evaluation.improvements,
+      status: "completed",
+      errorMessage: null,
+      processingStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turnId));
+}
+
+/** Move to the next primary skill, or finish the interview if none remain. */
+async function advanceOrFinish(
+  attempt: InterviewAttempt,
+  interview: Interview,
+  turn: InterviewTurn,
+): Promise<void> {
+  const turns = await getTurns(attempt.id);
+  if (!nextPrimarySkill(turns)) {
+    await settleScoring(attempt.id);
+    await finaliseAttempt(attempt.id, interview);
+    return;
+  }
+  await deliverTurn(attempt.id, interview, turn.turnNumber + 1);
+}
+
 /**
  * What happens once a skill answer has been transcribed.
  *
- * The split here is the whole latency win: for an ordinary question the next
- * one is already prepared, so we advance to it FIRST and score the answer we
- * just left behind afterwards — the candidate never waits on the score. A
- * follow-up, which must be built from this specific answer, keeps the original
- * one-shot path; and the final turn is scored before the report is written.
+ * Two paths. For a follow-up-ELIGIBLE primary the model must see the answer to
+ * decide whether to dig deeper, so scoring and that decision happen together on
+ * the critical path — the deliberate cost of a follow-up. For everything else
+ * (an ineligible primary, or a follow-up answer) the next question is already
+ * prepared, so we advance FIRST and score in the background. The final turn is
+ * always scored before the report is written.
  */
 async function handleAnsweredTurn(args: {
   attempt: InterviewAttempt;
@@ -1266,39 +1387,68 @@ async function handleAnsweredTurn(args: {
 }): Promise<void> {
   const { attempt, interview, turn, transcript, languageCode } = args;
 
-  const nextTurnNumber = turn.turnNumber + 1;
-  const hasNext = nextTurnNumber <= totalTurns(interview.questionCount);
-  const nextIsFollowUp =
-    hasNext && isAttemptFollowUp(nextTurnNumber, interview.questionCount);
+  const skillId = turn.skillId as WorkSkillId | null;
+  const eligible =
+    !turn.isFollowUp &&
+    !!skillId &&
+    interview.followUpSkills.includes(skillId);
 
-  // Final turn: nothing to advance to, so score it and write the report. The
-  // candidate is on their way to the results page, where a short wait is fine.
-  if (!hasNext) {
+  // --- Eligible primary: score AND decide the follow-up in one call. --------
+  if (eligible && skillId) {
+    const ctx = contextFor(
+      attempt,
+      interview,
+      await introductionFor(attempt.id),
+    );
+    const priorTurns = await db.query.interviewTurnsTable.findMany({
+      where: and(
+        eq(interviewTurnsTable.attemptId, attempt.id),
+        lt(interviewTurnsTable.turnNumber, turn.turnNumber),
+      ),
+      orderBy: asc(interviewTurnsTable.turnNumber),
+    });
+
+    const evaluation = await scoreAndMaybeFollowUp({
+      ctx,
+      history: toHistory(priorTurns),
+      currentSkill: getWorkSkill(skillId),
+      currentQuestion: turn.question,
+      answerTranscript: transcript,
+      skillNumber: skillNumberOf(skillId),
+    });
+
+    await writeScoredTurn(turn.id, transcript, languageCode, evaluation);
+
+    const followUp = evaluation.nextQuestion?.trim();
+    if (followUp) {
+      await deliverFollowUp(
+        attempt,
+        interview,
+        turn,
+        followUp,
+        evaluation.questionTranslation.trim() || null,
+      );
+      return;
+    }
+
+    // A thin answer, no follow-up: move on. Already scored above.
+    await advanceOrFinish(attempt, interview, turn);
+    return;
+  }
+
+  // --- Ineligible primary or a follow-up answer: advance fast, score after. -
+  const turns = await getTurns(attempt.id);
+  const isLast = !nextPrimarySkill(turns);
+
+  if (isLast) {
+    // Score before the report is written, after any earlier background
+    // scoring has landed.
     await scoreTurn({ attempt, interview, turn, transcript, languageCode });
-    // An earlier answer may still be being scored in the background; the
-    // report must not be aggregated around a score that has not landed.
     await settleScoring(attempt.id);
     await finaliseAttempt(attempt.id, interview);
     return;
   }
 
-  // A follow-up must be built from this answer, so it cannot have been prepared
-  // ahead. Keep the original path (score + generate + advance together), then
-  // look ahead from the follow-up to the question after it.
-  if (nextIsFollowUp) {
-    await evaluateSkillTurn({
-      attempt,
-      interview,
-      turn,
-      transcript,
-      languageCode,
-    });
-    await prefetchNextQuestion(attempt.id, interview, nextTurnNumber);
-    return;
-  }
-
-  // Ordinary case: the next question is already prepared. Save the transcript,
-  // advance immediately, then score the answer we moved past in the background.
   await db
     .update(interviewTurnsTable)
     .set({
@@ -1311,7 +1461,7 @@ async function handleAnsweredTurn(args: {
     })
     .where(eq(interviewTurnsTable.id, turn.id));
 
-  await deliverTurn(attempt.id, interview, nextTurnNumber);
+  await deliverTurn(attempt.id, interview, turn.turnNumber + 1);
 
   // The candidate has already moved on, so a scoring failure must not fail the
   // turn — an unscored answer is shown as such in the report and no more.
@@ -1327,10 +1477,6 @@ async function handleAnsweredTurn(args: {
         error instanceof Error ? error.message : "unknown"
       }`,
     );
-    // Recorded on the turn, not just in a log nobody reads: the answer
-    // keeps its transcript and shows as unscored in the report, which is
-    // honest. Silently leaving a null score looks identical to a question
-    // that was never reached.
     await db
       .update(interviewTurnsTable)
       .set({
@@ -1343,115 +1489,6 @@ async function handleAnsweredTurn(args: {
 
   trackScoring(attempt.id, scoring);
   await scoring;
-}
-
-/**
- * Score one answer and prepare the next question in a single step, then
- * finish if it was the last.
- *
- * Retained for FOLLOW-UP turns, whose next question must be built from the
- * answer just given and so cannot be prepared ahead of time.
- */
-async function evaluateSkillTurn(args: {
-  attempt: InterviewAttempt;
-  interview: Interview;
-  turn: InterviewTurn;
-  transcript: string;
-  languageCode: string | null;
-}): Promise<void> {
-  const { attempt, interview, turn, transcript, languageCode } = args;
-  const ctx = contextFor(attempt, interview, await introductionFor(attempt.id));
-
-  const priorTurns = await db.query.interviewTurnsTable.findMany({
-    where: and(
-      eq(interviewTurnsTable.attemptId, attempt.id),
-      lt(interviewTurnsTable.turnNumber, turn.turnNumber),
-    ),
-    orderBy: asc(interviewTurnsTable.turnNumber),
-  });
-
-  const last = totalTurns(interview.questionCount);
-  const nextTurnNumber = turn.turnNumber + 1;
-  const hasNext = nextTurnNumber <= last;
-  const nextSkill = hasNext
-    ? skillForAttemptTurn(nextTurnNumber, interview.questionCount)
-    : null;
-
-  const evaluation = await evaluateAnswerAndGetNextQuestion({
-    ctx,
-    history: toHistory(priorTurns),
-    currentSkill: getWorkSkill(turn.skillId as WorkSkillId),
-    currentQuestion: turn.question,
-    answerTranscript: transcript,
-    turnNumber: turn.turnNumber - LANGUAGE_PROBE_TURN,
-    nextSkill,
-    nextIsFollowUp: hasNext
-      ? isAttemptFollowUp(nextTurnNumber, interview.questionCount)
-      : false,
-  });
-
-  const willComplete = evaluation.interviewComplete || !nextSkill;
-
-  // Voiced before the transaction that reveals it. The client advances the
-  // moment `currentQuestionNumber` moves, so anything done after that point
-  // is something the candidate can already see missing.
-  const nextQuestionAudioId =
-    !willComplete && evaluation.nextQuestion && nextSkill
-      ? await synthesiseQuestionAudio(
-          attempt.id,
-          evaluation.nextQuestion,
-          ctx.language.code,
-        )
-      : null;
-
-  await db.transaction(async (tx) => {
-    await tx
-      .update(interviewTurnsTable)
-      .set({
-        answerTranscript: transcript,
-        detectedLanguageCode: languageCode,
-        score: evaluation.score,
-        evaluation: evaluation.evaluation,
-        strengths: evaluation.strengths,
-        improvements: evaluation.improvements,
-        status: "completed",
-        errorMessage: null,
-        processingStartedAt: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(interviewTurnsTable.id, turn.id));
-
-    if (!willComplete && evaluation.nextQuestion && nextSkill) {
-      await tx
-        .insert(interviewTurnsTable)
-        .values({
-          attemptId: attempt.id,
-          turnNumber: nextTurnNumber,
-          kind: "skill",
-          skillId: nextSkill.id,
-          isFollowUp: isAttemptFollowUp(
-            nextTurnNumber,
-            interview.questionCount,
-          ),
-          question: evaluation.nextQuestion,
-          questionTranslation: evaluation.questionTranslation.trim() || null,
-          questionAudioId: nextQuestionAudioId,
-          status: "awaiting_answer",
-        })
-        .onConflictDoNothing();
-
-      await tx
-        .update(interviewAttemptsTable)
-        .set({
-          status: "in_progress",
-          currentQuestionNumber: nextTurnNumber,
-          updatedAt: new Date(),
-        })
-        .where(eq(interviewAttemptsTable.id, attempt.id));
-    }
-  });
-
-  if (willComplete) await finaliseAttempt(attempt.id, interview);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1536,7 +1573,10 @@ export type { SkillScore } from "~/lib/scoring";
 export interface AttemptStatus {
   attemptStatus: InterviewAttempt["status"];
   currentQuestionNumber: number;
-  totalTurns: number;
+  /** Total assessable skills (the progress denominator). */
+  totalSkills: number;
+  /** Which skill (1..totalSkills) the current turn belongs to; 0 on the probe. */
+  skillNumber: number;
   needsLanguageChoice: boolean;
   language: string | null;
   isComplete: boolean;
@@ -1564,7 +1604,6 @@ export interface AttemptStatus {
  */
 export async function getAttemptStatus(
   attemptId: string,
-  interview: Interview,
 ): Promise<AttemptStatus> {
   let attempt = await reload(attemptId);
   let turns = await getTurns(attemptId);
@@ -1605,10 +1644,15 @@ export async function getAttemptStatus(
     turns.find((t) => t.turnNumber === attempt.currentQuestionNumber + 1) ??
     null;
 
+  const skillNumber = current?.skillId
+    ? skillNumberOf(current.skillId as WorkSkillId)
+    : 0;
+
   return {
     attemptStatus: attempt.status,
     currentQuestionNumber: attempt.currentQuestionNumber,
-    totalTurns: totalTurns(interview.questionCount),
+    totalSkills: WORK_SKILL_COUNT,
+    skillNumber,
     needsLanguageChoice: attempt.needsLanguageChoice,
     language: attempt.language,
     isComplete: attempt.status === "completed",
