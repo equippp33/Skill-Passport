@@ -41,3 +41,11 @@ export const AUTO_START_BACKSTOP_MS = 60_000;
  * than a form. The candidate sees it count down and can still press Next.
  */
 export const SILENCE_ADVANCE_SECONDS = 6;
+
+/**
+ * How long to wait for a candidate who has not said a single word before
+ * giving up and submitting anyway. Stops the interview stalling forever on
+ * someone silent; the recording still goes to the transcriber, and a truly
+ * empty answer is skipped server-side.
+ */
+export const NO_ANSWER_WAIT_SECONDS = 40;

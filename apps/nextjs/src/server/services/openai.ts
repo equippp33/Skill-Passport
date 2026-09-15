@@ -18,7 +18,11 @@ import type { InterviewContext, PriorTurn } from "./openai-prompts";
 
 export type { InterviewContext, PriorTurn };
 
-const OPENAI_TIMEOUT_MS = 60_000;
+// Short on purpose — see the matching note in sarvam.ts. A structured JSON
+// response for one short question/evaluation normally returns in a few
+// seconds; 20s already covers a genuinely slow one without letting a stuck
+// request sit on the critical path for a minute-plus.
+const OPENAI_TIMEOUT_MS = 20_000;
 
 /**
  * Whether question generation is available.

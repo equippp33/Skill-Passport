@@ -16,6 +16,7 @@ import type {
 import {
   LANGUAGE_CONFIDENCE_THRESHOLD,
   languageFromCode,
+  languageMentionedIn,
   resolveInterviewLanguage,
 } from "~/config/languages";
 import type { InterviewLanguageKey } from "~/config/languages";
@@ -64,7 +65,19 @@ import { generateToken } from "~/server/admin/service";
  * switches language mid-interview is followed rather than mistranscribed.
  */
 
-export const STALE_PROCESSING_MS = 3 * 60 * 1000;
+/**
+ * A turn stuck "processing" longer than this recovers on the next poll,
+ * offering a retry instead of spinning forever.
+ *
+ * Sized against the worst realistic pipeline now that the provider timeouts
+ * are tight (see sarvam.ts / openai.ts): STT (~30s) + an OpenAI call (~40s) +
+ * TTS for a follow-up (~24s) tops out under 100s even if every call times out
+ * once and succeeds on retry. This used to be 3 minutes, which was not a
+ * safety net so much as the ACTUAL latency candidates hit — a slow provider
+ * legitimately took that long to fail through its own (much longer) retry
+ * budget, and this was just when it got noticed and recovered.
+ */
+export const STALE_PROCESSING_MS = 2 * 60 * 1000;
 
 export class AttemptError extends Error {
   readonly userMessage: string;
@@ -684,12 +697,25 @@ export async function processTurn(
 
     // Asked to hear the question again rather than answering it. Checked
     // before anything is scored or the language is inferred — "sorry, say
-    // that again" says nothing about either. Re-ask, never re-score: once the
-    // language is known, say it again more simply (dynamic); on the probe, or
-    // before detection, just replay the same clip.
+    // that again" says nothing about either. Re-ask, never re-score.
     if (isRepeatRequest(transcript)) {
       if (turn.kind !== "language_probe" && attempt.language) {
-        await reaskSimpler(attempt, interview, turn);
+        // "Repeat that in Hindi" names a language — switch AND re-ask in it.
+        // Otherwise just say it again, more simply, in the current language.
+        const mentioned = languageMentionedIn(transcript);
+        if (mentioned && mentioned !== attempt.language) {
+          await db
+            .update(interviewAttemptsTable)
+            .set({ language: mentioned, updatedAt: new Date() })
+            .where(eq(interviewAttemptsTable.id, attemptId));
+          await reaskInLanguage(
+            attemptId,
+            turn,
+            resolveInterviewLanguage(mentioned),
+          );
+        } else {
+          await reaskSimpler(attempt, interview, turn);
+        }
       } else {
         await repeatTurn(attemptId, turnId);
       }
@@ -1456,49 +1482,63 @@ async function handleAnsweredTurn(args: {
     interview.followUpSkills.includes(skillId);
 
   // --- Eligible primary: score AND decide the follow-up in one call. --------
+  // This is the one path with a provider call on the critical path (the
+  // decision has to see the answer), so a failure here — even after its own
+  // retries — must not strand the candidate on an error screen. It falls
+  // through to the ordinary fast path below instead: rare, and costs at most
+  // one skipped follow-up, never a stuck interview.
   if (eligible && skillId) {
-    const ctx = contextFor(
-      attempt,
-      interview,
-      await introductionFor(attempt.id),
-    );
-    const priorTurns = await db.query.interviewTurnsTable.findMany({
-      where: and(
-        eq(interviewTurnsTable.attemptId, attempt.id),
-        lt(interviewTurnsTable.turnNumber, turn.turnNumber),
-      ),
-      orderBy: asc(interviewTurnsTable.turnNumber),
-    });
-
-    const evaluation = await scoreAndMaybeFollowUp({
-      ctx,
-      history: toHistory(priorTurns),
-      currentSkill: getWorkSkill(skillId),
-      currentQuestion: turn.question,
-      answerTranscript: transcript,
-      skillNumber: skillNumberOf(skillId),
-    });
-
-    await writeScoredTurn(turn.id, transcript, languageCode, evaluation);
-
-    const followUp = evaluation.nextQuestion?.trim();
-    if (followUp) {
-      await deliverFollowUp(
+    try {
+      const ctx = contextFor(
         attempt,
         interview,
-        turn,
-        followUp,
-        evaluation.questionTranslation.trim() || null,
+        await introductionFor(attempt.id),
       );
-      return;
-    }
+      const priorTurns = await db.query.interviewTurnsTable.findMany({
+        where: and(
+          eq(interviewTurnsTable.attemptId, attempt.id),
+          lt(interviewTurnsTable.turnNumber, turn.turnNumber),
+        ),
+        orderBy: asc(interviewTurnsTable.turnNumber),
+      });
 
-    // A thin answer, no follow-up: move on. Already scored above.
-    await advanceOrFinish(attempt, interview, turn);
-    return;
+      const evaluation = await scoreAndMaybeFollowUp({
+        ctx,
+        history: toHistory(priorTurns),
+        currentSkill: getWorkSkill(skillId),
+        currentQuestion: turn.question,
+        answerTranscript: transcript,
+        skillNumber: skillNumberOf(skillId),
+      });
+
+      await writeScoredTurn(turn.id, transcript, languageCode, evaluation);
+
+      const followUp = evaluation.nextQuestion?.trim();
+      if (followUp) {
+        await deliverFollowUp(
+          attempt,
+          interview,
+          turn,
+          followUp,
+          evaluation.questionTranslation.trim() || null,
+        );
+        return;
+      }
+
+      // A thin answer, no follow-up: move on. Already scored above.
+      await advanceOrFinish(attempt, interview, turn);
+      return;
+    } catch (error) {
+      console.error(
+        `[attempt] follow-up decision failed attempt=${attempt.id} turn=${turn.id}, advancing without it: ${
+          error instanceof Error ? error.message : "unknown"
+        }`,
+      );
+    }
   }
 
-  // --- Ineligible primary or a follow-up answer: advance fast, score after. -
+  // --- Ineligible primary, a follow-up answer, or a failed follow-up decision
+  // above: advance fast, score after. --------------------------------------
   const turns = await getTurns(attempt.id);
   const isLast = !nextPrimarySkill(turns);
 

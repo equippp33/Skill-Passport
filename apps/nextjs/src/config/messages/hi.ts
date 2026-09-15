@@ -130,6 +130,7 @@ export const hi: Messages = {
     next: "अगला सवाल",
     finish: "मूल्यांकन पूरा करें",
     keepSpeaking: "बोलते रहिए — आपके रुकते ही यह अपने आप आगे बढ़ जाएगा।",
+    waitingForAnswer: "सुन रहे हैं — जब तैयार हों तब बोलना शुरू करें।",
     advancingIn: "{seconds} में आगे बढ़ रहे हैं…",
     introduction: "परिचय",
     chooseLanguageTitle: "आप किस भाषा में आगे बढ़ना चाहेंगे?",

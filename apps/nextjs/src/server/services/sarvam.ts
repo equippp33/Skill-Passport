@@ -4,8 +4,15 @@ import { env } from "~/env";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
 
 const SARVAM_BASE_URL = "https://api.sarvam.ai";
-const STT_TIMEOUT_MS = 60_000;
-const TTS_TIMEOUT_MS = 30_000;
+// Kept tight on purpose. `withRetry`'s default (3 attempts) multiplies these,
+// and the two together were the actual cause of multi-minute stalls: a slow
+// Sarvam response used to mean up to 60s x 3 = 180s for one transcription —
+// landing squarely on `STALE_PROCESSING_MS` and only "recovering" via that
+// timeout, which is what looked like the interview doing nothing for minutes.
+const STT_TIMEOUT_MS = 15_000;
+const TTS_TIMEOUT_MS = 12_000;
+/** Explicit, short — see the note above on why the default (3) is too slow. */
+const RETRY_OPTS = { attempts: 2, baseDelayMs: 300 };
 
 /** bulbul:v3 caps at 2500 chars; stay well under and never send more. */
 const TTS_MAX_CHARS = 1500;
@@ -145,7 +152,7 @@ export async function transcribeAudio(input: {
     };
   };
 
-  return withRetry(run);
+  return withRetry(run, RETRY_OPTS);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -250,5 +257,5 @@ export async function generateSpeech(
       if (!rejectedBody) throw error;
       return attempt("target_language_code");
     }
-  });
+  }, RETRY_OPTS);
 }

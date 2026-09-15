@@ -31,7 +31,7 @@ import { useEffect, useRef, useState } from "react";
  * answer open forever. Tune here if real speech is being missed or noise still
  * counts as talking.
  */
-const SPEECH_RMS_THRESHOLD = 0.04;
+const SPEECH_RMS_THRESHOLD = 0.02;
 
 /** How often the level is sampled. Fine enough for a 1s countdown. */
 const SAMPLE_INTERVAL_MS = 200;
@@ -41,6 +41,7 @@ export function useSpeechActivity({
   active,
   silenceSeconds,
   minSpeechSeconds,
+  maxWaitSeconds,
   onSilence,
 }: {
   /** The live microphone stream. Null while devices are not open. */
@@ -51,8 +52,15 @@ export function useSpeechActivity({
   silenceSeconds: number;
   /** Never fire before the answer is at least this long. */
   minSpeechSeconds: number;
+  /**
+   * If the candidate never says anything, give up after this long and submit
+   * anyway rather than waiting forever — the recording still goes to the
+   * transcriber, which is more sensitive than this gate, and a truly empty one
+   * is skipped server-side.
+   */
+  maxWaitSeconds: number;
   onSilence: () => void;
-}): { secondsRemaining: number | null } {
+}): { secondsRemaining: number | null; noAnswerIn: number | null } {
   /**
    * Written only from the sampling interval, and read back through the
    * `active` guard below rather than being reset when watching stops —
@@ -60,6 +68,8 @@ export function useSpeechActivity({
    * guard makes the same guarantee without one.
    */
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
+  /** Seconds until we give up waiting for a first word; null once they speak. */
+  const [noAnswerIn, setNoAnswerIn] = useState<number | null>(null);
 
   // Held in a ref so a new callback identity on every render does not tear
   // down and rebuild the audio graph.
@@ -116,11 +126,13 @@ export function useSpeechActivity({
       // previous answer is corrected on the first sample of this one.
       // React bails out when the value has not actually changed.
       let remaining: number | null = null;
+      let waiting: number | null = null;
 
       if (rms >= SPEECH_RMS_THRESHOLD) {
         lastVoiceAt = now;
         spoken = true;
       } else if (spoken && now - startedAt >= minSpeechSeconds * 1000) {
+        // They spoke and have now gone quiet — the normal end of an answer.
         const silentMs = now - lastVoiceAt;
         const left = Math.ceil((silenceSeconds * 1000 - silentMs) / 1000);
 
@@ -129,13 +141,30 @@ export function useSpeechActivity({
           fired = true;
           clearInterval(timer);
           setSecondsRemaining(null);
+          setNoAnswerIn(null);
           onSilenceRef.current();
           return;
         }
         remaining = left;
+      } else if (!spoken) {
+        // Not a word yet — count down to giving up, and submit when it runs
+        // out so the interview is never stuck waiting on someone silent.
+        const left = Math.ceil((maxWaitSeconds * 1000 - (now - startedAt)) / 1000);
+
+        if (left <= 0) {
+          if (fired) return;
+          fired = true;
+          clearInterval(timer);
+          setSecondsRemaining(null);
+          setNoAnswerIn(null);
+          onSilenceRef.current();
+          return;
+        }
+        waiting = left;
       }
 
       setSecondsRemaining(remaining);
+      setNoAnswerIn(waiting);
     }, SAMPLE_INTERVAL_MS);
 
     return () => {
@@ -144,9 +173,12 @@ export function useSpeechActivity({
       analyser.disconnect();
       void context.close().catch(() => undefined);
     };
-  }, [stream, active, silenceSeconds, minSpeechSeconds]);
+  }, [stream, active, silenceSeconds, minSpeechSeconds, maxWaitSeconds]);
 
   // Guarded rather than cleared: while nothing is being watched there is no
   // countdown, whatever the last sample happened to leave behind.
-  return { secondsRemaining: active ? secondsRemaining : null };
+  return {
+    secondsRemaining: active ? secondsRemaining : null,
+    noAnswerIn: active ? noAnswerIn : null,
+  };
 }

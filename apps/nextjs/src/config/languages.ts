@@ -176,6 +176,29 @@ export function languageFromCode(
 }
 
 /**
+ * Whether `text` names one of the interview languages — "in Hindi", "हिंदी
+ * में", "Marathi please". Used to catch "can you repeat that in Hindi?" as a
+ * combined repeat-and-switch, not just a repeat in whatever language is
+ * already active.
+ *
+ * A plain substring check on the English name and the native name each
+ * language already carries — no NLU needed for a closed, short list.
+ */
+export function languageMentionedIn(text: string): InterviewLanguageKey | null {
+  const normalised = text.toLowerCase();
+  for (const key of INTERVIEW_LANGUAGE_KEYS) {
+    const lang = INTERVIEW_LANGUAGES[key];
+    if (
+      normalised.includes(lang.promptName.toLowerCase()) ||
+      text.includes(lang.displayName)
+    ) {
+      return key;
+    }
+  }
+  return null;
+}
+
+/**
  * Resolve a language for INTERVIEW CONTENT.
  *
  * Wider than resolveLanguage(): the interview itself only needs Sarvam STT +
