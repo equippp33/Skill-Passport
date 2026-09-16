@@ -6,6 +6,8 @@ import { z } from "zod";
 import { env } from "~/env";
 import type { WorkSkill } from "~/config/work-skills";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
+import { requestStructuredViaSarvam } from "./sarvam-chat";
+import type { SarvamChatKind } from "./sarvam-chat";
 import {
   contextBlock,
   frameworkBlock,
@@ -27,11 +29,18 @@ const OPENAI_TIMEOUT_MS = 20_000;
 /**
  * Whether question generation is available.
  *
- * OPENAI_API_KEY is optional so the app can boot and be navigated without it.
+ * Reports on whichever provider `AI_PROVIDER` selects, not on OpenAI
+ * specifically — otherwise a Sarvam-powered interview would be refused for a
+ * missing OPENAI_API_KEY it never uses. SARVAM_API_KEY is required at boot,
+ * so under Sarvam this is always true; OPENAI_API_KEY stays optional so the
+ * app can boot and be navigated without it.
+ *
  * Callers use this to warn ahead of time instead of letting an interview fail
- * halfway through.
+ * halfway through. The name is kept so call sites need no change when the
+ * provider is switched back.
  */
 export function isOpenAIConfigured(): boolean {
+  if (env.AI_PROVIDER === "sarvam") return Boolean(env.SARVAM_API_KEY);
   return Boolean(env.OPENAI_API_KEY);
 }
 
@@ -106,22 +115,27 @@ const TURN_JSON_SCHEMA = {
       type: "integer",
       description: "0-10 for the named work skill only.",
     },
+    // These three are the REVIEWER's notes and must be ENGLISH, matching the
+    // Language section of `interviewerRules`. They previously read "in the
+    // interview language", which contradicted it: harmless while only OpenAI
+    // ran (it followed the instructions and ignored the descriptions), but
+    // Sarvam is given the field descriptions as part of its prompt and
+    // followed them instead, returning Telugu evaluations into the admin
+    // report. One wording, one source of truth, both providers agree.
     evaluation: {
       type: "string",
       description:
-        "Two or three sentences addressed to the candidate, in the interview language.",
+        "Two or three sentences addressed to the candidate, in ENGLISH.",
     },
     strengths: {
       type: "array",
       items: { type: "string" },
-      description:
-        "What the candidate did well in this answer, in the interview language.",
+      description: "What the candidate did well in this answer, in ENGLISH.",
     },
     improvements: {
       type: "array",
       items: { type: "string" },
-      description:
-        "What would have made this answer stronger, in the interview language.",
+      description: "What would have made this answer stronger, in ENGLISH.",
     },
     nextQuestion: {
       type: ["string", "null"],
@@ -187,13 +201,37 @@ function wrapOpenAIError(error: unknown): never {
   });
 }
 
+/**
+ * The single seam between the interview logic and whichever model runs it.
+ *
+ * Every prompt in this file goes through here, so swapping the AI provider is
+ * this one dispatch and nothing else — the prompts, schemas, zod validators,
+ * error handling and all six public functions below are provider-agnostic and
+ * shared.
+ *
+ * `AI_PROVIDER` currently defaults to "sarvam". The OpenAI branch is intact
+ * and exercised by setting `AI_PROVIDER=openai`; nothing about it was
+ * removed.
+ */
 async function requestStructured<T>(args: {
   instructions: string;
   input: string;
   schemaName: string;
   jsonSchema: Record<string, unknown>;
   validator: z.ZodType<T>;
+  /**
+   * Which class of model should answer.
+   *
+   * "conversation" is on the candidate's critical path and is optimised for
+   * latency; "analysis" is scoring and reporting, where nobody is waiting.
+   * The OpenAI path ignores this — it uses one model for both.
+   */
+  kind: SarvamChatKind;
 }): Promise<T> {
+  if (env.AI_PROVIDER === "sarvam") {
+    return requestStructuredViaSarvam(args);
+  }
+
   const run = async (): Promise<T> => {
     let raw: string;
     try {
@@ -308,6 +346,7 @@ export async function generateQuestion(args: {
     schemaName: "interview_turn",
     jsonSchema: TURN_JSON_SCHEMA,
     validator: turnEvaluationSchema,
+    kind: "conversation",
   });
 
   const question = result.nextQuestion?.trim();
@@ -422,6 +461,11 @@ export async function evaluateAnswerAndGetNextQuestion(args: {
     schemaName: "interview_turn",
     jsonSchema: TURN_JSON_SCHEMA,
     validator: turnEvaluationSchema,
+    // `scoreOnly` is the look-ahead pipeline's background marking: nobody is
+    // waiting on it, so it gets the slower, more considered analysis model.
+    // The combined call writes the question the candidate is about to hear
+    // and is on the critical path, so it stays on the conversational one.
+    kind: scoreOnly ? "analysis" : "conversation",
   });
 
   // The question budget and completion are enforced server-side: never let the
@@ -516,6 +560,7 @@ export async function scoreAndMaybeFollowUp(args: {
     schemaName: "interview_turn",
     jsonSchema: TURN_JSON_SCHEMA,
     validator: turnEvaluationSchema,
+    kind: "conversation",
   });
 
   return { ...evaluation, interviewComplete: false };
@@ -557,6 +602,7 @@ export async function generateInterviewSummary(args: {
     schemaName: "interview_summary",
     jsonSchema: SUMMARY_JSON_SCHEMA,
     validator: interviewSummarySchema,
+    kind: "analysis",
   });
 }
 
@@ -626,6 +672,7 @@ export async function translateQuestion(
     schemaName: "translated_question",
     jsonSchema: TRANSLATED_QUESTION_JSON_SCHEMA,
     validator: translatedQuestionSchema,
+    kind: "conversation",
   });
 
   const translated = result.question.trim();
@@ -684,6 +731,7 @@ export async function rephraseQuestionSimpler(
     schemaName: "translated_question",
     jsonSchema: TRANSLATED_QUESTION_JSON_SCHEMA,
     validator: translatedQuestionSchema,
+    kind: "conversation",
   });
 
   const restated = result.question.trim();

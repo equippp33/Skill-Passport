@@ -43,12 +43,27 @@ export const env = createEnv({
       .optional()
       .transform((v) => v?.replace(/\/+$/, "")),
 
+    /**
+     * Which provider runs the interview "brain" — question generation,
+     * follow-ups, answer evaluation and the closing report.
+     *
+     * Speech (Sarvam STT/TTS) is unaffected either way; this switches only
+     * the reasoning layer. Both implementations satisfy the same structured
+     * -JSON contract, so flipping this value is the whole migration in
+     * either direction. See `requestStructured` in
+     * `~/server/services/openai`.
+     */
+    AI_PROVIDER: z.enum(["sarvam", "openai"]).default("sarvam"),
+
     // --- OpenAI (question generation + answer evaluation) ---
     /**
      * Optional so the app boots and can be clicked through without it.
      * Without it the site works but interviews cannot start — the server
      * returns a clear "not configured" message and the UI shows a banner.
      * See `isOpenAIConfigured()` in `~/server/services/openai`.
+     *
+     * Currently unused: `AI_PROVIDER` defaults to "sarvam". Kept wired up so
+     * switching back to GPT needs no code change.
      */
     OPENAI_API_KEY: z.string().min(1).optional(),
     OPENAI_MODEL: z.string().min(1).default("gpt-4.1-mini"),
@@ -86,11 +101,21 @@ export const env = createEnv({
         message: `must be one of: ${TRANSLATED_LANGUAGE_KEYS.join(", ")}`,
       }),
 
-    // --- Sarvam (speech-to-text + text-to-speech) ---
+    // --- Sarvam (speech-to-text + text-to-speech + chat) ---
     SARVAM_API_KEY: z.string().min(1),
     SARVAM_STT_MODEL: z.string().min(1).default("saaras:v3"),
     SARVAM_TTS_MODEL: z.string().min(1).default("bulbul:v3"),
     SARVAM_TTS_SPEAKER: z.string().min(1).default("shubh"),
+    /**
+     * Live conversational turns: questions, follow-ups and re-asks. Chosen
+     * for latency over depth — it sits on the candidate's critical path.
+     */
+    SARVAM_CHAT_MODEL: z.string().min(1).default("sarvam-105b-conversations"),
+    /**
+     * Scoring and the closing report, where nobody is waiting on the
+     * response. A reasoning model, so it is slower but more considered.
+     */
+    SARVAM_ANALYSIS_MODEL: z.string().min(1).default("sarvam-105b"),
 
     // --- Cloudflare R2 (answer + question audio storage) ---
     CLOUDFLARE_R2_ACCESS_KEY_ID: z.string().min(1),
