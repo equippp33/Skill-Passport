@@ -2,7 +2,7 @@
 
 import { Icon } from "~/components/ui/icon";
 import { useState, useTransition } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 import { Alert, Button } from "~/components/ui";
 import { WORK_SKILLS } from "~/config/work-skills";
@@ -18,7 +18,6 @@ import { createInterviewAction } from "~/server/admin/actions";
  */
 export function CreateInterview() {
   const router = useRouter();
-  const pathname = usePathname();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [followUps, setFollowUps] = useState<Set<WorkSkillId>>(new Set());
@@ -40,9 +39,7 @@ export function CreateInterview() {
         setError(result.error);
         return;
       }
-      router.push(
-        `${pathname}?interview=${encodeURIComponent(result.interviewId)}`,
-      );
+      router.push(`/admin/interviews/${result.interviewId}`);
     });
   }
 

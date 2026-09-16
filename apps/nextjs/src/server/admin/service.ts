@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import type { User } from "lucia";
 
@@ -310,7 +310,11 @@ export async function getInterviewDetails(
   if (!found) return null;
 
   const { interview, attempts } = found;
-  const spokenByAttempt = await getSpokenLanguages(attempts.map((a) => a.id));
+  const attemptIds = attempts.map((a) => a.id);
+  const [spokenByAttempt, thumbnailByAttempt] = await Promise.all([
+    getSpokenLanguages(attemptIds),
+    getThumbnailVideos(attemptIds),
+  ]);
 
   return {
     id: interview.id,
@@ -324,14 +328,46 @@ export async function getInterviewDetails(
       id: attempt.id,
       candidateName: attempt.candidateName,
       candidateEmail: attempt.candidateEmail,
+      candidatePhone: attempt.candidatePhone,
       status: attempt.status,
       language: attempt.language,
+      thumbnailVideoId: thumbnailByAttempt.get(attempt.id) ?? null,
       spokenLanguages: spokenByAttempt.get(attempt.id) ?? [],
       overallScore: attempt.overallScore,
       awayCount: attempt.awayCount,
       createdAt: attempt.createdAt,
     })),
   };
+}
+
+/** The first recorded answer clip per attempt, for the card thumbnail. */
+async function getThumbnailVideos(
+  attemptIds: string[],
+): Promise<Map<string, string>> {
+  const byAttempt = new Map<string, string>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewTurnsTable.attemptId,
+      answerVideoId: interviewTurnsTable.answerVideoId,
+    })
+    .from(interviewTurnsTable)
+    .where(
+      and(
+        inArray(interviewTurnsTable.attemptId, attemptIds),
+        isNotNull(interviewTurnsTable.answerVideoId),
+      ),
+    )
+    .orderBy(asc(interviewTurnsTable.turnNumber));
+
+  // Ordered by turn, so the first row seen for an attempt is its earliest clip.
+  for (const row of rows) {
+    if (row.answerVideoId && !byAttempt.has(row.attemptId)) {
+      byAttempt.set(row.attemptId, row.answerVideoId);
+    }
+  }
+  return byAttempt;
 }
 
 /**

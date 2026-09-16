@@ -10,7 +10,6 @@ import {
 } from "~/server/admin/service";
 import { formatDate } from "~/lib/utils";
 import { CreateInterview } from "./create-interview";
-import { InterviewDialogSlot } from "./interview-dialog-slot";
 import { OpenInterviewButton } from "./open-interview-button";
 
 export const metadata: Metadata = { title: "Overview" };
@@ -47,13 +46,8 @@ function Stat({
   );
 }
 
-export default async function AdminOverviewPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ interview?: string }>;
-}) {
+export default async function AdminOverviewPage() {
   const admin = await requireAdmin("/admin");
-  const { interview: openInterviewId } = await searchParams;
   const [stats, interviews] = await Promise.all([
     getAdminStats(admin.id),
     listInterviews(admin.id),
@@ -163,7 +157,6 @@ export default async function AdminOverviewPage({
                     <OpenInterviewButton
                       interviewId={interview.id}
                       interviewTitle={interview.title}
-                      basePath="/admin"
                     />
                   </CardContent>
                 </Card>
@@ -172,8 +165,6 @@ export default async function AdminOverviewPage({
           </ul>
         )}
       </section>
-
-      <InterviewDialogSlot adminId={admin.id} interviewId={openInterviewId} />
     </>
   );
 }

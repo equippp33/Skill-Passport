@@ -121,6 +121,13 @@ export function ActiveInterview({
   const pollStartedAtRef = useRef<number | null>(null);
   /** Guards against a double submit from a fast double-click. */
   const submittingRef = useRef(false);
+  /**
+   * The turn already sent. Blocks a SECOND submit of the same answer after the
+   * first has finished — the silence hook and the max-duration backstop can
+   * both fire, and on mobile a stale recorder event can too. Cleared when a
+   * new question arrives (see `allowReplay`).
+   */
+  const submittedTurnRef = useRef<number | null>(null);
 
   // The answer is submitted automatically — when the candidate pauses (see the
   // speech-activity hook below) or, as a backstop, when the recording hits its
@@ -176,6 +183,7 @@ export function ActiveInterview({
   const allowReplay = useCallback(() => {
     autoStartedForTurnRef.current = null;
     playedForTurnRef.current = null;
+    submittedTurnRef.current = null;
   }, []);
 
   const beginAnswer = useCallback(() => {
@@ -554,6 +562,15 @@ export function ActiveInterview({
           return;
         }
 
+        // 409 = the turn was already claimed/completed or has moved on — a
+        // duplicate submit (common on mobile, where the auto-advance and a
+        // stale recorder event can both fire). The answer is already being
+        // processed, so poll rather than show a scary error.
+        if (response.status === 409) {
+          setPhase("processing");
+          return;
+        }
+
         if (!response.ok && response.status !== 202) {
           const body = (await response.json().catch(() => null)) as {
             error?: string;
@@ -596,6 +613,11 @@ export function ActiveInterview({
    */
   const handleNext = useCallback(async () => {
     if (submittingRef.current) return;
+    // Already sent this turn (a second silence/backstop/stale event) — ignore.
+    const active = turnRef.current;
+    if (active && submittedTurnRef.current === active.turnNumber) return;
+    if (active) submittedTurnRef.current = active.turnNumber;
+
     const { audioSegments, video, durationMs } = await recorder.stopRecording();
 
     // Judged on the whole answer, not the last segment: a reply that rolls

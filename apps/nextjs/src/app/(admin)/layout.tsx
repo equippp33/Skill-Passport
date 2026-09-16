@@ -37,12 +37,12 @@ export default async function AdminLayout({
         <AdminSidebar signOut={m.app.signOut} />
       </div>
 
-      <div className="lg:pl-64 print:pl-0">
+      <div className="lg:pl-52 print:pl-0">
         <header
           data-print-hide
           className="sticky top-0 z-20 border-b border-border-subtle bg-surface"
         >
-          <div className="mx-auto flex min-h-20 max-w-7xl items-center justify-between gap-3 px-4 sm:px-8 lg:px-10">
+          <div className="flex min-h-16 w-full items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
             {/* Only shown where the rail is hidden. */}
             <Link
               href="/admin"
@@ -70,7 +70,7 @@ export default async function AdminLayout({
 
         <main
           id="main"
-          className="mx-auto max-w-7xl space-y-7 px-4 py-6 sm:px-8 sm:py-9 lg:px-10"
+          className="w-full space-y-7 px-4 py-6 sm:px-6 sm:py-8 lg:px-8"
         >
           {children}
         </main>

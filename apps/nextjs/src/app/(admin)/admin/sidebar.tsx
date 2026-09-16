@@ -55,7 +55,7 @@ export function AdminSidebar({
   return (
     <aside
       aria-label="Admin navigation"
-      className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-border-subtle bg-surface lg:flex"
+      className="fixed inset-y-0 left-0 z-30 hidden w-52 flex-col border-r border-border-subtle bg-surface lg:flex"
     >
       <Link href="/admin" className="px-6 py-7">
         <Brand />

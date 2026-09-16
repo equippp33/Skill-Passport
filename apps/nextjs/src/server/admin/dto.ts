@@ -18,8 +18,11 @@ export interface AttemptSummary {
   id: string;
   candidateName: string;
   candidateEmail: string | null;
+  candidatePhone: string | null;
   status: string;
   language: string | null;
+  /** First recorded answer clip, used as the card thumbnail. Null until one exists. */
+  thumbnailVideoId: string | null;
   /**
    * Every language actually heard in their answers, most-used first.
    * Distinct from `language`, which is the one the interview is conducted
