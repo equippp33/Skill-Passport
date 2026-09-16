@@ -551,6 +551,20 @@ async function archiveAnswerAudio(
  * from, and a candidate who switches language mid-answer should be read as
  * whatever they mostly spoke.
  */
+/**
+ * Longest transcribed slice wins the language vote, and a short slice in a
+ * DIFFERENT language than that winner is dropped.
+ *
+ * Sarvam, told to detect ("unknown"), free-guesses a language per segment and
+ * on a silent tail hallucinates a stray phrase in a random script — the
+ * "આપણે હા ચાલો" / "achcha achcha" garbage that used to get appended to
+ * answers. A real answer slice is substantial; a hallucination is short and
+ * off-language. So detection still runs every turn (switching works), but the
+ * junk slice is discarded and cannot corrupt the transcript or flip the
+ * detected language.
+ */
+const HALLUCINATION_MAX_CHARS = 40;
+
 async function transcribeSegments(answer: AnswerAudio): Promise<{
   transcript: string;
   languageCode: string | null;
@@ -584,22 +598,19 @@ async function transcribeSegments(answer: AnswerAudio): Promise<{
     }),
   );
 
-  const parts: string[] = [];
+  // First pass: the longest slice decides the answer's language. It is the
+  // most real thing here — a hallucination on silence is always short.
   let best: { code: string | null; probability: number | null; len: number } = {
     code: null,
     probability: null,
     len: -1,
   };
   let failures = 0;
-
-  // In segment order, so the transcript reads the way it was spoken even
-  // though the calls finished in whatever order Sarvam returned them.
   for (const result of settled) {
     if (!result.ok) {
       failures += 1;
       continue;
     }
-    if (result.text) parts.push(result.text);
     if (result.text.length > best.len) {
       best = {
         code: result.code,
@@ -607,6 +618,18 @@ async function transcribeSegments(answer: AnswerAudio): Promise<{
         len: result.text.length,
       };
     }
+  }
+
+  // Second pass, in segment order so the transcript reads the way it was
+  // spoken. Drop a short slice whose language differs from the winner — that
+  // is a silence hallucination, not part of the answer.
+  const parts: string[] = [];
+  for (const result of settled) {
+    if (!result.ok || !result.text) continue;
+    const offDominant =
+      best.code !== null && result.code !== null && result.code !== best.code;
+    if (offDominant && result.text.length < HALLUCINATION_MAX_CHARS) continue;
+    parts.push(result.text);
   }
 
   // Every slice failed: that is a real failure, and the caller should say so
@@ -767,6 +790,11 @@ export async function processTurn(
       console.info(
         `[attempt] language switched attempt=${attemptId} -> ${detected}`,
       );
+      // The NEXT question was prepared an answer ahead, in the language just
+      // abandoned. Drop it so `handleAnsweredTurn` regenerates it in the new
+      // language — otherwise the switch only takes effect one question later,
+      // which is the "lag" that made switching look broken.
+      await discardPreparedQuestions(attemptId, turn.turnNumber);
     }
     if (!activeLanguage) {
       await failTurn(
