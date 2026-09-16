@@ -40,7 +40,7 @@ export const AUTO_START_BACKSTOP_MS = 60_000;
  * that finishing a sentence and waiting feels like a conversation rather
  * than a form. The candidate sees it count down and can still press Next.
  */
-export const SILENCE_ADVANCE_SECONDS = 6;
+export const SILENCE_ADVANCE_SECONDS = 8;
 
 /**
  * How long to wait for a candidate who has not said a single word before

@@ -29,18 +29,23 @@ const SARVAM_BASE_URL = "https://api.sarvam.ai";
  * nearly every call. `withRetry` multiplies this, so it is paired with a low
  * attempt count below.
  */
-const CHAT_TIMEOUT_MS = 90_000;
+// A healthy conversation call returns in ~28-35s. This caps a DEGRADED one:
+// past 45s it is not coming back usefully, so abort and let `requestStructured`
+// fall back to OpenAI rather than make the candidate wait minutes. (Was 90s,
+// which on a bad Sarvam day meant a 90s timeout + retry + non-JSON ≈ 136s
+// before the interview even errored.)
+const CHAT_TIMEOUT_MS = 45_000;
 
 /** Reasoning models spend most of their budget before the first content token. */
 const ANALYSIS_TIMEOUT_MS = 150_000;
 
 /**
- * One retry, not two.
- *
- * At ~30s a call, three attempts is a 90s stall on the candidate's critical
- * path — the same reasoning as the STT/TTS timeouts in `sarvam.ts`.
+ * Conversation: no retry — one 45s try, then the OpenAI fallback takes over, so
+ * a second Sarvam attempt would only add 45s of dead wait on the candidate's
+ * critical path. Analysis is background (nobody waits) so it keeps a retry.
  */
-const RETRY_OPTS = { attempts: 2, baseDelayMs: 500 };
+const CHAT_RETRY_OPTS = { attempts: 1, baseDelayMs: 500 };
+const ANALYSIS_RETRY_OPTS = { attempts: 2, baseDelayMs: 500 };
 
 /**
  * Token ceilings.
@@ -265,5 +270,8 @@ export async function requestStructuredViaSarvam<T>(args: {
     return result.data;
   };
 
-  return withRetry(run, RETRY_OPTS);
+  return withRetry(
+    run,
+    kind === "analysis" ? ANALYSIS_RETRY_OPTS : CHAT_RETRY_OPTS,
+  );
 }

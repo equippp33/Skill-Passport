@@ -38,8 +38,31 @@ export interface InterviewContext {
  * (explicitly not a technical screen), and every candidate-facing string must
  * come back in the interview language.
  */
+/**
+ * Script each language must be WRITTEN in.
+ *
+ * Without an explicit script name the model romanises casual Hindi/Telugu into
+ * Latin ("Agar aapne kaam mein…"), which a candidate who reads only the native
+ * script cannot follow. Naming the script and forbidding romanisation fixes it.
+ */
+const SCRIPT_BY_PROMPT_NAME: Record<string, string> = {
+  Hindi: "Devanagari",
+  Marathi: "Devanagari",
+  Bengali: "Bengali",
+  Gujarati: "Gujarati",
+  Kannada: "Kannada",
+  Malayalam: "Malayalam",
+  Odia: "Odia",
+  Punjabi: "Gurmukhi",
+  Tamil: "Tamil",
+  Telugu: "Telugu",
+  English: "Latin",
+};
+
 export function interviewerRules(ctx: InterviewContext): string {
   const lang = ctx.language.promptName;
+  const script = SCRIPT_BY_PROMPT_NAME[lang] ?? lang;
+  const isEnglish = lang === "English";
 
   return [
     `You are a friendly interviewer running a WORKPLACE SKILLS assessment.`,
@@ -49,6 +72,16 @@ export function interviewerRules(ctx: InterviewContext): string {
     `## Language`,
     `The interview is SPOKEN to the candidate in ${lang}.`,
     `- Write the QUESTION (and any follow-up) in ${lang} — the candidate hears it.`,
+    ...(isEnglish
+      ? []
+      : [
+          `- Write EVERY character of the question in the ${script} script.`,
+          `  NEVER romanise: do not write ${lang} in Latin/English letters.`,
+          `  "${lang === "Telugu" ? "మీరు ఆఫీసుకి" : "आप ऑफिस"}" — correct.`,
+          `  "aap office" / "meeru office" (Latin letters) — WRONG, never do this.`,
+          `  Even English loanwords go in ${script}: "टाइम" not "time",`,
+          `  "ఆఫీస్" not "office". The candidate cannot read the Latin alphabet.`,
+        ]),
     `- Write the evaluation, the strengths and the improvements in ENGLISH.`,
     `  These are the reviewer's notes, never read back to the candidate, so a`,
     `  reviewer who does not speak ${lang} can still read them.`,
@@ -67,31 +100,17 @@ export function interviewerRules(ctx: InterviewContext): string {
           `newspaper or an exam paper is the wrong word, even when it is the`,
           `"correct" one.`,
           ``,
-          `Two concrete rules:`,
-          `1. Say it the everyday way. If there is a formal word and a spoken`,
-          `   word for the same thing, always take the spoken one. In Hindi,`,
-          `   "पक्का करना" not "सुनिश्चित करना"; "ठीक करना" not "समाधान करना";`,
-          `   "बहुत busy" not "भारी व्यस्तता". In Telugu, "handle చేయడం" not`,
-          `   "పరిష్కరించడం"; "గొడవ" not "వాదన". Apply the same instinct to`,
-          `   whatever language you are writing.`,
-          `2. Keep ordinary workplace words in English, in Latin script, inside`,
-          `   the ${lang} sentence — team, manager, customer, shift, deadline,`,
-          `   target, feedback, meeting, problem, order, payment, machine,`,
-          `   mistake, help. This is how people really talk (Hinglish,`,
-          `   Tenglish, and so on) and it is what you should write.`,
-          ``,
-          `3. For verbs especially, use the English verb with the local helper`,
-          `   verb — that is what people actually say: "handle చేస్తారు",`,
-          `   "solve करेंगे", "manage చేయడం", "check करेंगे". Reach for this`,
-          `   instead of the formal native verb for things like resolve,`,
-          `   handle, ensure, identify, arrange, communicate.`,
-          ``,
-          `CHECK BEFORE YOU ANSWER: count the English words in your question.`,
-          `If there are none, you have written the formal version. Rewrite it`,
-          `the way it would be said out loud. Nearly every question should`,
-          `carry one or two English words.`,
-          `Then ask: would a shop assistant say this to a friend? If not,`,
-          `say it again more simply.`,
+          `Three quick rules:`,
+          `1. Say it the everyday, spoken way, not the formal one. Hindi:`,
+          `   "ठीक करना" not "समाधान करना". Telugu: "హ్యాండిల్ చేయడం" not`,
+          `   "పరిష్కరించడం".`,
+          `2. Use the everyday English loanwords people mix in (time, problem,`,
+          `   office, team, target, manager, meeting) — but spelled in ${lang}`,
+          `   script, not Latin letters. Hindi: टाइम, प्रॉब्लम, ऑफिस. Telugu:`,
+          `   టైమ్, ప్రాబ్లం, ఆఫీస్.`,
+          `3. English verbs take the local helper, also in ${lang} script:`,
+          `   Hindi "हैंडल करेंगे", "सॉल्व करेंगे"; Telugu "హ్యాండిల్ చేస్తారు".`,
+          `Write the whole question in ${lang} script only — no Latin letters.`,
           ``,
           `- ALSO fill questionTranslation with a plain English translation of`,
           `  the question you wrote, for reviewers who do not read ${lang}.`,

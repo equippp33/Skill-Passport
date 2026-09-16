@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Noto_Sans_Devanagari } from "next/font/google";
+import { Instrument_Sans, Noto_Sans_Devanagari } from "next/font/google";
 
 import { uiLanguage, uiMessages } from "~/server/language";
 
@@ -26,9 +26,9 @@ export async function generateMetadata(): Promise<Metadata> {
  * Self-hosted at build time by next/font, so there is no render-blocking
  * request to Google and no layout shift when it loads.
  */
-const inter = Inter({
+const sans = Instrument_Sans({
   subsets: ["latin"],
-  variable: "--font-inter",
+  variable: "--font-instrument",
   display: "swap",
 });
 
@@ -54,7 +54,7 @@ export default function RootLayout({
   return (
     <html
       lang={lang.code}
-      className={`${inter.variable} ${devanagari.variable}`}
+      className={`${sans.variable} ${devanagari.variable}`}
     >
       <body className="min-h-screen bg-canvas text-content antialiased">
         {children}

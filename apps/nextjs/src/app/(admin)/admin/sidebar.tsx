@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Brand } from "~/components/brand";
@@ -15,9 +16,12 @@ const items = [
 export function AdminSidebar({
   mobile = false,
   signOut = "Sign out",
+  email,
 }: {
   mobile?: boolean;
   signOut?: string;
+  /** Shown as the profile at the foot of the desktop rail. */
+  email?: string;
 }) {
   const pathname = usePathname();
   const links = items.map((item) => {
@@ -32,13 +36,13 @@ export function AdminSidebar({
         href={item.href}
         aria-current={active ? "page" : undefined}
         className={cn(
-          "flex min-h-11 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start lg:gap-3",
+          "flex min-h-9 items-center justify-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors lg:justify-start",
           active
             ? "bg-accent-soft text-accent"
             : "text-content-muted hover:bg-surface-muted hover:text-content",
         )}
       >
-        <Icon name={item.icon} className="size-5 shrink-0" />
+        <Icon name={item.icon} className="size-4 shrink-0" />
         <span>{item.label}</span>
       </Link>
     );
@@ -55,31 +59,93 @@ export function AdminSidebar({
   return (
     <aside
       aria-label="Admin navigation"
-      className="fixed inset-y-0 left-0 z-30 hidden w-52 flex-col border-r border-border-subtle bg-surface lg:flex"
+      className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-border-subtle bg-surface lg:flex"
     >
-      <Link href="/admin" className="px-6 py-7">
+      <Link href="/admin" className="px-4 py-4">
         <Brand />
       </Link>
-      <p className="px-7 pt-5 pb-3 text-xs font-semibold tracking-wider text-content-muted uppercase">
-        Workspace
-      </p>
-      <nav className="flex-1 space-y-1.5 px-4">{links}</nav>
-      <div className="mx-4 mb-5 rounded-2xl border border-border-subtle bg-canvas p-4">
-        <Icon name="spark" className="mb-3 text-accent" />
-        <p className="text-sm font-semibold">A clearer picture of skills.</p>
-        <p className="mt-1 text-xs leading-relaxed text-content-muted">
-          One interview. Ten workplace skills. Meaningful feedback.
-        </p>
-      </div>
-      <form action={logoutAction} className="border-t border-border-subtle p-4">
-        <button
-          type="submit"
-          className="flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-content-muted transition-colors hover:bg-danger-soft hover:text-danger"
-        >
-          <Icon name="logout" />
-          {signOut}
-        </button>
-      </form>
+      <nav className="flex-1 space-y-0.5 px-2.5">{links}</nav>
+      <ProfileMenu email={email} signOut={signOut} />
     </aside>
+  );
+}
+
+/** Email as the trigger; a menu opens above it with reset-password + sign-out. */
+function ProfileMenu({
+  email,
+  signOut,
+}: {
+  email?: string;
+  signOut: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(event: PointerEvent) {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative border-t border-border-subtle p-2.5">
+      {open ? (
+        <div
+          role="menu"
+          className="absolute right-2.5 bottom-full left-2.5 mb-1 overflow-hidden rounded-lg border border-border-subtle bg-surface shadow-[var(--shadow-raised)]"
+        >
+          <Link
+            href="/admin/reset-password"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2.5 px-3 py-2 text-sm text-content-muted transition-colors hover:bg-surface-muted hover:text-content"
+          >
+            <Icon name="shield" className="size-4 shrink-0" />
+            Reset password
+          </Link>
+          <form action={logoutAction}>
+            <button
+              type="submit"
+              role="menuitem"
+              className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-sm text-danger transition-colors hover:bg-danger-soft"
+            >
+              <Icon name="logout" className="size-4 shrink-0" />
+              {signOut}
+            </button>
+          </form>
+        </div>
+      ) : null}
+
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-surface-muted"
+      >
+        <span
+          className="min-w-0 flex-1 truncate text-sm font-medium text-content"
+          title={email}
+        >
+          {email ?? "Account"}
+        </span>
+        <svg
+          aria-hidden
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          className={cn(
+            "size-4 shrink-0 text-content-muted transition-transform",
+            open && "rotate-180",
+          )}
+        >
+          <path d="m6 8 4 4 4-4" strokeLinecap="round" />
+        </svg>
+      </button>
+    </div>
   );
 }

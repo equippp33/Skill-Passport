@@ -31,7 +31,13 @@ import { useEffect, useRef, useState } from "react";
  * answer open forever. Tune here if real speech is being missed or noise still
  * counts as talking.
  */
-const SPEECH_RMS_THRESHOLD = 0.02;
+// ponytail: calibration knob. Too high and soft/normal speech dips below it
+// mid-sentence, so `lastVoiceAt` goes stale and the answer submits while the
+// candidate is still talking (they perceive it as "I only paused a second").
+// Too low and room static counts as talking and the answer never ends. 0.013
+// sits above a quiet room's floor (~0.005) while catching soft speech. Raise
+// toward 0.02 only if static is holding answers open on real mics.
+const SPEECH_RMS_THRESHOLD = 0.013;
 
 /** How often the level is sampled. Fine enough for a 1s countdown. */
 const SAMPLE_INTERVAL_MS = 200;

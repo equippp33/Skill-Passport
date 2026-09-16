@@ -34,43 +34,35 @@ export default async function AdminLayout({
       </a>
 
       <div data-print-hide>
-        <AdminSidebar signOut={m.app.signOut} />
+        <AdminSidebar signOut={m.app.signOut} email={admin.email} />
       </div>
 
-      <div className="lg:pl-52 print:pl-0">
+      <div className="lg:pl-60 print:pl-0">
+        {/* Mobile only — the desktop rail carries the brand, nav and profile,
+            so there is nothing for a top bar to do there. */}
         <header
           data-print-hide
-          className="sticky top-0 z-20 border-b border-border-subtle bg-surface"
+          className="sticky top-0 z-20 border-b border-border-subtle bg-surface lg:hidden"
         >
-          <div className="flex min-h-16 w-full items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
-            {/* Only shown where the rail is hidden. */}
+          <div className="flex min-h-14 w-full items-center justify-between gap-3 px-4 sm:px-6">
             <Link
               href="/admin"
-              className="flex items-center gap-2 text-sm font-semibold tracking-tight lg:hidden"
+              className="flex items-center gap-2 text-sm font-semibold tracking-tight"
             >
               <Brand className="gap-2 [&>svg]:size-8 [&>span]:text-base" />
             </Link>
-            <span className="hidden text-sm font-medium text-content-muted lg:block">
-              Interview workspace
-            </span>
-
-            <div className="flex items-center gap-3">
-              <span className="hidden max-w-64 truncate text-sm text-content-muted sm:inline">
-                {admin.email}
-              </span>
-              <form action={logoutAction} className="lg:hidden">
-                <Button type="submit" variant="secondary" size="sm">
-                  {m.app.signOut}
-                </Button>
-              </form>
-            </div>
+            <form action={logoutAction}>
+              <Button type="submit" variant="secondary" size="sm">
+                {m.app.signOut}
+              </Button>
+            </form>
           </div>
           <AdminSidebar mobile />
         </header>
 
         <main
           id="main"
-          className="w-full space-y-7 px-4 py-6 sm:px-6 sm:py-8 lg:px-8"
+          className="w-full space-y-4 px-4 py-4 sm:px-6 lg:px-8"
         >
           {children}
         </main>

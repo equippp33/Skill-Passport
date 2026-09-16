@@ -15,6 +15,8 @@ import { EMAIL_TAKEN, isUniqueViolation } from "~/lib/auth-errors";
 export interface AuthFormState {
   error: string | null;
   fieldErrors?: Record<string, string>;
+  /** Set by `changePasswordAction` so the form can confirm the change. */
+  success?: boolean;
 }
 
 /** Only allow relative paths, so `?next=` cannot become an open redirect. */
@@ -68,6 +70,51 @@ export async function loginAction(
   );
 
   redirect(safeRedirectTarget(formData.get("next")));
+}
+
+/** Change the signed-in admin's own password. */
+export async function changePasswordAction(
+  _prev: AuthFormState,
+  formData: FormData,
+): Promise<AuthFormState> {
+  const { user } = await getAuth();
+  if (!user) return { error: "Your session has expired. Sign in again." };
+
+  const current = String(formData.get("currentPassword") ?? "");
+  const next = String(formData.get("newPassword") ?? "");
+  const confirm = String(formData.get("confirmPassword") ?? "");
+
+  const fieldErrors: Record<string, string> = {};
+  if (next.length < 8) {
+    fieldErrors.newPassword = "Password must be at least 8 characters.";
+  }
+  if (next !== confirm) {
+    fieldErrors.confirmPassword = "Passwords do not match.";
+  }
+  if (Object.keys(fieldErrors).length > 0) return { error: null, fieldErrors };
+
+  const row = await db.query.usersTable.findFirst({
+    where: eq(usersTable.id, user.id),
+  });
+  if (!row) return { error: "Your session has expired. Sign in again." };
+
+  if (!(await verifyPassword(row.passwordHash, current))) {
+    return {
+      error: null,
+      fieldErrors: { currentPassword: "That is not your current password." },
+    };
+  }
+
+  await db
+    .update(usersTable)
+    .set({
+      passwordHash: await hashPassword(next),
+      mustChangePassword: false,
+      updatedAt: new Date(),
+    })
+    .where(eq(usersTable.id, user.id));
+
+  return { error: null, success: true };
 }
 
 export async function logoutAction(): Promise<void> {

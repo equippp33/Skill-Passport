@@ -15,16 +15,14 @@ export default async function AdminInterviewsPage() {
 
   return (
     <>
-      <div className="page-heading flex flex-wrap items-end justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Interviews
-          </h1>
-          <p className="mt-1 text-sm text-content-muted">
+          <h1 className="text-xl font-semibold tracking-tight">Interviews</h1>
+          <p className="text-xs text-content-muted">
             {interviews.length} in total.
           </p>
         </div>
-        <Link href="/admin" className={buttonClasses("primary", "md")}>
+        <Link href="/admin" className={buttonClasses("primary", "sm")}>
           New interview
         </Link>
       </div>
@@ -40,27 +38,27 @@ export default async function AdminInterviewsPage() {
           }
         />
       ) : (
-        <ul className="space-y-3">
+        <ul className="space-y-1.5">
           {interviews.map((interview) => (
             <li key={interview.id}>
               <Card className="transition-colors hover:border-border-strong">
-                <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
+                <CardContent className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0 flex-1 basis-48">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-base font-semibold">
+                      <h2 className="text-sm font-semibold">
                         {interview.title}
                       </h2>
                       <span
                         className={
                           interview.isOpen
-                            ? "rounded-full bg-success-soft px-2.5 py-0.5 text-xs font-medium text-success"
-                            : "rounded-full bg-surface-muted px-2.5 py-0.5 text-xs font-medium text-content-muted"
+                            ? "rounded-full bg-success-soft px-2 py-0.5 text-[11px] font-medium text-success"
+                            : "rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-content-muted"
                         }
                       >
                         {interview.isOpen ? "Open" : "Closed"}
                       </span>
                     </div>
-                    <p className="mt-1 text-sm text-content-muted">
+                    <p className="mt-0.5 text-xs text-content-muted">
                       {interview.attemptCount} candidate
                       {interview.attemptCount === 1 ? "" : "s"} ·{" "}
                       {interview.completedCount} completed ·{" "}

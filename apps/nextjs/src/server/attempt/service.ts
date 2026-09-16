@@ -45,6 +45,7 @@ import {
 } from "~/server/services/openai";
 import type { InterviewContext, PriorTurn } from "~/server/services/openai";
 import { generateSpeech, transcribeAudio } from "~/server/services/sarvam";
+import { timed } from "~/server/services/timing";
 import { loadAudioBytes, storeAudio } from "~/server/interview/audio";
 import { deleteAudioObject } from "~/server/interview/storage";
 import { generateToken } from "~/server/admin/service";
@@ -273,12 +274,14 @@ async function synthesiseQuestionAudio(
 ): Promise<string | null> {
   try {
     const speech = await generateSpeech(text, { languageCode });
-    return await storeAudio({
-      attemptId,
-      kind: "question",
-      mimeType: speech.mimeType,
-      data: speech.audio,
-    });
+    return await timed("r2.store.question", () =>
+      storeAudio({
+        attemptId,
+        kind: "question",
+        mimeType: speech.mimeType,
+        data: speech.audio,
+      }),
+    );
   } catch (error) {
     console.error(
       `[attempt] question TTS failed attempt=${attemptId}: ${
@@ -685,6 +688,16 @@ export async function processTurn(
       transcribeSegments(audioRow),
     ]);
     const { transcript, languageCode, languageProbability } = transcription;
+
+    // Diagnostic: what Sarvam actually heard, and whether we read it as a
+    // "repeat the question" request. A repeat spoken in English during a
+    // non-English interview can be mis-transcribed into the session script and
+    // slip past isRepeatRequest — this line is how we confirm that.
+    console.log(
+      `[attempt] heard turn=${turn.turnNumber} lang=${languageCode} repeat=${isRepeatRequest(
+        transcript,
+      )} transcript=${JSON.stringify(transcript.slice(0, 160))}`,
+    );
 
     if (!transcript || transcript.trim().length < 2) {
       await failTurn(

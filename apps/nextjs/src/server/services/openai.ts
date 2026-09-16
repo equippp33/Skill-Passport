@@ -6,6 +6,7 @@ import { z } from "zod";
 import { env } from "~/env";
 import type { WorkSkill } from "~/config/work-skills";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
+import { timed } from "./timing";
 import { requestStructuredViaSarvam } from "./sarvam-chat";
 import type { SarvamChatKind } from "./sarvam-chat";
 import {
@@ -25,6 +26,21 @@ export type { InterviewContext, PriorTurn };
 // seconds; 20s already covers a genuinely slow one without letting a stuck
 // request sit on the critical path for a minute-plus.
 const OPENAI_TIMEOUT_MS = 20_000;
+
+/**
+ * Sarvam circuit breaker.
+ *
+ * When a Sarvam chat call fails (its API degrades — 130s+ and non-JSON on a
+ * bad day), we stop routing to it until this timestamp and go straight to
+ * OpenAI, so a candidate never eats the timeout more than once per outage. A
+ * later Sarvam success clears it. Module-level, so it is shared across requests
+ * in one server process; a fresh process simply re-learns on its first call.
+ *
+ * ponytail: one shared timestamp, no per-key breaker or half-open probing —
+ * add those only if one flaky model shouldn't sideline the other.
+ */
+const SARVAM_BREAKER_COOLDOWN_MS = 3 * 60_000;
+let sarvamOpenUntil = 0;
 
 /**
  * Whether question generation is available.
@@ -228,9 +244,11 @@ async function requestStructured<T>(args: {
    */
   kind: SarvamChatKind;
 }): Promise<T> {
-  if (env.AI_PROVIDER === "sarvam") {
-    return requestStructuredViaSarvam(args);
-  }
+  const label = `llm.${env.AI_PROVIDER}.${args.kind}.${args.schemaName}`;
+  // Prompt size printed alongside the time: a huge payload would slow BOTH
+  // providers, which is a different problem from one provider being slow.
+  const detail = () =>
+    `prompt=${args.instructions.length + args.input.length}chars`;
 
   const run = async (): Promise<T> => {
     let raw: string;
@@ -284,7 +302,47 @@ async function requestStructured<T>(args: {
     return result.data;
   };
 
-  return withRetry(run, { attempts: 2 });
+  const openaiFallback = () =>
+    timed(
+      `llm.openai-fallback.${args.kind}.${args.schemaName}`,
+      () => withRetry(run, { attempts: 2 }),
+      detail,
+    );
+
+  // Sarvam selected: try it, but never let a degraded Sarvam strand the
+  // candidate. The circuit breaker means an outage costs ONE timeout, not one
+  // per question: the first failure opens the breaker and every call for the
+  // next few minutes skips Sarvam entirely and goes straight to OpenAI. A
+  // Sarvam success closes it again. Language quality is Sarvam's when healthy,
+  // availability is OpenAI's when it is not.
+  if (env.AI_PROVIDER === "sarvam") {
+    // Breaker open and OpenAI available: don't even probe Sarvam — no wait.
+    if (sarvamOpenUntil > Date.now() && env.OPENAI_API_KEY) {
+      return openaiFallback();
+    }
+    try {
+      const result = await timed(
+        label,
+        () => requestStructuredViaSarvam(args),
+        detail,
+      );
+      sarvamOpenUntil = 0; // healthy — close the breaker
+      return result;
+    } catch (error) {
+      if (!env.OPENAI_API_KEY) throw error;
+      sarvamOpenUntil = Date.now() + SARVAM_BREAKER_COOLDOWN_MS; // trip it
+      console.warn(
+        `[llm] sarvam ${args.schemaName} failed; skipping sarvam for ${
+          SARVAM_BREAKER_COOLDOWN_MS / 1000
+        }s, using openai: ${
+          error instanceof Error ? error.message : "unknown"
+        }`,
+      );
+      return openaiFallback();
+    }
+  }
+
+  return timed(label, () => withRetry(run, { attempts: 2 }), detail);
 }
 
 /* -------------------------------------------------------------------------- */

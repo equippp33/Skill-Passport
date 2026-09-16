@@ -2,6 +2,9 @@ import "server-only";
 
 import { env } from "~/env";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
+import { timed } from "./timing";
+
+const kb = (bytes: number) => `${Math.round(bytes / 1024)}KB`;
 
 const SARVAM_BASE_URL = "https://api.sarvam.ai";
 // Kept tight on purpose. `withRetry`'s default (3 attempts) multiplies these,
@@ -152,7 +155,11 @@ export async function transcribeAudio(input: {
     };
   };
 
-  return withRetry(run, RETRY_OPTS);
+  return timed(
+    "stt.sarvam",
+    () => withRetry(run, RETRY_OPTS),
+    () => `in=${kb(input.audio.length)}`,
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -247,15 +254,23 @@ export async function generateSpeech(
     return { audio: Buffer.from(first, "base64"), mimeType: "audio/wav" };
   };
 
-  return withRetry(async () => {
-    try {
-      return await attempt("language_code");
-    } catch (error) {
-      const rejectedBody =
-        error instanceof ProviderError &&
-        (error.status === 400 || error.status === 422);
-      if (!rejectedBody) throw error;
-      return attempt("target_language_code");
-    }
-  }, RETRY_OPTS);
+  let out: SpeechResult | null = null;
+  return timed(
+    "tts.sarvam",
+    async () => {
+      out = await withRetry(async () => {
+        try {
+          return await attempt("language_code");
+        } catch (error) {
+          const rejectedBody =
+            error instanceof ProviderError &&
+            (error.status === 400 || error.status === 422);
+          if (!rejectedBody) throw error;
+          return attempt("target_language_code");
+        }
+      }, RETRY_OPTS);
+      return out;
+    },
+    () => `chars=${clipped.length}${out ? ` out=${kb(out.audio.length)}` : ""}`,
+  );
 }

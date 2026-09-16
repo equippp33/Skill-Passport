@@ -44,18 +44,18 @@ export function CreateInterview() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {error ? <Alert tone="danger">{error}</Alert> : null}
 
-      <div className="flex items-start gap-4">
-        <span className="hidden size-12 shrink-0 place-items-center rounded-2xl border border-accent/15 bg-surface text-accent sm:grid">
-          <Icon name="mic" className="size-6" />
+      <div className="flex items-start gap-3">
+        <span className="hidden size-10 shrink-0 place-items-center rounded-xl border border-accent/15 bg-surface text-accent sm:grid">
+          <Icon name="mic" className="size-5" />
         </span>
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">
+          <h2 className="text-base font-semibold tracking-tight">
             Your next interview starts here
           </h2>
-          <p className="mt-1 max-w-lg text-sm leading-relaxed text-content-muted">
+          <p className="mt-0.5 max-w-lg text-sm leading-snug text-content-muted">
             Create a link, invite candidates, and get a structured view of ten
             workplace skills.
           </p>
@@ -66,15 +66,15 @@ export function CreateInterview() {
         <legend className="text-sm font-medium">
           Allow follow-up questions on
         </legend>
-        <p className="mt-0.5 text-sm text-content-muted">
+        <p className="mt-0.5 text-xs text-content-muted">
           For a ticked skill the interviewer may ask one deeper follow-up when
           the answer is substantial. Leave all unticked for none.
         </p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
           {WORK_SKILLS.map((skill) => (
             <label
               key={skill.id}
-              className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm transition-colors hover:bg-surface-muted"
+              className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border-subtle bg-surface px-3 py-1.5 text-sm transition-colors hover:bg-surface-muted"
             >
               <input
                 type="checkbox"

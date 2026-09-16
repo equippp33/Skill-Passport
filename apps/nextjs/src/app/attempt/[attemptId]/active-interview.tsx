@@ -129,6 +129,19 @@ export function ActiveInterview({
    */
   const submittedTurnRef = useRef<number | null>(null);
 
+  /**
+   * Perception timers (dev instrumentation).
+   *
+   * The two waits candidates actually feel: from a question appearing to its
+   * voice starting (the bad-internet "text is there, audio isn't" gap), and
+   * from finishing an answer to the next question showing. Logged to the
+   * browser console as `[timing] client.*` so the client legs sit next to the
+   * server ones. ponytail: console-only; delete the marks once tuned.
+   */
+  const questionShownAtRef = useRef(0);
+  const audioLoadStartRef = useRef(0);
+  const answerEndedAtRef = useRef(0);
+
   // The answer is submitted automatically — when the candidate pauses (see the
   // speech-activity hook below) or, as a backstop, when the recording hits its
   // hard time cap. There is no manual "next" button, so this callback is what
@@ -445,6 +458,14 @@ export function ActiveInterview({
 
       // A new question means the previous turn finished successfully.
       if (data.turn && data.currentQuestionNumber > questionNumber) {
+        if (answerEndedAtRef.current) {
+          console.log(
+            `[timing] client.answer→next ${Math.round(
+              performance.now() - answerEndedAtRef.current,
+            )}ms`,
+          );
+          answerEndedAtRef.current = 0;
+        }
         stopPolling();
         setTurn(data.turn);
         setQuestionNumber(data.currentQuestionNumber);
@@ -617,6 +638,7 @@ export function ActiveInterview({
     const active = turnRef.current;
     if (active && submittedTurnRef.current === active.turnNumber) return;
     if (active) submittedTurnRef.current = active.turnNumber;
+    answerEndedAtRef.current = performance.now();
 
     const { audioSegments, video, durationMs } = await recorder.stopRecording();
 
@@ -682,6 +704,7 @@ export function ActiveInterview({
     // answer, and the microphone records it.
     if (playedForTurnRef.current === turnNumber) return;
     playedForTurnRef.current = turnNumber;
+    questionShownAtRef.current = performance.now();
 
     let timer: ReturnType<typeof setTimeout> | null = null;
     const el = audioRef.current;
@@ -766,7 +789,14 @@ export function ActiveInterview({
     setChoosingLanguage(false);
     if (result.ok) {
       setNeedsLanguage(false);
-      router.refresh();
+      setError(null);
+      // The server has already re-asked (or delivered) a question in the
+      // chosen language. Poll picks it up and resets the recorder for it via
+      // the "new question" / "same question re-asked" branches. A plain
+      // router.refresh() only updates server props, which this client
+      // component's own state ignores — leaving the old question frozen on
+      // screen with no audio and no recording. That was the stuck screen.
+      setPhase("processing");
     } else {
       setError(result.error ?? genericError);
     }
@@ -932,6 +962,33 @@ export function ActiveInterview({
                   // begins: the media stream may not have been ready when
                   // the effect ran. Idempotent, so this is free otherwise.
                   onPlay={startQuestionCapture}
+                  onLoadStart={() => {
+                    audioLoadStartRef.current = performance.now();
+                  }}
+                  // Buffered enough to begin — on bad internet this is the
+                  // gap that leaves the text sitting there in silence.
+                  onCanPlay={() => {
+                    const from = audioLoadStartRef.current;
+                    if (from) {
+                      console.log(
+                        `[timing] client.audio-download ${Math.round(
+                          performance.now() - from,
+                        )}ms`,
+                      );
+                    }
+                  }}
+                  // Voice actually started: the number to compare against the
+                  // question appearing (questionShownAtRef).
+                  onPlaying={() => {
+                    const from = questionShownAtRef.current;
+                    if (from) {
+                      console.log(
+                        `[timing] client.question→audio ${Math.round(
+                          performance.now() - from,
+                        )}ms`,
+                      );
+                    }
+                  }}
                   // Recording starts when the question finishes playing.
                   // Without this the candidate is left on "getting ready".
                   onEnded={beginAnswer}
