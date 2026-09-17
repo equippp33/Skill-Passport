@@ -185,7 +185,15 @@ export interface SpeechResult {
 /**
  * Synthesise a question to audio.
  *
- * POST https://api.sarvam.ai/text-to-speech -> `{ audios: [base64] }` (WAV).
+ * POST https://api.sarvam.ai/text-to-speech/stream -> a binary MP3 stream.
+ *
+ * The streaming endpoint (not the plain /text-to-speech one) is used for two
+ * reasons: it returns MP3 rather than the plain endpoint's uncompressed WAV —
+ * roughly a tenth of the bytes, so the R2 store and the candidate's download
+ * both shrink from seconds to near-instant, which was most of the "the voice
+ * is behind the text" lag AND the bad-internet audio stall — and it can later
+ * be consumed chunk-by-chunk for true streaming without another API change.
+ * We still buffer the whole response here; that is a smaller, separate step.
  *
  * The current docs name the language field `language_code`; older/v2 accounts
  * expect `target_language_code`. We send the documented name and retry once
@@ -208,7 +216,7 @@ export async function generateSpeech(
 
   const attempt = async (languageField: string): Promise<SpeechResult> => {
     const response = await fetchWithTimeout(
-      `${SARVAM_BASE_URL}/text-to-speech`,
+      `${SARVAM_BASE_URL}/text-to-speech/stream`,
       {
         method: "POST",
         headers: { ...authHeaders(), "Content-Type": "application/json" },
@@ -217,6 +225,8 @@ export async function generateSpeech(
           [languageField]: options.languageCode,
           speaker: options.speaker ?? env.SARVAM_TTS_SPEAKER,
           model: env.SARVAM_TTS_MODEL,
+          // MP3 instead of the default WAV — ~10x smaller to store and send.
+          output_audio_codec: "mp3",
           // ponytail: slightly slower than default (1.0) so questions are
           // easier to follow. Tune here if it needs to change.
           pace: 0.9,
@@ -248,12 +258,11 @@ export async function generateSpeech(
       });
     }
 
-    const json = (await response.json().catch(() => null)) as {
-      audios?: unknown;
-    } | null;
-    const first = Array.isArray(json?.audios) ? json.audios[0] : null;
+    // The /stream endpoint returns the audio as a raw binary body, not JSON —
+    // read the whole thing into a buffer (still a smaller MP3 than the old WAV).
+    const audio = Buffer.from(await response.arrayBuffer());
 
-    if (typeof first !== "string" || first.length === 0) {
+    if (audio.length === 0) {
       throw new ProviderError({
         provider: "sarvam",
         message: "text-to-speech returned no audio",
@@ -262,7 +271,7 @@ export async function generateSpeech(
       });
     }
 
-    return { audio: Buffer.from(first, "base64"), mimeType: "audio/wav" };
+    return { audio, mimeType: "audio/mpeg" };
   };
 
   let out: SpeechResult | null = null;

@@ -16,7 +16,6 @@ import type {
 import {
   LANGUAGE_CONFIDENCE_THRESHOLD,
   languageFromCode,
-  languageMentionedIn,
   resolveInterviewLanguage,
 } from "~/config/languages";
 import type { InterviewLanguageKey } from "~/config/languages";
@@ -38,9 +37,9 @@ import { ProviderError, toUserMessage } from "~/server/services/errors";
 import {
   classifyUtterance,
   evaluateAnswerAndGetNextQuestion,
+  generateDoubtResponse,
   generateInterviewSummary,
   generateQuestion,
-  rephraseQuestionSimpler,
   scoreAndMaybeFollowUp,
   translateQuestion,
 } from "~/server/services/openai";
@@ -451,6 +450,78 @@ async function repeatTurn(attemptId: string, turnId: string): Promise<void> {
   });
 }
 
+/**
+ * Answer a doubt OUT LOUD, leaving the question exactly as it is.
+ *
+ * The candidate asked something instead of answering — "what does this word
+ * mean?" — or said nothing usable. The interviewer speaks a short reply and the
+ * on-screen question text never moves; the candidate answers it next. The reply
+ * plays through the turn's audio slot, so a following "repeat" replays the
+ * reply — acceptable, since the reply itself invites them to answer and the
+ * question is still on screen. Falls back to a plain replay if the reply cannot
+ * be generated or voiced.
+ */
+async function speakDoubtResponse(
+  attempt: InterviewAttempt,
+  turn: InterviewTurn,
+  doubtTranscript: string,
+): Promise<void> {
+  const language = resolveInterviewLanguage(attempt.language ?? "english");
+
+  let reply: string;
+  try {
+    reply = await generateDoubtResponse({
+      // Reason from the English original where we have it — the local text may
+      // itself be the word the candidate could not follow.
+      question: turn.questionTranslation ?? turn.question,
+      doubtTranscript,
+      languageName: language.promptName,
+    });
+  } catch (error) {
+    console.error(
+      `[attempt] doubt reply failed turn=${turn.id}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+    await repeatTurn(attempt.id, turn.id);
+    return;
+  }
+
+  const audioId = await synthesiseQuestionAudio(
+    attempt.id,
+    reply,
+    language.code,
+  );
+  if (!audioId) {
+    // No voice for the reply — fall back to replaying the question rather than
+    // leave the candidate with a silent, unchanged screen.
+    await repeatTurn(attempt.id, turn.id);
+    return;
+  }
+
+  const previousAudioId = turn.questionAudioId;
+
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      // Reply plays here; question / questionTranslation are left UNTOUCHED.
+      questionAudioId: audioId,
+      status: "awaiting_answer",
+      errorMessage: null,
+      processingStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turn.id));
+
+  await db
+    .update(interviewAttemptsTable)
+    .set({ status: "in_progress", updatedAt: new Date() })
+    .where(eq(interviewAttemptsTable.id, attempt.id));
+
+  // The original question clip is now unreferenced.
+  if (previousAudioId) await discardAudioClip(previousAudioId);
+}
+
 async function failTurn(
   attemptId: string,
   turnId: string,
@@ -749,8 +820,13 @@ export async function processTurn(
     // anything subtler the model judges, so we respond and re-ask like a real
     // interviewer instead of scoring it as the answer. The probe is never
     // classified: its only job is to capture a language sample.
+    const detected = languageFromCode(languageCode);
+    const confident =
+      (languageProbability ?? 0) >= LANGUAGE_CONFIDENCE_THRESHOLD;
+
+    const looksLikeRepeat = isRepeatRequest(transcript);
     const isDoubt =
-      isRepeatRequest(transcript) ||
+      looksLikeRepeat ||
       (!isProbe &&
         (await classifyUtterance({
           question: turn.question,
@@ -761,32 +837,19 @@ export async function processTurn(
         })) === "doubt");
 
     if (isDoubt) {
-      if (!isProbe && attempt.language) {
-        // "Repeat that in Hindi" names a language — switch AND re-ask in it.
-        // Otherwise just say it again, more simply, in the current language.
-        const mentioned = languageMentionedIn(transcript);
-        if (mentioned && mentioned !== attempt.language) {
-          await db
-            .update(interviewAttemptsTable)
-            .set({ language: mentioned, updatedAt: new Date() })
-            .where(eq(interviewAttemptsTable.id, attemptId));
-          await reaskInLanguage(
-            attemptId,
-            turn,
-            resolveInterviewLanguage(mentioned),
-          );
-        } else {
-          await reaskSimpler(attempt, interview, turn);
-        }
-      } else {
+      // The question text NEVER changes — the one first shown stays until it is
+      // actually answered. What differs is the interviewer's spoken response:
+      //   - an explicit "repeat" (or the probe) just replays the exact question;
+      //   - any other doubt ("what does this word mean?", or nothing usable)
+      //     gets a short SPOKEN reply — the interviewer answers the doubt out
+      //     loud while the question on screen stays put.
+      if (looksLikeRepeat || isProbe || !attempt.language) {
         await repeatTurn(attemptId, turnId);
+      } else {
+        await speakDoubtResponse(attempt, turn, transcript);
       }
       return;
     }
-
-    const detected = languageFromCode(languageCode);
-    const confident =
-      (languageProbability ?? 0) >= LANGUAGE_CONFIDENCE_THRESHOLD;
 
     if (turn.kind === "language_probe") {
       await completeProbe({
@@ -1057,61 +1120,6 @@ async function reaskInLanguage(
       updatedAt: new Date(),
     })
     .where(eq(interviewTurnsTable.id, turn.id));
-}
-
-/**
- * Re-ask the current question more simply after a "say that again" — the same
- * question, restated, never answered. Falls back to a plain replay if the
- * rephrase or its audio fails.
- */
-async function reaskSimpler(
-  attempt: InterviewAttempt,
-  interview: Interview,
-  turn: InterviewTurn,
-): Promise<void> {
-  const ctx = contextFor(attempt, interview, await introductionFor(attempt.id));
-
-  let rewritten;
-  try {
-    // Restate from the English original where we have it — cleaner than
-    // simplifying the already-simplified local text.
-    rewritten = await rephraseQuestionSimpler(
-      ctx,
-      turn.questionTranslation ?? turn.question,
-    );
-  } catch (error) {
-    console.error(
-      `[attempt] re-ask rephrase failed turn=${turn.id}: ${
-        error instanceof Error ? error.message : "unknown"
-      }`,
-    );
-    await repeatTurn(attempt.id, turn.id);
-    return;
-  }
-
-  const questionAudioId = await synthesiseQuestionAudio(
-    attempt.id,
-    rewritten.question,
-    ctx.language.code,
-  );
-
-  await db
-    .update(interviewTurnsTable)
-    .set({
-      question: rewritten.question,
-      questionTranslation: rewritten.translation,
-      questionAudioId,
-      status: "awaiting_answer",
-      errorMessage: null,
-      processingStartedAt: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(interviewTurnsTable.id, turn.id));
-
-  await db
-    .update(interviewAttemptsTable)
-    .set({ status: "in_progress", updatedAt: new Date() })
-    .where(eq(interviewAttemptsTable.id, attempt.id));
 }
 
 /* -------------------------------------------------------------------------- */

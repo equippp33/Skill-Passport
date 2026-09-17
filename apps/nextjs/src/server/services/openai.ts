@@ -441,10 +441,12 @@ export async function classifyUtterance(args: {
       "You triage ONE thing a candidate said in a spoken interview.",
       "Decide whether it ANSWERS the interviewer's question, or is a DOUBT",
       "raised INSTEAD of answering: a request to repeat, 'I didn't understand',",
-      "asking what to say or for the answer, or asking a question back rather",
-      "than attempting the question.",
-      "A brief, vague, rambling or partial attempt to answer is still an ANSWER,",
-      "never a doubt. When unsure, choose answer.",
+      "asking what to say or for the answer, asking a question back, OR mere",
+      "filler with no substance — 'okay', 'um', 'hmm', a false start, or",
+      "near-silence that says nothing about the question. All of those are a",
+      "DOUBT (the candidate needs the question again), not an answer.",
+      "A brief but GENUINE attempt to answer — even vague or partial — is an",
+      "ANSWER. When it is a real attempt, choose answer.",
       "Return intent only.",
     ].join(" "),
     input: [
@@ -462,6 +464,58 @@ export async function classifyUtterance(args: {
     kind: "conversation",
   });
   return result.intent;
+}
+
+/**
+ * A short SPOKEN reply to a candidate's doubt — never written to the screen.
+ *
+ * The candidate asked something instead of answering ("what does this word
+ * mean?", "I couldn't follow"), or said nothing usable. A real interviewer
+ * answers that out loud and leaves the question standing. This produces only
+ * the line to speak; the question text on screen never changes.
+ */
+export async function generateDoubtResponse(args: {
+  question: string;
+  doubtTranscript: string;
+  /** Interview language — the reply is spoken in it, in its own script. */
+  languageName: string;
+}): Promise<string> {
+  const result = await requestStructured({
+    instructions: [
+      "You are a warm, patient interviewer. The candidate did NOT answer your",
+      "question — they raised a doubt about it. Reply BRIEFLY, as words spoken",
+      `aloud, in ${args.languageName} written in that language's OWN script`,
+      "(never Latin letters). If they did not understand a particular word,",
+      "explain THAT word in simple everyday terms. If they could not follow,",
+      "restate the question's meaning simply. If they said nothing meaningful,",
+      "gently encourage them. Always end by inviting them to answer. One or two",
+      "short sentences. NEVER answer the question for them or give an example",
+      "answer.",
+    ].join(" "),
+    input: [
+      `Your question was: ${args.question}`,
+      `The candidate said: ${untrusted("CANDIDATE", args.doubtTranscript)}`,
+    ].join("\n"),
+    schemaName: "doubt_reply",
+    jsonSchema: {
+      type: "object",
+      properties: { reply: { type: "string" } },
+      required: ["reply"],
+      additionalProperties: false,
+    },
+    validator: z.object({ reply: z.string() }),
+    kind: "conversation",
+  });
+  const reply = result.reply.trim();
+  if (!reply) {
+    throw new ProviderError({
+      provider: "openai",
+      message: "empty doubt reply",
+      userMessage: "We could not prepare a reply. Please try again.",
+      retryable: true,
+    });
+  }
+  return reply;
 }
 
 /**
