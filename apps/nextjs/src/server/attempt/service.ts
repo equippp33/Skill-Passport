@@ -36,6 +36,7 @@ import { isRepeatRequest } from "~/config/repeat-requests";
 import { aggregateSkillScores } from "~/lib/scoring";
 import { ProviderError, toUserMessage } from "~/server/services/errors";
 import {
+  classifyUtterance,
   evaluateAnswerAndGetNextQuestion,
   generateInterviewSummary,
   generateQuestion,
@@ -722,20 +723,45 @@ export async function processTurn(
       )} transcript=${JSON.stringify(transcript.slice(0, 160))}`,
     );
 
+    const isProbe = turn.kind === "language_probe";
+
     if (!transcript || transcript.trim().length < 2) {
-      await failTurn(
-        attemptId,
-        turnId,
-        "We could not hear an answer in that recording. Please check your microphone and record again.",
-      );
+      // Silence on a real question: re-ask it rather than throw a "check your
+      // microphone" error at someone who is just thinking or did not catch it.
+      // The probe still fails — with no words there is no language to detect.
+      // ponytail: no re-ask cap — a permanently silent mic re-asks every 15s;
+      // add a counter + move-on-after-N here if that ever bites.
+      if (isProbe) {
+        await failTurn(
+          attemptId,
+          turnId,
+          "We could not hear an answer in that recording. Please check your microphone and record again.",
+        );
+      } else {
+        await repeatTurn(attemptId, turnId);
+      }
       return;
     }
 
-    // Asked to hear the question again rather than answering it. Checked
-    // before anything is scored or the language is inferred — "sorry, say
-    // that again" says nothing about either. Re-ask, never re-score.
-    if (isRepeatRequest(transcript)) {
-      if (turn.kind !== "language_probe" && attempt.language) {
+    // Is this a DOUBT raised instead of an answer — "say that again", "I didn't
+    // understand", "what should I say?" — rather than an attempt at the
+    // question? The phrase list catches the obvious ones instantly; for
+    // anything subtler the model judges, so we respond and re-ask like a real
+    // interviewer instead of scoring it as the answer. The probe is never
+    // classified: its only job is to capture a language sample.
+    const isDoubt =
+      isRepeatRequest(transcript) ||
+      (!isProbe &&
+        (await classifyUtterance({
+          question: turn.question,
+          transcript,
+          languageName: attempt.language
+            ? resolveInterviewLanguage(attempt.language).promptName
+            : "English",
+        })) === "doubt");
+
+    if (isDoubt) {
+      if (!isProbe && attempt.language) {
         // "Repeat that in Hindi" names a language — switch AND re-ask in it.
         // Otherwise just say it again, more simply, in the current language.
         const mentioned = languageMentionedIn(transcript);

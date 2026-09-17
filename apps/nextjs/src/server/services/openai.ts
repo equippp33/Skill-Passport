@@ -420,6 +420,51 @@ export async function generateQuestion(args: {
 }
 
 /**
+ * Is this utterance an ANSWER, or a DOUBT the interviewer should respond to?
+ *
+ * A real interviewer never scores "sorry, can you say that again?" or "what do
+ * you mean?" as the answer — they respond and re-ask. This replaces the old
+ * fixed phrase list with the model's judgment, so any phrasing of a doubt, in
+ * any language, is caught rather than only the ones someone thought to list.
+ *
+ * Deliberately tiny and on the "conversation" (fast) model: it runs on the
+ * candidate's critical path, before we decide whether to score or re-ask.
+ */
+export async function classifyUtterance(args: {
+  question: string;
+  transcript: string;
+  /** Interview language, so the model reads the question in context. */
+  languageName: string;
+}): Promise<"answer" | "doubt"> {
+  const result = await requestStructured({
+    instructions: [
+      "You triage ONE thing a candidate said in a spoken interview.",
+      "Decide whether it ANSWERS the interviewer's question, or is a DOUBT",
+      "raised INSTEAD of answering: a request to repeat, 'I didn't understand',",
+      "asking what to say or for the answer, or asking a question back rather",
+      "than attempting the question.",
+      "A brief, vague, rambling or partial attempt to answer is still an ANSWER,",
+      "never a doubt. When unsure, choose answer.",
+      "Return intent only.",
+    ].join(" "),
+    input: [
+      `Interviewer asked (in ${args.languageName}): ${args.question}`,
+      `Candidate said: ${untrusted("CANDIDATE", args.transcript)}`,
+    ].join("\n"),
+    schemaName: "utterance_intent",
+    jsonSchema: {
+      type: "object",
+      properties: { intent: { type: "string", enum: ["answer", "doubt"] } },
+      required: ["intent"],
+      additionalProperties: false,
+    },
+    validator: z.object({ intent: z.enum(["answer", "doubt"]) }),
+    kind: "conversation",
+  });
+  return result.intent;
+}
+
+/**
  * A translation is only meaningful when the interview is not in English, and
  * the model sometimes echoes the question instead of leaving it blank.
  */

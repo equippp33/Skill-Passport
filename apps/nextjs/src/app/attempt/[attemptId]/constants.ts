@@ -48,4 +48,4 @@ export const SILENCE_ADVANCE_SECONDS = 8;
  * someone silent; the recording still goes to the transcriber, and a truly
  * empty answer is skipped server-side.
  */
-export const NO_ANSWER_WAIT_SECONDS = 40;
+export const NO_ANSWER_WAIT_SECONDS = 15;
