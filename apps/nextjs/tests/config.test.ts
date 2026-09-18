@@ -12,6 +12,7 @@ import type { InterviewLanguageKey } from "~/config/languages";
 import {
   PROBE_SPOKEN_LANGUAGE_CODE,
   PROBE_QUESTION_BY_LANGUAGE,
+  wrongLanguageNoticeFor,
   PROBE_SPOKEN_TEXT,
   openerFor,
 } from "~/config/greeting";
@@ -365,5 +366,25 @@ describe("replies to a yes-or-no question", () => {
     "मैंने दोबारा जाँच की ताकि कोई गलती न हो",
   ])("treats a real answer as neither: %j", (text) => {
     expect(yesNoIntent(text)).toBeNull();
+  });
+});
+
+describe("answering in a language that was not chosen", () => {
+  // Said in the language being SPOKEN, naming the one that was picked. The
+  // other way round is the failure the candidate is already having.
+  it("speaks to the candidate in the language they are using", () => {
+    const said = wrongLanguageNoticeFor("telugu", "hindi");
+    expect(said).toContain(INTERVIEW_LANGUAGES.hindi.displayName);
+    expect(said).not.toContain("{language}");
+    // Telugu script, because that is what they are speaking.
+    expect(said).toMatch(/[ఀ-౿]/);
+  });
+
+  it("fills the slot in every language", () => {
+    for (const spoken of INTERVIEW_LANGUAGE_KEYS) {
+      const said = wrongLanguageNoticeFor(spoken, "marathi");
+      expect(said).not.toContain("{language}");
+      expect(said).toContain(INTERVIEW_LANGUAGES.marathi.displayName);
+    }
   });
 });

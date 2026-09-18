@@ -30,6 +30,7 @@ import {
   openerFor,
   PROBE_SPOKEN_LANGUAGE_CODE,
   WRONG_LANGUAGE_NOTICE,
+  wrongLanguageNoticeFor,
 } from "~/config/greeting";
 import {
   LANGUAGE_PROBE_TURN,
@@ -944,6 +945,49 @@ async function processTurnInner(
     const detected = languageFromCode(languageCode);
     const confident =
       (languageProbability ?? 0) >= LANGUAGE_CONFIDENCE_THRESHOLD;
+
+    /**
+     * They are answering in a language they did not choose.
+     *
+     * Say so, in the language they are actually speaking — that is the whole
+     * point of the notice. Telling somebody in Hindi that they should be
+     * speaking Hindi is the same failure they are already having; telling them
+     * in Telugu is something they can act on. It names both ways out, because
+     * a candidate who is plainly more comfortable in this language should not
+     * have to fight the interview to use it.
+     *
+     * Once per interview. The check is over the turns already answered, so it
+     * needs no column of its own — and repeating it every turn would turn a
+     * kindness into nagging. After the first time the answer is simply taken
+     * as given, in whatever language it arrives: being understood matters more
+     * than the setting.
+     *
+     * Not a prepared filler, because there is one of these per language pair
+     * and almost every interview needs none. Voiced on demand, which costs a
+     * TTS call on a path that is rare by construction.
+     */
+    if (
+      detected &&
+      confident &&
+      attempt.language &&
+      detected !== attempt.language &&
+      !alreadyToldAboutLanguage(await getTurns(attemptId), attempt.language)
+    ) {
+      const spoken = resolveInterviewLanguage(detected);
+      const notice = await synthesiseQuestionAudio(
+        attemptId,
+        wrongLanguageNoticeFor(
+          spoken.key,
+          attempt.language as InterviewLanguageKey,
+        ),
+        spoken.code,
+      );
+      if (notice) {
+        await issueDirective(turnId, "play_filler", notice);
+        return;
+      }
+      // Could not be voiced. Take the answer rather than stall on a nicety.
+    }
 
     /**
      * Is this a request rather than an answer?
@@ -1877,6 +1921,24 @@ function skillNumberOf(skillId: WorkSkillId): number {
  * and discouraging. Saying it once per drift is the point; saying it every
  * turn would nag.
  */
+/**
+ * Has this candidate already been asked to stay in the language they chose?
+ *
+ * Read off the turns rather than stored: an answer whose detected language
+ * differs from the chosen one is exactly the thing that would have triggered
+ * the notice, so its presence in the history is the record that it happened.
+ */
+function alreadyToldAboutLanguage(
+  priorTurns: InterviewTurn[],
+  chosen: string,
+): boolean {
+  return priorTurns.some((t) => {
+    if (!t.detectedLanguageCode) return false;
+    const spoken = languageFromCode(t.detectedLanguageCode);
+    return !!spoken && spoken !== chosen;
+  });
+}
+
 function wrongLanguageNotice(
   attempt: InterviewAttempt,
   priorTurns: InterviewTurn[],

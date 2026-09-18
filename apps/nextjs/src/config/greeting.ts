@@ -131,40 +131,61 @@ export function openerFor(
   name: string | null,
 ): string {
   const template = PROBE_QUESTION_BY_LANGUAGE[language];
-  return name ? template.replace("{name}", name) : template.replace(" {name}", "");
+  return name
+    ? template.replace("{name}", name)
+    : template.replace(" {name}", "");
 }
 
 /**
  * Said when the candidate answers in a language they did not choose.
  *
- * Warm, never a telling-off: the candidate has done nothing wrong, and the
- * interview carries on either way — this only asks them to stay in the
- * language the rest of the interview is written in, so their answers are
- * transcribed and scored against the same yardstick.
+ * Keyed by the language they are SPEAKING, not the one they picked — which
+ * is the whole point. Telling somebody in Telugu that they should be
+ * speaking Hindi is a message they can act on; telling them in Hindi is the
+ * same failure they are already having.
  *
- * Written in the CHOSEN language, because that is the language the
- * interviewer is speaking, and hearing it spoken is itself the reminder.
+ * `{language}` is filled with the chosen language's own name, as it appears
+ * in the picker, so the instruction and the menu agree.
+ *
+ * Warm, never a telling-off: the candidate has done nothing wrong, and the
+ * interview carries on either way. It names both ways out — answer in the
+ * chosen language, or switch the interview to this one — because a candidate
+ * who is more comfortable here should not have to fight it.
  */
 export const WRONG_LANGUAGE_NOTICE: Record<InterviewLanguageKey, string> = {
   english:
-    "No problem at all. You chose English for this interview, so please carry on in English.",
+    "You chose {language} for this interview. Please carry on in {language}, or change the language yourself from the menu at the top.",
   hindi:
-    "कोई बात नहीं। आपने इस interview के लिए हिंदी चुनी है, तो आगे भी हिंदी में ही जवाब दीजिए।",
+    "आपने इस interview के लिए {language} चुनी है। कृपया {language} में ही जवाब दीजिए, या ऊपर दिए मेन्यू से भाषा खुद बदल लीजिए।",
   marathi:
-    "काही हरकत नाही. तुम्ही या interview साठी मराठी निवडली आहे, त्यामुळे पुढेही मराठीतच उत्तर द्या.",
+    "तुम्ही या interview साठी {language} निवडली आहे. कृपया {language} मध्येच उत्तर द्या, किंवा वरच्या मेन्यूमधून भाषा स्वतः बदला.",
   bengali:
-    "কোনও সমস্যা নেই। আপনি এই interview-এর জন্য বাংলা বেছে নিয়েছেন, তাই বাকিটাও বাংলাতেই বলুন।",
+    "আপনি এই interview-এর জন্য {language} বেছে নিয়েছেন। অনুগ্রহ করে {language}-এই উত্তর দিন, বা উপরের মেনু থেকে ভাষা নিজেই বদলে নিন।",
   gujarati:
-    "કોઈ વાંધો નથી. તમે આ interview માટે ગુજરાતી પસંદ કરી છે, તો આગળ પણ ગુજરાતીમાં જ જવાબ આપો.",
+    "તમે આ interview માટે {language} પસંદ કરી છે. કૃપા કરીને {language}માં જ જવાબ આપો, અથવા ઉપરના મેનુમાંથી ભાષા જાતે બદલો.",
   kannada:
-    "ಪರವಾಗಿಲ್ಲ. ನೀವು ಈ interview ಗೆ ಕನ್ನಡ ಆಯ್ಕೆ ಮಾಡಿದ್ದೀರಿ, ಹಾಗಾಗಿ ಮುಂದೆಯೂ ಕನ್ನಡದಲ್ಲೇ ಉತ್ತರಿಸಿ.",
+    "ನೀವು ಈ interview ಗೆ {language} ಆಯ್ಕೆ ಮಾಡಿದ್ದೀರಿ. ದಯವಿಟ್ಟು {language} ದಲ್ಲೇ ಉತ್ತರಿಸಿ, ಅಥವಾ ಮೇಲಿನ ಮೆನುವಿನಿಂದ ಭಾಷೆಯನ್ನು ನೀವೇ ಬದಲಾಯಿಸಿ.",
   malayalam:
-    "കുഴപ്പമില്ല. നിങ്ങൾ ഈ interview-ന് മലയാളം തിരഞ്ഞെടുത്തിട്ടുണ്ട്, അതുകൊണ്ട് ബാക്കിയും മലയാളത്തിൽ തന്നെ പറയൂ.",
-  odia: "କିଛି ଅସୁବିଧା ନାହିଁ। ଆପଣ ଏହି interview ପାଇଁ ଓଡ଼ିଆ ବାଛିଛନ୍ତି, ତେଣୁ ଆଗକୁ ମଧ୍ୟ ଓଡ଼ିଆରେ ଉତ୍ତର ଦିଅନ୍ତୁ।",
+    "നിങ്ങൾ ഈ interview-ന് {language} തിരഞ്ഞെടുത്തിട്ടുണ്ട്. ദയവായി {language}-ൽ തന്നെ ഉത്തരം പറയൂ, അല്ലെങ്കിൽ മുകളിലെ മെനുവിൽ നിന്ന് ഭാഷ സ്വയം മാറ്റൂ.",
+  odia: "ଆପଣ ଏହି interview ପାଇଁ {language} ବାଛିଛନ୍ତି। ଦୟାକରି {language}ରେ ହିଁ ଉତ୍ତର ଦିଅନ୍ତୁ, କିମ୍ବା ଉପରର ମେନୁରୁ ଭାଷା ନିଜେ ବଦଳାନ୍ତୁ।",
   punjabi:
-    "ਕੋਈ ਗੱਲ ਨਹੀਂ। ਤੁਸੀਂ ਇਸ interview ਲਈ ਪੰਜਾਬੀ ਚੁਣੀ ਹੈ, ਇਸ ਲਈ ਅੱਗੇ ਵੀ ਪੰਜਾਬੀ ਵਿੱਚ ਹੀ ਜਵਾਬ ਦਿਓ।",
+    "ਤੁਸੀਂ ਇਸ interview ਲਈ {language} ਚੁਣੀ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ {language} ਵਿੱਚ ਹੀ ਜਵਾਬ ਦਿਓ, ਜਾਂ ਉੱਪਰਲੇ ਮੀਨੂ ਤੋਂ ਭਾਸ਼ਾ ਆਪ ਬਦਲ ਲਵੋ।",
   tamil:
-    "பரவாயில்லை. நீங்கள் இந்த interview-க்கு தமிழ் தேர்ந்தெடுத்திருக்கீங்க, அதனால மீதியும் தமிழ்லயே சொல்லுங்க.",
+    "நீங்க இந்த interview-க்கு {language} தேர்ந்தெடுத்திருக்கீங்க. தயவுசெய்து {language}-லயே பதில் சொல்லுங்க, இல்லைன்னா மேல இருக்கற மெனுல மொழிய நீங்களே மாத்திக்கோங்க.",
   telugu:
-    "ఏం పర్వాలేదు. మీరు ఈ interview కి తెలుగు ఎంచుకున్నారు, కాబట్టి మిగతాది కూడా తెలుగులోనే చెప్పండి.",
+    "మీరు ఈ interview కోసం {language} ఎంచుకున్నారు. దయచేసి {language} లోనే సమాధానం చెప్పండి, లేదా పైన ఉన్న మెనూ నుండి భాషను మీరే మార్చుకోండి.",
 };
+
+/**
+ * The notice, in the language being spoken, naming the language that was
+ * chosen.
+ */
+export function wrongLanguageNoticeFor(
+  spoken: InterviewLanguageKey,
+  chosen: InterviewLanguageKey,
+): string {
+  return WRONG_LANGUAGE_NOTICE[spoken].replaceAll(
+    "{language}",
+    INTERVIEW_LANGUAGES[chosen].displayName,
+  );
+}
