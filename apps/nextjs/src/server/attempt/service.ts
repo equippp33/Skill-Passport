@@ -29,7 +29,6 @@ import type {
 import {
   openerFor,
   PROBE_SPOKEN_LANGUAGE_CODE,
-  WRONG_LANGUAGE_NOTICE,
   wrongLanguageNoticeFor,
 } from "~/config/greeting";
 import {
@@ -949,12 +948,13 @@ async function processTurnInner(
     /**
      * They are answering in a language they did not choose.
      *
-     * Say so, in the language they are actually speaking — that is the whole
-     * point of the notice. Telling somebody in Hindi that they should be
-     * speaking Hindi is the same failure they are already having; telling them
-     * in Telugu is something they can act on. It names both ways out, because
-     * a candidate who is plainly more comfortable in this language should not
-     * have to fight the interview to use it.
+     * Said in the language they CHOSE, not the one they slipped into. They
+     * picked it on the way in, so it is the one language we know they can
+     * follow — and hearing the interview's own language at the moment they are
+     * being asked to return to it is the clearer signal of the two.
+     *
+     * It names both ways out, because a candidate who is plainly more
+     * comfortable elsewhere should not have to fight the interview to switch.
      *
      * Once per interview. The check is over the turns already answered, so it
      * needs no column of its own — and repeating it every turn would turn a
@@ -973,14 +973,11 @@ async function processTurnInner(
       detected !== attempt.language &&
       !alreadyToldAboutLanguage(await getTurns(attemptId), attempt.language)
     ) {
-      const spoken = resolveInterviewLanguage(detected);
+      const chosen = resolveInterviewLanguage(attempt.language);
       const notice = await synthesiseQuestionAudio(
         attemptId,
-        wrongLanguageNoticeFor(
-          spoken.key,
-          attempt.language as InterviewLanguageKey,
-        ),
-        spoken.code,
+        wrongLanguageNoticeFor(chosen.key, chosen.key),
+        chosen.code,
       );
       if (notice) {
         await issueDirective(turnId, "play_filler", notice);
@@ -1001,7 +998,7 @@ async function processTurnInner(
      * on screen stay as they were until the candidate actually answers them;
      * only what the interviewer says out loud differs.
      */
-    const intent = phraseIntent(transcript);
+    const intent = phraseIntent(transcript, Boolean(turn.addMorePromptedAt));
     if (intent) {
       switch (intent) {
         case "slower": {
@@ -1025,6 +1022,28 @@ async function processTurnInner(
             turn.questionAudioId,
           );
           await issueDirective(turnId, "play_easier", easier);
+          break;
+        }
+        case "off_topic": {
+          /**
+           * They asked the interviewer something rather than answering.
+           *
+           * Nothing is scored: "what is your name?" is not a weak answer to a
+           * reliability question, it is not an answer at all, and marking it
+           * as one costs the candidate a whole skill for one stray remark.
+           * The question stays on screen, the microphone stays open, and they
+           * simply answer it.
+           */
+          const redirect = await fillerAudioId(
+            attemptId,
+            "stayOnTopic",
+            turn.turnNumber + turn.directiveSeq,
+          );
+          await issueDirective(
+            turnId,
+            redirect ? "play_filler" : "replay",
+            redirect ?? turn.questionAudioId,
+          );
           break;
         }
         case "repeat":
@@ -1912,21 +1931,11 @@ function skillNumberOf(skillId: WorkSkillId): number {
 }
 
 /**
- * The kind reminder, when the candidate answered in a language they did not
- * choose — or null, which is the normal case.
- *
- * Only fires on the MOST RECENT answer, and only when Sarvam is sure enough
- * to be worth acting on: a candidate who borrows an English word mid-sentence
- * has not switched language, and telling them they have would be both wrong
- * and discouraging. Saying it once per drift is the point; saying it every
- * turn would nag.
- */
-/**
  * Has this candidate already been asked to stay in the language they chose?
  *
  * Read off the turns rather than stored: an answer whose detected language
- * differs from the chosen one is exactly the thing that would have triggered
- * the notice, so its presence in the history is the record that it happened.
+ * differs from the chosen one is exactly what triggers the notice, so its
+ * presence in the history is the record that it happened.
  */
 function alreadyToldAboutLanguage(
   priorTurns: InterviewTurn[],
@@ -1937,30 +1946,6 @@ function alreadyToldAboutLanguage(
     const spoken = languageFromCode(t.detectedLanguageCode);
     return !!spoken && spoken !== chosen;
   });
-}
-
-function wrongLanguageNotice(
-  attempt: InterviewAttempt,
-  priorTurns: InterviewTurn[],
-): string | null {
-  if (!attempt.language) return null;
-
-  const answered = priorTurns.filter((t) => t.answerTranscript);
-  const last = answered[answered.length - 1];
-  if (!last?.detectedLanguageCode) return null;
-
-  const spoken = languageFromCode(last.detectedLanguageCode);
-  if (!spoken || spoken === attempt.language) return null;
-
-  // Already said it for the previous answer — do not repeat it every turn
-  // while the candidate is mid-sentence in their own language.
-  const before = answered[answered.length - 2];
-  if (before?.detectedLanguageCode) {
-    const earlier = languageFromCode(before.detectedLanguageCode);
-    if (earlier && earlier !== attempt.language) return null;
-  }
-
-  return WRONG_LANGUAGE_NOTICE[attempt.language as InterviewLanguageKey];
 }
 
 async function generateAndInsertQuestion(
@@ -1991,20 +1976,10 @@ async function generateAndInsertQuestion(
     history: toHistory(priorTurns),
   });
 
-  /**
-   * Said before the question when the last answer was in another language.
-   *
-   * Spoken only — it is prepended to the text sent to TTS, never to the
-   * question that is stored, shown on screen or put in the report, because
-   * it is an aside to this candidate at this moment and not part of the
-   * question itself.
-   */
-  const spokenPrefix = wrongLanguageNotice(attempt, priorTurns);
-
   // Voiced before the turn is written, so it is never current without audio.
   const questionAudioId = await synthesiseQuestionAudio(
     attemptId,
-    spokenPrefix ? `${spokenPrefix} ${generated.question}` : generated.question,
+    generated.question,
     ctx.language.code,
   );
 
@@ -2197,6 +2172,7 @@ async function writeScoredTurn(
     evaluation: string;
     strengths: string[];
     improvements: string[];
+    concern?: "none" | "off_topic" | "inappropriate";
   },
 ): Promise<void> {
   await db
@@ -2208,6 +2184,8 @@ async function writeScoredTurn(
       evaluation: evaluation.evaluation,
       strengths: evaluation.strengths,
       improvements: evaluation.improvements,
+      // Absent means none — see the note on the field in `openai.ts`.
+      concern: evaluation.concern ?? "none",
       status: "completed",
       errorMessage: null,
       processingStartedAt: null,
@@ -2484,7 +2462,26 @@ async function abandonAttemptInner(
    * closed. Read before `settleScoring`, which can take a while and would
    * otherwise drag the timestamp forward.
    */
-  const endedAt = attempt.updatedAt;
+  const endedAt = attempt.leftAt ?? attempt.updatedAt;
+
+  /**
+   * Close it first, then write the report.
+   *
+   * `finaliseAttempt` scores what is outstanding and asks for a summary, which
+   * is several provider calls and can run to half a minute. Leaving the status
+   * alone for that long is what kept an abandoned interview showing as "In
+   * progress" on the admin list — and kept its duration ticking up, since a
+   * running interview is measured against the clock rather than against an end
+   * that had not been written yet.
+   *
+   * Both writes are idempotent, and `finaliseAttempt` sets the same end time
+   * again when it lands, so a crash in between still leaves a closed attempt
+   * with an honest duration.
+   */
+  await db
+    .update(interviewAttemptsTable)
+    .set({ status: "completed", completedAt: endedAt, updatedAt: new Date() })
+    .where(eq(interviewAttemptsTable.id, attempt.id));
 
   // Anything still being scored in the background belongs in the report.
   await settleScoring(attempt.id);
@@ -2507,6 +2504,16 @@ async function abandonAttemptInner(
 const ABANDONED_AFTER_MS = 2 * 60 * 1000;
 
 /**
+ * How long to wait after a browser has told us it is closing.
+ *
+ * Far shorter than `ABANDONED_AFTER_MS`, because this is not an inference from
+ * silence — the tab said so on its way out. The grace is only here to cover a
+ * reload, which fires the same event: come back within it and the heartbeat
+ * clears `leftAt` and nothing happens.
+ */
+const LEFT_GRACE_MS = 30 * 1000;
+
+/**
  * Finalise interviews nobody is sitting in any more.
  *
  * The leave button covers the candidate who says they are going. This covers
@@ -2524,12 +2531,23 @@ export async function sweepAbandonedAttempts(
   interviewsById: Map<string, Interview>,
   attempts: InterviewAttempt[],
 ): Promise<void> {
-  const cutoff = Date.now() - ABANDONED_AFTER_MS;
-  const stale = attempts.filter(
-    (a) =>
-      (a.status === "in_progress" || a.status === "processing") &&
-      a.updatedAt.getTime() < cutoff,
-  );
+  const now = Date.now();
+  const silentCutoff = now - ABANDONED_AFTER_MS;
+  const leftCutoff = now - LEFT_GRACE_MS;
+
+  /**
+   * Two ways to have gone: said so, or simply stopped.
+   *
+   * A browser that reported itself closing is taken at its word after a few
+   * seconds. Everything else still has to go quiet for the full couple of
+   * minutes, because silence alone could be a slow network or a candidate
+   * staring at the ceiling.
+   */
+  const stale = attempts.filter((a) => {
+    if (a.status !== "in_progress" && a.status !== "processing") return false;
+    if (a.leftAt) return a.leftAt.getTime() < leftCutoff;
+    return a.updatedAt.getTime() < silentCutoff;
+  });
 
   for (const attempt of stale) {
     const interview = interviewsById.get(attempt.interviewId);
@@ -2882,6 +2900,26 @@ export async function getAttemptStatus(
     clips,
     devActivity: recentActivity(),
   };
+}
+
+/**
+ * The browser is closing. Note when, so the sweep knows they really went.
+ *
+ * Deliberately does not finalise anything: this arrives as a beacon during
+ * unload, which also fires on a reload and on a restored tab, and ending
+ * somebody's interview on that evidence alone would be unrecoverable. The
+ * timestamp is a claim; `sweepAbandonedAttempts` decides what it means.
+ */
+export async function recordLeft(attemptId: string): Promise<void> {
+  await db
+    .update(interviewAttemptsTable)
+    .set({ leftAt: new Date() })
+    .where(
+      and(
+        eq(interviewAttemptsTable.id, attemptId),
+        inArray(interviewAttemptsTable.status, ["in_progress", "processing"]),
+      ),
+    );
 }
 
 /** Light proctoring signal: increment in SQL, no read-modify-write race. */

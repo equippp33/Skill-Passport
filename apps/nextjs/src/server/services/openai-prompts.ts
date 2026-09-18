@@ -198,6 +198,16 @@ export function interviewerRules(ctx: InterviewContext): string {
     `question) and say so plainly, exactly as you would for any other empty or`,
     `off-topic reply. A genuine "please repeat/clarify" is handled separately`,
     `before scoring and never reaches you as something to evaluate.`,
+    ``,
+    `## Flagging a reply that was not an answer`,
+    `Set "concern" on every turn. Use "none" for any genuine attempt at the`,
+    `question, however short, weak or muddled — nervousness is not a concern.`,
+    `Use "off_topic" when they chatted, asked you about yourself, or talked`,
+    `about something unrelated instead of answering. Use "inappropriate" for`,
+    `abuse, threats or sexual content. This is a flag for a human reviewer, not`,
+    `a verdict: score the turn as you otherwise would and say nothing about the`,
+    `flag in the evaluation. When in doubt use "none" — wrongly flagging a`,
+    `candidate is a worse outcome than missing one.`,
   ].join("\n");
 }
 

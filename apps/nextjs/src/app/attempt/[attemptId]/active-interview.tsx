@@ -502,6 +502,30 @@ export function ActiveInterview({
    * and while the question is being read out, because all three are a
    * candidate still being present.
    */
+  /**
+   * "I am closing."
+   *
+   * The last thing this page can say. Without it the server has to infer a
+   * closed tab from missing heartbeats, which takes a couple of minutes — and
+   * for all of that time the interview reads as running on the admin list and
+   * its duration keeps climbing.
+   *
+   * `sendBeacon` rather than `fetch`, because the browser is already tearing
+   * the page down: a beacon is queued by the browser itself and survives the
+   * document, where an ordinary request is cancelled. `pagehide` rather than
+   * `beforeunload`, because Safari and mobile browsers often skip the latter.
+   *
+   * This also fires on a reload, which is exactly why the server only records
+   * the time rather than acting on it — the next heartbeat takes it back.
+   */
+  useEffect(() => {
+    const leaving = () => {
+      navigator.sendBeacon?.(`/api/attempt/${attemptId}/left`);
+    };
+    window.addEventListener("pagehide", leaving);
+    return () => window.removeEventListener("pagehide", leaving);
+  }, [attemptId]);
+
   useEffect(() => {
     const beat = () => {
       void fetch(`/api/attempt/${attemptId}/ping`, {
@@ -1215,7 +1239,11 @@ export function ActiveInterview({
         : "idle";
 
   return (
-    <div className="relative flex min-h-[calc(100dvh-73px)] flex-col items-center justify-center gap-6 px-4 py-6 sm:px-8">
+    /* Fills whatever the header leaves rather than guessing at it. The old
+       `calc(100dvh-73px)` assumed a 73px header; the real one is taller, so
+       every interview page ran that much past the viewport and carried a
+       scrollbar with nothing below the fold. */
+    <div className="relative flex flex-1 flex-col items-center justify-center gap-6 px-4 py-6 sm:px-8">
       {/* The language switcher lives up in the header, where a setting
           belongs — it used to sit under the question, which put a dropdown
           in the middle of a conversation. */}

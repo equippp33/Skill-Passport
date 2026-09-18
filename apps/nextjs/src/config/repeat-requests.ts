@@ -26,7 +26,98 @@
  */
 const MAX_WORDS = 8;
 
-export type UtteranceIntent = "repeat" | "slower" | "not_understood";
+/**
+ * The cap when the interviewer has just asked something short.
+ *
+ * After "would you like to add anything?" there is no long answer to protect:
+ * anything said is a reply to that, so a request can be as polite and rambling
+ * as people actually are — "sorry sir please say the question again I did not
+ * understand" is eleven words and was being scored as an answer, which ended
+ * the question and moved the interview on.
+ */
+const PROMPT_REPLY_MAX_WORDS = 16;
+
+export type UtteranceIntent =
+  "repeat" | "slower" | "not_understood" | "off_topic";
+
+/**
+ * Talking to the interviewer instead of answering it.
+ *
+ * Two kinds, handled the same way. Chit-chat — "what is your name?", "are you
+ * a robot?" — and fishing for the answer — "what should I say?", "just tell
+ * me". Neither is an attempt at the question, so neither should be marked as
+ * one, and both want the same reply: warmly, back to the question.
+ *
+ * Checked LAST, after the three request kinds, and that order is load-bearing.
+ * "What do you mean?" is a genuine doubt and lives in NOT_UNDERSTOOD; "what
+ * should I say?" is a request for the answer and lives here. Matching this
+ * list first would swallow the doubt.
+ *
+ * Deliberately narrow. A phrase that also appears inside real answers costs a
+ * candidate their question, so this holds only openings that are never an
+ * answer to "tell me about a time when...".
+ */
+const OFF_TOPIC: string[] = [
+  // Fishing for the answer.
+  "what should i say",
+  "what do i say",
+  "what to say",
+  "tell me the answer",
+  "just tell me",
+  "you tell me",
+  "give me the answer",
+  "what is the right answer",
+  "whats the right answer",
+  "what is the correct answer",
+  "kya bolu",
+  "kya bolun",
+  "kya kahu",
+  "aap bataiye",
+  "aap batao",
+  "tum batao",
+  "answer bata do",
+  "क्या बोलूं",
+  "क्या कहूं",
+  "आप बताइए",
+  "आप बताओ",
+  "तुम बताओ",
+  "काय सांगू",
+  "तुम्ही सांगा",
+  // Chit-chat with the interviewer.
+  "what is your name",
+  "whats your name",
+  "who are you",
+  "are you a robot",
+  "are you a human",
+  "are you human",
+  "are you real",
+  "is this a robot",
+  "is this ai",
+  "are you ai",
+  "where are you from",
+  "how old are you",
+  "aapka naam",
+  "tumhara naam",
+  "aap kaun ho",
+  "tum kaun ho",
+  "kya tum robot ho",
+  "आपका नाम",
+  "तुम्हारा नाम",
+  "आप कौन ह",
+  "तुम कौन ह",
+  "तुम्हाला नाव",
+  "तुमचं नाव",
+  "আপনার নাম",
+  "তুমি কে",
+  "તમારું નામ",
+  "ನಿಮ್ಮ ಹೆಸರು",
+  "നിങ്ങളുടെ പേര",
+  "ଆପଣଙ୍କ ନାମ",
+  "ਤੁਹਾਡਾ ਨਾਮ",
+  "உங்க பேர",
+  "மீ பேரு",
+  "మీ పేరు",
+];
 
 /**
  * "Say it more slowly."
@@ -245,6 +336,23 @@ function normalise(text: string): string {
     .trim();
 }
 
+/**
+ * Whole-word matching, for needles too short to be safe as substrings.
+ *
+ * "no" appears inside "I do not know", "not sure sir" and "no idea" once you
+ * match on substrings — and reading any of those as a refusal threw the
+ * candidate's actual words away. Padding both sides with spaces turns the
+ * check into a token match without needing word boundaries, which regex
+ * cannot give us across eleven scripts.
+ */
+function matchesWord(text: string, phrases: string[]): boolean {
+  const padded = ` ${text} `;
+  return phrases.some((phrase) => {
+    const needle = normalise(phrase);
+    return text === needle || padded.includes(` ${needle} `);
+  });
+}
+
 function matches(text: string, phrases: string[]): boolean {
   return phrases.some((phrase) => {
     const needle = normalise(phrase);
@@ -261,16 +369,26 @@ function matches(text: string, phrases: string[]): boolean {
  * Order within the checks is deliberate — most specific first. See the note
  * on `SLOWER`.
  */
-export function phraseIntent(transcript: string): UtteranceIntent | null {
+export function phraseIntent(
+  transcript: string,
+  /**
+   * True when this was said straight after a short prompt from the
+   * interviewer rather than as an answer to a question. Relaxes the length
+   * gate — see `PROMPT_REPLY_MAX_WORDS`.
+   */
+  replyingToPrompt = false,
+): UtteranceIntent | null {
   const text = normalise(transcript);
   if (!text) return null;
 
   const words = text.split(" ");
-  if (words.length > MAX_WORDS) return null;
+  const cap = replyingToPrompt ? PROMPT_REPLY_MAX_WORDS : MAX_WORDS;
+  if (words.length > cap) return null;
 
   if (matches(text, SLOWER)) return "slower";
   if (matches(text, NOT_UNDERSTOOD)) return "not_understood";
   if (matches(text, REPEAT)) return "repeat";
+  if (matches(text, OFF_TOPIC)) return "off_topic";
   return null;
 }
 
@@ -431,7 +549,7 @@ export function yesNoIntent(transcript: string): "yes" | "no" | null {
   // reply to the question we asked.
   if (text.split(" ").length > 5) return null;
 
-  if (matches(text, NEGATIVE)) return "no";
-  if (matches(text, AFFIRMATIVE)) return "yes";
+  if (matchesWord(text, NEGATIVE)) return "no";
+  if (matchesWord(text, AFFIRMATIVE)) return "yes";
   return null;
 }

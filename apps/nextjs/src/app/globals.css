@@ -305,6 +305,49 @@ li {
   }
 }
 
+/**
+ * Cloud gathering and thinning.
+ *
+ * The half that makes it read as smoke. A mass that only moves looks like a
+ * picture being dragged across the sphere; one that also comes and goes looks
+ * like something passing through it.
+ *
+ * Each runs on a period unrelated to the roll underneath it, so a mass is
+ * rarely at its brightest and its nearest at the same moment, and the three
+ * together never repeat an arrangement often enough to be noticed. None of
+ * them reaches full opacity — see the mass definitions for why the sky has to
+ * keep showing through.
+ */
+@keyframes orb-fade-a {
+  0%,
+  100% {
+    opacity: 0.58;
+  }
+  50% {
+    opacity: 0.96;
+  }
+}
+
+@keyframes orb-fade-b {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.42;
+  }
+}
+
+@keyframes orb-fade-c {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
 /** The calm idle breath. Deliberately slow — it should read as alive, not busy. */
 @keyframes orb-breathe {
   0%,

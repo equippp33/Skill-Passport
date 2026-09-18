@@ -388,3 +388,63 @@ describe("answering in a language that was not chosen", () => {
     }
   });
 });
+
+describe("talking to the interviewer instead of answering", () => {
+  it.each([
+    "what is your name",
+    "who are you",
+    "are you a robot",
+    "what should I say",
+    "just tell me",
+    "आपका नाम क्या है",
+    "मुझे क्या बोलूं",
+  ])("reads %j as off topic", (text) => {
+    expect(phraseIntent(text)).toBe("off_topic");
+  });
+
+  /**
+   * Order is load-bearing. "What do you mean?" is a genuine doubt and must
+   * reach the simpler wording; matching the off-topic list first would send
+   * it to the redirect instead.
+   */
+  it("does not swallow a genuine doubt", () => {
+    expect(phraseIntent("what do you mean")).toBe("not_understood");
+    expect(phraseIntent("samajh nahi aaya")).toBe("not_understood");
+  });
+
+  // A real answer that happens to mention a name must never be redirected.
+  it.each([
+    "My manager asked for my name and I gave it to him",
+    "I told the customer what I should say to the supervisor",
+  ])("leaves a real answer alone: %j", (text) => {
+    expect(phraseIntent(text)).toBeNull();
+  });
+});
+
+describe("a longer request in reply to a prompt", () => {
+  const LONG = "sorry sir please say the question again i did not understand";
+
+  // Twelve words. As an answer it is over the cap and stays an answer; as a
+  // reply to "would you like to add anything?" there is no answer to protect,
+  // and treating it as one ended the question and moved the interview on.
+  it("is missed as an answer but caught as a reply", () => {
+    expect(phraseIntent(LONG)).toBeNull();
+    expect(phraseIntent(LONG, true)).toBe("not_understood");
+  });
+});
+
+describe("yes or no, matched on whole words", () => {
+  // "no" inside "I do not know" used to read as a refusal, which threw the
+  // candidate's actual words away and advanced the interview.
+  it.each(["i do not know", "i really do not know sir"])(
+    "does not read %j as a refusal",
+    (text) => {
+      expect(yesNoIntent(text)).not.toBe("no");
+    },
+  );
+
+  it("still reads a plain refusal", () => {
+    expect(yesNoIntent("no")).toBe("no");
+    expect(yesNoIntent("nothing else")).toBe("no");
+  });
+});

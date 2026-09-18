@@ -254,13 +254,39 @@ export function AttemptReport({
                         ? m.skills[turn.skillId as WorkSkillId]
                         : `Question ${turn.turnNumber}`}
                     </CardTitle>
-                    <span
-                      className={`text-sm font-semibold tabular-nums ${scoreTone(
-                        turn.score,
-                      )}`}
-                    >
-                      {turn.score === null ? "—" : `${turn.score}/10`}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {/*
+                       * Flagged by the scorer as something other than an
+                       * attempt at the question. Shown to a reviewer and
+                       * nothing more: the mark below still stands, and
+                       * nobody is failed by a model's opinion of their tone.
+                       */}
+                      {turn.concern !== "none" ? (
+                        <span
+                          title={
+                            turn.concern === "inappropriate"
+                              ? "Flagged for review: the scorer read this as abusive or inappropriate."
+                              : "Flagged for review: the scorer read this as not an answer to the question."
+                          }
+                          className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                            turn.concern === "inappropriate"
+                              ? "bg-danger/10 text-danger"
+                              : "bg-warning/10 text-warning"
+                          }`}
+                        >
+                          {turn.concern === "inappropriate"
+                            ? "Inappropriate"
+                            : "Off topic"}
+                        </span>
+                      ) : null}
+                      <span
+                        className={`text-sm font-semibold tabular-nums ${scoreTone(
+                          turn.score,
+                        )}`}
+                      >
+                        {turn.score === null ? "—" : `${turn.score}/10`}
+                      </span>
+                    </div>
                   </div>
                   <p className="mt-1 text-base font-medium" lang={langCode}>
                     {turn.question}

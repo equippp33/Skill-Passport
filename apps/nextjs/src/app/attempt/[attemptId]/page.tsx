@@ -107,7 +107,9 @@ export default async function AttemptPage({
   beginActivitySession(attempt.id);
 
   return (
-    <main className="w-full">
+    // Fills the space the header leaves, so the interview sits centred in the
+    // viewport instead of running past the fold.
+    <main className="flex min-h-0 w-full flex-1 flex-col">
       <HeaderProfile name={attempt.candidateName} />
       <PreventBackNavigation />
       <ActiveInterview

@@ -191,13 +191,14 @@ export function VoiceOrb({
           /**
            * A blue crown falling away fast into pale haze.
            *
-           * The stops bunch between 13% and 38% on purpose. An even gradient
-           * reads as a shaded ball; a quick fall reads as looking up through
-           * cloud into clear sky above it. The veils below break that boundary
-           * up so it never looks like a painted line.
+           * Blue the whole way down, thinning rather than stopping. The
+           * cloud above it is what makes the lower half read as white, so
+           * this has to stay saturated — an earlier version fell to near-white
+           * by a third of the way down, and once the cloud was laid over that
+           * there was no blue left anywhere and the orb went blank.
            */
           background:
-            "linear-gradient(178deg, #4f6ff0 0%, #6b88f5 13%, #9cb0f8 25%, #c9d3fc 38%, #dee2fd 56%, #e9eaff 100%)",
+            "linear-gradient(178deg, #3f63ee 0%, #5478f2 16%, #7b97f6 33%, #a8bbfa 52%, #ccd6fd 72%, #e4e8ff 100%)",
           transform: "scale(var(--orb-scale))",
           transition: "transform 90ms linear",
           animation: "orb-breathe 7s ease-in-out infinite",
@@ -211,41 +212,69 @@ export function VoiceOrb({
         {/*
          * The cloud the orb is looking through.
          *
-         * Three masses, each much larger than the orb and each drifting on
-         * its own slow path. Oversized and few, on purpose: the previous
-         * version tiled a repeating strip, and a pattern that repeats at a
-         * fixed width reads as horizontal banding however soft the shapes
-         * are. Nothing here repeats, so nothing stripes.
+         * Three masses, each much larger than the orb, on two independent
+         * animations apiece: an outer one that fades the whole mass in and
+         * out, an inner one that rolls and swells it. Six periods, none a
+         * multiple of another, so the layers are never in the same
+         * arrangement twice and the white gathers and thins the way smoke
+         * does rather than sliding past like a texture.
          *
-         * They are also mostly opaque rather than wispy. This is not sky with
-         * clouds in it — it is the inside of a cloud, lit from above, which
-         * is why the blue survives only as a crown at the top and everything
-         * below it is milk.
+         * The fade is the important half. Motion alone reads as a picture
+         * being dragged across the sphere; cloud that also comes and goes
+         * reads as something moving through it.
+         *
+         * They are deliberately not opaque. An earlier version was, and it
+         * covered the sky completely — the orb went white with a sliver of
+         * blue left at the crown. The blue underneath has to keep showing
+         * through for any of this to look like depth.
          *
          * Still pure gradients — no `filter: blur()`, so the whole thing
          * stays on the compositor for the length of an interview.
          */}
         <div
-          className="orb-layer absolute inset-[-45%]"
+          className="orb-layer absolute inset-0"
           style={{
-            background: MASS_LOW,
-            animation: `orb-roll-a ${speaking ? "26s" : "44s"} ease-in-out infinite`,
+            animation: `orb-fade-a ${speaking ? "19s" : "31s"} ease-in-out infinite`,
           }}
-        />
+        >
+          <div
+            className="orb-layer absolute inset-[-45%]"
+            style={{
+              background: MASS_LOW,
+              animation: `orb-roll-a ${speaking ? "26s" : "44s"} ease-in-out infinite`,
+            }}
+          />
+        </div>
+
         <div
-          className="orb-layer absolute inset-[-45%]"
+          className="orb-layer absolute inset-0"
           style={{
-            background: MASS_MID,
-            animation: `orb-roll-b ${speaking ? "34s" : "57s"} ease-in-out infinite`,
+            animation: `orb-fade-b ${speaking ? "23s" : "38s"} ease-in-out infinite`,
           }}
-        />
+        >
+          <div
+            className="orb-layer absolute inset-[-45%]"
+            style={{
+              background: MASS_MID,
+              animation: `orb-roll-b ${speaking ? "34s" : "57s"} ease-in-out infinite`,
+            }}
+          />
+        </div>
+
         <div
-          className="orb-layer absolute inset-[-45%]"
+          className="orb-layer absolute inset-0"
           style={{
-            background: MASS_EDGE,
-            animation: `orb-roll-c ${speaking ? "41s" : "69s"} ease-in-out infinite`,
+            animation: `orb-fade-c ${speaking ? "29s" : "49s"} ease-in-out infinite`,
           }}
-        />
+        >
+          <div
+            className="orb-layer absolute inset-[-45%]"
+            style={{
+              background: MASS_EDGE,
+              animation: `orb-roll-c ${speaking ? "41s" : "69s"} ease-in-out infinite`,
+            }}
+          />
+        </div>
 
         {/* The curve of the glass. Keeps it reading as a sphere now that the
             inside is flat sky rather than a lit ball. */}
@@ -269,31 +298,32 @@ export function VoiceOrb({
  * edge are cut by the sphere rather than fading out inside it — which is what
  * stops them reading as blobs floating in a circle.
  *
- * The alpha stays high a long way out before falling, so the body is solid and
- * only the last third is soft. Low-alpha gradients look like fog; this should
- * look like cloud with light coming through it.
+ * Peak alpha sits around two thirds, never at one. These are lit vapour with
+ * sky behind them, and the moment a mass goes opaque the blue stops showing
+ * through and the orb turns into a white disc — which is exactly what happened
+ * when these were drawn at 0.99.
  */
 
-/** The bulk of it, filling the lower two-thirds. */
+/** The bulk of it, gathered low. */
 const MASS_LOW = [
-  "radial-gradient(62% 44% at 32% 76%, rgba(255,255,255,0.99) 0%, rgba(255,255,255,0.95) 46%, rgba(255,255,255,0.55) 70%, rgba(255,255,255,0) 88%)",
-  "radial-gradient(54% 38% at 72% 84%, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.9) 48%, rgba(255,255,255,0.4) 72%, rgba(255,255,255,0) 90%)",
-  "radial-gradient(46% 30% at 50% 60%, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.7) 50%, rgba(255,255,255,0) 82%)",
+  "radial-gradient(56% 38% at 30% 74%, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.5) 44%, rgba(255,255,255,0.18) 70%, rgba(255,255,255,0) 88%)",
+  "radial-gradient(48% 32% at 72% 82%, rgba(255,255,255,0.66) 0%, rgba(255,255,255,0.42) 46%, rgba(255,255,255,0.12) 72%, rgba(255,255,255,0) 90%)",
+  "radial-gradient(40% 26% at 50% 60%, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.26) 50%, rgba(255,255,255,0) 82%)",
 ].join(", ");
 
-/** The bank that makes the crown boundary uneven as it passes under it. */
+/** The band across the middle, where cloud and sky trade places. */
 const MASS_MID = [
-  "radial-gradient(52% 26% at 26% 50%, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.78) 46%, rgba(255,255,255,0.3) 70%, rgba(255,255,255,0) 88%)",
-  "radial-gradient(44% 20% at 68% 44%, rgba(255,255,255,0.88) 0%, rgba(255,255,255,0.68) 48%, rgba(255,255,255,0) 84%)",
-  // A cooler hollow, so the white has some shape in it rather than reading flat.
-  "radial-gradient(34% 18% at 48% 62%, rgba(150,175,235,0.22) 0%, rgba(150,175,235,0) 76%)",
+  "radial-gradient(50% 24% at 26% 48%, rgba(255,255,255,0.58) 0%, rgba(255,255,255,0.34) 46%, rgba(255,255,255,0.1) 72%, rgba(255,255,255,0) 88%)",
+  "radial-gradient(42% 19% at 68% 42%, rgba(255,255,255,0.52) 0%, rgba(255,255,255,0.28) 48%, rgba(255,255,255,0) 84%)",
+  // A cooler hollow, so the white has shape in it rather than reading flat.
+  "radial-gradient(34% 18% at 48% 62%, rgba(150,175,235,0.2) 0%, rgba(150,175,235,0) 76%)",
 ].join(", ");
 
 /** Thin stuff riding up into the blue, keeping the crown from being a band. */
 const MASS_EDGE = [
-  "radial-gradient(40% 14% at 34% 36%, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.42) 50%, rgba(255,255,255,0) 82%)",
-  "radial-gradient(30% 10% at 64% 30%, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0.3) 52%, rgba(255,255,255,0) 84%)",
-  "radial-gradient(48% 12% at 52% 44%, rgba(255,255,255,0.66) 0%, rgba(255,255,255,0.36) 50%, rgba(255,255,255,0) 84%)",
+  "radial-gradient(38% 13% at 34% 34%, rgba(255,255,255,0.44) 0%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0) 82%)",
+  "radial-gradient(28% 9% at 64% 28%, rgba(255,255,255,0.36) 0%, rgba(255,255,255,0.14) 52%, rgba(255,255,255,0) 84%)",
+  "radial-gradient(46% 11% at 52% 44%, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.17) 50%, rgba(255,255,255,0) 84%)",
 ].join(", ");
 
 /** Announced to screen readers, which cannot see any of the above. */

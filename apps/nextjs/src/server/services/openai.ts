@@ -97,6 +97,19 @@ export const turnEvaluationSchema = z.object({
   /** English rendering of `nextQuestion`; empty when already English. */
   questionTranslation: z.string().max(600),
   interviewComplete: z.boolean(),
+  /**
+   * Whether this was an attempt at the question at all.
+   *
+   * Asked of the model that is already scoring the turn, so it costs no extra
+   * call and no extra wait. A word list cannot cover abuse across eleven
+   * languages; this can, and it is only ever a flag for a human reviewer.
+   *
+   * Optional rather than defaulted: a default would make zod's input and
+   * output types diverge, and every place that rebuilds one of these by
+   * spreading would stop type-checking. Absent means `none`, applied where it
+   * is stored.
+   */
+  concern: z.enum(["none", "off_topic", "inappropriate"]).optional(),
 });
 export type TurnEvaluation = z.infer<typeof turnEvaluationSchema>;
 
@@ -126,6 +139,7 @@ const TURN_JSON_SCHEMA = {
     "nextQuestion",
     "questionTranslation",
     "interviewComplete",
+    "concern",
   ],
   properties: {
     score: {
@@ -165,6 +179,12 @@ const TURN_JSON_SCHEMA = {
         "Plain English translation of nextQuestion. Empty string when the interview language is English or nextQuestion is null.",
     },
     interviewComplete: { type: "boolean" },
+    concern: {
+      type: "string",
+      enum: ["none", "off_topic", "inappropriate"],
+      description:
+        "none for any genuine attempt at the question, however weak or brief. off_topic when the candidate chatted, asked the interviewer something, or talked about something unrelated. inappropriate for abuse, threats or sexual content. Default to none when unsure.",
+    },
   },
 } as const;
 
@@ -958,4 +978,3 @@ export async function translateQuestion(
         : english || null,
   };
 }
-

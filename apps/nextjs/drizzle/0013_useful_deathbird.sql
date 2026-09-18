@@ -1,0 +1,1 @@
+ALTER TABLE "interview_attempts" ADD COLUMN "left_at" timestamp with time zone;

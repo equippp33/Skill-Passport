@@ -14,6 +14,13 @@ import type { InterviewLanguageKey } from "./languages";
  * - `okay` fills the gap the moment an answer ends. Without it the candidate
  *   finishes speaking into silence while the answer uploads and transcribes,
  *   which reads as the interview having stopped listening.
+ *
+ *   Every variant is a neutral backchannel — no "yes", no "thank you", no "I
+ *   understood". It is said before a word of the answer has been transcribed,
+ *   so it cannot agree with, thank, or claim to have followed anything: a
+ *   candidate who says "I don't know" and hears "हाँ" back has been agreed
+ *   with about nothing, which is exactly when the interviewer stops sounding
+ *   like a person.
  * - `whatHappened`, `didNotGet` and `noProblem` are the rungs of the silence
  *   ladder. The first tells the candidate, by name, that there is no hurry.
  *   The second offers to put the question more simply. The third stops
@@ -28,6 +35,9 @@ import type { InterviewLanguageKey } from "./languages";
  * - `addMore` is asked once when an answer was a word or two — the difference
  *   between a candidate who has finished and one who has not started — and
  *   `goAhead` is the reply when they say yes, they do have more.
+ * - `stayOnTopic` answers a question put to the interviewer rather than an
+ *   answer to it — "what is your name?", "just tell me the answer". Warm, and
+ *   it asks for the answer again rather than telling anybody off.
  * - `areYouOkay` answers a cough, a sneeze, a cleared throat: the microphone
  *   heard something and the transcriber found no words in it. Noticing that
  *   out loud is most of what separates an interviewer from a form.
@@ -60,13 +70,14 @@ export type FillerKind =
   | "addMore"
   | "goAhead"
   | "areYouOkay"
+  | "stayOnTopic"
   | "closing";
 
 type FillerSet = Record<FillerKind, string[]>;
 
 export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
   english: {
-    okay: ["Okay.", "I see.", "Thank you.", "Mm-hmm.", "Right, thank you."],
+    okay: ["Okay.", "Alright.", "I see.", "Mm-hmm.", "Right."],
     whatHappened: [
       "Take your time, {name}, there is no hurry at all.",
       "{name}, I am right here whenever you are ready.",
@@ -90,13 +101,17 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
       "Take your time, {name}, there is no rush.",
       "{name}, are you okay? Take a moment.",
     ],
+    stayOnTopic: [
+      "Let us stay with the interview, {name}. Could you answer the question for me?",
+      "I cannot help with that one, {name}, but I would like to hear your answer to the question.",
+    ],
     closing: [
       "That is the end of the interview. Thank you so much for your time, we will get back to you soon.",
     ],
   },
 
   hindi: {
-    okay: ["ठीक है।", "अच्छा।", "जी, धन्यवाद।", "हाँ।", "समझ गया।"],
+    okay: ["ठीक है।", "अच्छा।", "हम्म।", "ठीक।", "अच्छा, ठीक।"],
     whatHappened: [
       "आराम से सोचिए {name}, कोई जल्दी नहीं है।",
       "{name}, जब तैयार हों तब बताइए, मैं यहीं हूँ।",
@@ -120,13 +135,17 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
       "आराम से लीजिए {name}, कोई जल्दी नहीं।",
       "{name}, सब ठीक है? थोड़ा समय ले लीजिए।",
     ],
+    stayOnTopic: [
+      "हम interview पर ही रहते हैं {name}. आप सवाल का जवाब दीजिए।",
+      "उसमें मैं मदद नहीं कर पाऊंगा {name}, पर आपका जवाब सुनना चाहूंगा।",
+    ],
     closing: [
       "इंटरव्यू यहीं पूरा हुआ। आपके समय के लिए बहुत धन्यवाद, हम जल्दी ही आपसे संपर्क करेंगे।",
     ],
   },
 
   marathi: {
-    okay: ["ठीक आहे.", "बरं.", "धन्यवाद.", "हो.", "समजलं."],
+    okay: ["ठीक आहे.", "बरं.", "हम्म.", "ठीक.", "बरं, ठीक आहे."],
     whatHappened: [
       "आरामात विचार करा {name}, काहीच घाई नाही.",
       "{name}, तयार असाल तेव्हा सांगा, मी इथेच आहे.",
@@ -150,13 +169,17 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
       "आरामात घ्या {name}, काही घाई नाही.",
       "{name}, सगळं ठीक आहे ना? थोडा वेळ घ्या.",
     ],
+    stayOnTopic: [
+      "आपण interview वरच राहूया {name}. तुम्ही प्रश्नाचं उत्तर द्या.",
+      "त्यात मी मदत करू शकणार नाही {name}, पण तुमचं उत्तर ऐकायला आवडेल.",
+    ],
     closing: [
       "इंटरव्यू इथेच पूर्ण झाला. तुमच्या वेळेबद्दल खूप धन्यवाद, आम्ही लवकरच तुमच्याशी संपर्क साधू.",
     ],
   },
 
   bengali: {
-    okay: ["ঠিক আছে।", "আচ্ছা।", "ধন্যবাদ।", "হ্যাঁ।", "বুঝেছি।"],
+    okay: ["ঠিক আছে।", "আচ্ছা।", "হুম।", "ঠিক।", "আচ্ছা, ঠিক আছে।"],
     whatHappened: [
       "ধীরে সুস্থে ভাবুন {name}, কোনো তাড়া নেই।",
       "{name}, তৈরি হলে বলবেন, আমি এখানেই আছি।",
@@ -177,13 +200,17 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
       "ধীরে সুস্থে নিন {name}, তাড়া নেই।",
       "{name}, সব ঠিক আছে তো? একটু সময় নিন।",
     ],
+    stayOnTopic: [
+      "আমরা interview-এই থাকি {name}। আপনি প্রশ্নের উত্তর দিন।",
+      "ওটায় আমি সাহায্য করতে পারব না {name}, তবে আপনার উত্তরটা শুনতে চাই।",
+    ],
     closing: [
       "ইন্টারভিউ এখানেই শেষ। আপনার সময়ের জন্য অনেক ধন্যবাদ, আমরা শীঘ্রই যোগাযোগ করব।",
     ],
   },
 
   gujarati: {
-    okay: ["ઠીક છે.", "સારું.", "આભાર.", "હા.", "સમજ્યો."],
+    okay: ["ઠીક છે.", "સારું.", "હમ્મ.", "ઠીક.", "સારું, ઠીક છે."],
     whatHappened: [
       "આરામથી વિચારો {name}, કોઈ ઉતાવળ નથી.",
       "{name}, તૈયાર હો ત્યારે કહો, હું અહીં જ છું.",
@@ -204,13 +231,17 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
       "આરામથી લો {name}, ઉતાવળ નથી.",
       "{name}, બધું બરાબર છે? થોડો સમય લો.",
     ],
+    stayOnTopic: [
+      "આપણે interview પર જ રહીએ {name}. તમે પ્રશ્નનો જવાબ આપો.",
+      "એમાં હું મદદ નહીં કરી શકું {name}, પણ તમારો જવાબ સાંભળવો છે.",
+    ],
     closing: [
       "ઇન્ટરવ્યૂ અહીં પૂરો થયો. તમારા સમય માટે ખૂબ આભાર, અમે જલદી સંપર્ક કરીશું.",
     ],
   },
 
   kannada: {
-    okay: ["ಸರಿ.", "ಆಯ್ತು.", "ಧನ್ಯವಾದ.", "ಹೌದು.", "ಅರ್ಥ ಆಯ್ತು."],
+    okay: ["ಸರಿ.", "ಆಯ್ತು.", "ಹ್ಮ್.", "ಸರಿ ಸರಿ.", "ಆಯ್ತು, ಸರಿ."],
     whatHappened: [
       "ನಿಧಾನವಾಗಿ ಯೋಚಿಸಿ {name}, ಯಾವುದೇ ಅವಸರವಿಲ್ಲ.",
       "{name}, ಸಿದ್ಧವಾದಾಗ ಹೇಳಿ, ನಾನು ಇಲ್ಲೇ ಇದ್ದೀನಿ.",
@@ -231,13 +262,17 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
       "ನಿಧಾನವಾಗಿ ತಗೊಳ್ಳಿ {name}, ಅವಸರವಿಲ್ಲ.",
       "{name}, ಎಲ್ಲಾ ಸರಿ ಇದೆಯಾ? ಸ್ವಲ್ಪ ಸಮಯ ತಗೊಳ್ಳಿ.",
     ],
+    stayOnTopic: [
+      "ನಾವು interview ಮೇಲೆಯೇ ಇರೋಣ {name}. ನೀವು ಪ್ರಶ್ನೆಗೆ ಉತ್ತರಿಸಿ.",
+      "ಅದಕ್ಕೆ ನಾನು ಸಹಾಯ ಮಾಡಲಾರೆ {name}, ಆದರೆ ನಿಮ್ಮ ಉತ್ತರ ಕೇಳಬೇಕು.",
+    ],
     closing: [
       "ಸಂದರ್ಶನ ಇಲ್ಲಿಗೆ ಮುಗಿಯಿತು. ನಿಮ್ಮ ಸಮಯಕ್ಕೆ ತುಂಬಾ ಧನ್ಯವಾದ, ನಾವು ಬೇಗನೆ ಸಂಪರ್ಕಿಸುತ್ತೇವೆ.",
     ],
   },
 
   malayalam: {
-    okay: ["ശരി.", "ആയിക്കോട്ടെ.", "നന്ദി.", "അതെ.", "മനസ്സിലായി."],
+    okay: ["ശരി.", "ആയിക്കോട്ടെ.", "ഉം.", "ശരി ശരി.", "ഓക്കെ."],
     whatHappened: [
       "സാവധാനം ആലോചിക്കൂ {name}, ഒട്ടും ധൃതിയില്ല.",
       "{name}, തയ്യാറാകുമ്പോൾ പറഞ്ഞാൽ മതി, ഞാൻ ഇവിടെയുണ്ട്.",
@@ -261,13 +296,17 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
       "സാവധാനം മതി {name}, ധൃതിയില്ല.",
       "{name}, സുഖമാണോ? ഒരു നിമിഷം എടുത്തോളൂ.",
     ],
+    stayOnTopic: [
+      "നമുക്ക് interview-ൽ തന്നെ നിൽക്കാം {name}. നിങ്ങൾ ചോദ്യത്തിന് ഉത്തരം പറയൂ.",
+      "അതിൽ എനിക്ക് സഹായിക്കാനാകില്ല {name}, പക്ഷേ നിങ്ങളുടെ ഉത്തരം കേൾക്കണം.",
+    ],
     closing: [
       "അഭിമുഖം ഇവിടെ അവസാനിക്കുന്നു. നിങ്ങളുടെ സമയത്തിന് ഒരുപാട് നന്ദി, ഞങ്ങൾ ഉടൻ ബന്ധപ്പെടും.",
     ],
   },
 
   odia: {
-    okay: ["ଠିକ ଅଛି।", "ଆଚ୍ଛା।", "ଧନ୍ୟବାଦ।", "ହଁ।", "ବୁଝିଲି।"],
+    okay: ["ଠିକ ଅଛି।", "ଆଚ୍ଛା।", "ହମ୍।", "ଠିକ।", "ଆଚ୍ଛା, ଠିକ ଅଛି।"],
     whatHappened: [
       "ଧୀରେ ଭାବନ୍ତୁ {name}, କୌଣସି ତରବର ନାହିଁ।",
       "{name}, ପ୍ରସ୍ତୁତ ହେଲେ କୁହନ୍ତୁ, ମୁଁ ଏଠି ଅଛି।",
@@ -291,13 +330,17 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
       "ଧୀରେ ନିଅନ୍ତୁ {name}, ତରବର ନାହିଁ।",
       "{name}, ସବୁ ଠିକ ଅଛି ତ? ଟିକେ ସମୟ ନିଅନ୍ତୁ।",
     ],
+    stayOnTopic: [
+      "ଆମେ interview ରେ ହିଁ ରହିବା {name}. ଆପଣ ପ୍ରଶ୍ନର ଉତ୍ତର ଦିଅନ୍ତୁ।",
+      "ସେଥିରେ ମୁଁ ସାହାଯ୍ୟ କରିପାରିବି ନାହିଁ {name}, କିନ୍ତୁ ଆପଣଙ୍କ ଉତ୍ତର ଶୁଣିବାକୁ ଚାହେଁ।",
+    ],
     closing: [
       "ସାକ୍ଷାତକାର ଏଠାରେ ସମାପ୍ତ। ଆପଣଙ୍କ ସମୟ ପାଇଁ ବହୁତ ଧନ୍ୟବାଦ, ଆମେ ଶୀଘ୍ର ଯୋଗାଯୋଗ କରିବୁ।",
     ],
   },
 
   punjabi: {
-    okay: ["ਠੀਕ ਹੈ।", "ਅੱਛਾ।", "ਧੰਨਵਾਦ।", "ਹਾਂ।", "ਸਮਝ ਗਿਆ।"],
+    okay: ["ਠੀਕ ਹੈ।", "ਅੱਛਾ।", "ਹਮਮ।", "ਠੀਕ।", "ਅੱਛਾ, ਠੀਕ ਹੈ।"],
     whatHappened: [
       "ਆਰਾਮ ਨਾਲ ਸੋਚੋ {name}, ਕੋਈ ਕਾਹਲੀ ਨਹੀਂ।",
       "{name}, ਜਦੋਂ ਤਿਆਰ ਹੋਵੋ ਦੱਸ ਦੇਣਾ, ਮੈਂ ਇੱਥੇ ਹੀ ਹਾਂ।",
@@ -321,13 +364,17 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
       "ਆਰਾਮ ਨਾਲ ਲਵੋ {name}, ਕਾਹਲੀ ਨਹੀਂ।",
       "{name}, ਸਭ ਠੀਕ ਹੈ? ਥੋੜਾ ਸਮਾਂ ਲੈ ਲਵੋ।",
     ],
+    stayOnTopic: [
+      "ਅਸੀਂ interview ਉੱਤੇ ਹੀ ਰਹਿੰਦੇ ਹਾਂ {name}। ਤੁਸੀਂ ਸਵਾਲ ਦਾ ਜਵਾਬ ਦਿਓ।",
+      "ਉਸ ਵਿੱਚ ਮੈਂ ਮਦਦ ਨਹੀਂ ਕਰ ਸਕਾਂਗਾ {name}, ਪਰ ਤੁਹਾਡਾ ਜਵਾਬ ਸੁਣਨਾ ਚਾਹਾਂਗਾ।",
+    ],
     closing: [
       "ਇੰਟਰਵਿਊ ਇੱਥੇ ਪੂਰਾ ਹੋਇਆ। ਤੁਹਾਡੇ ਸਮੇਂ ਲਈ ਬਹੁਤ ਧੰਨਵਾਦ, ਅਸੀਂ ਜਲਦੀ ਸੰਪਰਕ ਕਰਾਂਗੇ।",
     ],
   },
 
   tamil: {
-    okay: ["சரி.", "ஆச்சு.", "நன்றி.", "ஆமா.", "புரிஞ்சுது."],
+    okay: ["சரி.", "ஆச்சு.", "ம்ம்.", "சரி சரி.", "ஓகே."],
     whatHappened: [
       "நிதானமா யோசிங்க {name}, எந்த அவசரமும் இல்ல.",
       "{name}, தயாரா இருக்கும்போது சொல்லுங்க, நான் இங்கதான் இருக்கேன்.",
@@ -351,13 +398,17 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
       "நிதானமா எடுத்துக்கோங்க {name}, அவசரம் இல்ல.",
       "{name}, நல்லா இருக்கீங்களா? கொஞ்சம் நேரம் எடுத்துக்கோங்க.",
     ],
+    stayOnTopic: [
+      "நாம interview-லயே இருக்கலாம் {name}. நீங்க கேள்விக்கு பதில் சொல்லுங்க.",
+      "அதுல நான் உதவ முடியாது {name}, ஆனா உங்க பதில கேட்கணும்.",
+    ],
     closing: [
       "இண்டர்வியூ இத்தோட முடிஞ்சுது. உங்க நேரத்துக்கு ரொம்ப நன்றி, நாங்க சீக்கிரம் தொடர்பு கொள்வோம்.",
     ],
   },
 
   telugu: {
-    okay: ["సరే.", "అలాగే.", "ధన్యవాదాలు.", "అవును.", "అర్థమైంది."],
+    okay: ["సరే.", "అలాగే.", "హ్మ్.", "సరే సరే.", "ఓకే."],
     whatHappened: [
       "నిదానంగా ఆలోచించండి {name}, ఏమీ తొందర లేదు.",
       "{name}, సిద్ధంగా ఉన్నప్పుడు చెప్పండి, నేను ఇక్కడే ఉన్నాను.",
@@ -380,6 +431,10 @@ export const FILLERS: Record<InterviewLanguageKey, FillerSet> = {
     areYouOkay: [
       "నిదానంగా తీసుకోండి {name}, తొందరేమీ లేదు.",
       "{name}, మీరు బాగున్నారా? కొంచెం సమయం తీసుకోండి.",
+    ],
+    stayOnTopic: [
+      "మనం interview మీదే ఉందాం {name}. మీరు ప్రశ్నకు సమాధానం చెప్పండి.",
+      "దాంట్లో నేను సాయం చేయలేను {name}, కానీ మీ సమాధానం వినాలి.",
     ],
     closing: [
       "ఇంటర్వ్యూ ఇక్కడితో పూర్తయింది. మీ సమయానికి చాలా ధన్యవాదాలు, మేము త్వరలో సంప్రదిస్తాము.",

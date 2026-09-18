@@ -143,6 +143,24 @@ export const turnDirectiveActionEnum = pgEnum("turn_directive_action", [
   "advance",
 ]);
 
+/**
+ * Whether an answer was something other than an attempt at the question.
+ *
+ * `none` is overwhelmingly the common case. `off_topic` is chit-chat or a
+ * question put back to the interviewer. `inappropriate` is abuse, or anything
+ * a human reviewer would want to see before reading a score.
+ *
+ * Judged by the model that already scores the turn, so it costs no extra call
+ * and no extra wait — and unlike a word list it catches things nobody thought
+ * to list. It is a flag for a person, never an automatic decision: the
+ * interview carries on either way.
+ */
+export const turnConcernEnum = pgEnum("turn_concern", [
+  "none",
+  "off_topic",
+  "inappropriate",
+]);
+
 /** How far the up-front preparation of an interview has got. */
 export const preparationStatusEnum = pgEnum("preparation_status", [
   "pending",
@@ -349,6 +367,21 @@ export const interviewAttemptsTable = pgTable(
     /** Times the candidate left the tab, as a light proctoring signal. */
     awayCount: smallint("away_count").notNull().default(0),
 
+    /**
+     * When the browser said it was closing, if it managed to.
+     *
+     * Sent as a beacon on the way out, which is the only moment we can learn
+     * this directly — after that the tab is gone and the server can only infer
+     * it from missing heartbeats, which takes minutes and leaves the interview
+     * showing as running the whole time.
+     *
+     * Cleared by the next heartbeat, so a reload or a restored tab undoes it.
+     * That is what makes it safe to act on quickly: a candidate who comes
+     * straight back is still here, and only somebody who really left stays
+     * left.
+     */
+    leftAt: timestamp("left_at", { withTimezone: true }),
+
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -459,6 +492,12 @@ export const interviewTurnsTable = pgTable(
      * borrows its parent's plan entry.
      */
     planIndex: smallint("plan_index"),
+
+    /**
+     * Whether this answer was an attempt at the question at all. See
+     * `turnConcernEnum`. Shown to the admin; never acted on automatically.
+     */
+    concern: turnConcernEnum("concern").notNull().default("none"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

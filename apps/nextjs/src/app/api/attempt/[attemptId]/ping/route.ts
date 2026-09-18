@@ -48,7 +48,11 @@ export async function POST(
   ) {
     await db
       .update(interviewAttemptsTable)
-      .set({ updatedAt: new Date() })
+      // `leftAt` is cleared here, and this is the only place it is cleared.
+      // The unload beacon fires on a reload as well as on a real close, so a
+      // tab that comes back must be able to take it back — otherwise
+      // refreshing the page would end the interview.
+      .set({ updatedAt: new Date(), leftAt: null })
       .where(eq(interviewAttemptsTable.id, found.attempt.id));
   }
 
