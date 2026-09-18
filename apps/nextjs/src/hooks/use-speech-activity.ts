@@ -43,6 +43,32 @@ const SPEECH_RMS_THRESHOLD = 0.013;
 const SAMPLE_INTERVAL_MS = 200;
 
 /**
+ * Level at which we accept that somebody said something, at some point.
+ *
+ * A far lower bar than `SPEECH_RMS_THRESHOLD`, and deliberately so: the two
+ * questions are different. "Are they still talking?" has to be strict, because
+ * room noise creeping over the line holds an answer open for ever. "Did anyone
+ * speak at all during this whole recording?" has to be generous, because
+ * getting it wrong throws away a real answer — a soft speaker on a laptop mic
+ * with gain control off never gets near 0.013, and the first version of this
+ * check failed them on the opening question with "check your microphone".
+ *
+ * Sitting just above a quiet room's floor (~0.005) is safe here only because
+ * of the count below: hiss does not sustain, speech does.
+ */
+const PRESENCE_RMS_THRESHOLD = 0.008;
+
+/**
+ * How many samples above that before it counts as speech.
+ *
+ * Six, at 200ms each — a little over a second of energy, spread anywhere
+ * across the answer. One stray sample is a door, a click, a chair. Nobody
+ * answers a question in under a second, and nothing in a quiet room sustains
+ * for one.
+ */
+const PRESENCE_SAMPLES = 6;
+
+/**
  * One rung of the "they have not said anything yet" ladder.
  *
  * `at` is seconds of candidate silence, not wall clock — time spent listening
@@ -188,6 +214,9 @@ export function useSpeechActivity({
     let pausedMs = 0;
     let spoken = false;
     let fired = false;
+    /** Samples above the presence bar, and whether they have added up yet. */
+    let loudSamples = 0;
+    let heard = false;
     // Each answer starts from "nothing heard".
     onSpeechChangeRef.current(false);
 
@@ -220,9 +249,19 @@ export function useSpeechActivity({
       let remaining: number | null = null;
       let waiting: number | null = null;
 
+      // Counted separately from `spoken`, and on a lower bar — see
+      // `PRESENCE_RMS_THRESHOLD`. This only ever decides whether the recording
+      // is worth transcribing at all.
+      if (!heard && rms >= PRESENCE_RMS_THRESHOLD) {
+        loudSamples += 1;
+        if (loudSamples >= PRESENCE_SAMPLES) {
+          heard = true;
+          onSpeechChangeRef.current(true);
+        }
+      }
+
       if (rms >= SPEECH_RMS_THRESHOLD) {
         lastVoiceAt = now;
-        if (!spoken) onSpeechChangeRef.current(true);
         spoken = true;
       } else if (spoken && now - startedAt >= minSpeechSeconds * 1000) {
         // They spoke and have now gone quiet — the normal end of an answer.

@@ -829,7 +829,15 @@ async function processTurnInner(
         `[attempt] silence turn=${turn.turnNumber} — no speech detected, not transcribed`,
       );
       if (answer) await archiveAnswerAudio(attemptId, turnId, answer);
-      if (turn.kind === "language_probe") {
+      /**
+       * The opener only has to be failed when it is genuinely load-bearing —
+       * that is, when nobody has chosen a language and this recording was the
+       * only chance to detect one. The candidate picks their language before
+       * the interview starts now, so the usual case is that this is simply the
+       * first question, and a red "check your microphone" box is the wrong
+       * answer to somebody who paused before their first word.
+       */
+      if (turn.kind === "language_probe" && !attempt.language) {
         await failTurn(
           attemptId,
           turnId,
@@ -902,7 +910,7 @@ async function processTurnInner(
        * ponytail: no cap here — somebody coughing into a hot mic gets asked
        * every time; add a counter if that ever bites.
        */
-      if (isProbe) {
+      if (isProbe && !attempt.language) {
         await failTurn(
           attemptId,
           turnId,
