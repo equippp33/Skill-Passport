@@ -87,14 +87,21 @@ export async function startAttemptAction(
 export async function chooseLanguageAction(
   attemptId: string,
   languageKey: string,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; reasked?: boolean; error?: string }> {
   const found = await getAttemptForCandidate(attemptId);
   if (!found) return { ok: false, error: "Your session has expired." };
 
   try {
-    await chooseLanguage(found.attempt, found.interview, languageKey);
+    // `reasked` says whether a new question is on its way. Without it the
+    // screen waited for one even when the switch touched nothing, and sat
+    // there recording nothing until the page was reloaded.
+    const reasked = await chooseLanguage(
+      found.attempt,
+      found.interview,
+      languageKey,
+    );
     revalidatePath(`/attempt/${attemptId}`);
-    return { ok: true };
+    return { ok: true, reasked };
   } catch (error) {
     console.error("[attempt] language choice failed", error);
     return { ok: false, error: "Could not set that language." };

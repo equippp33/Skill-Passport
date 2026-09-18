@@ -15,6 +15,8 @@ import { useTypewriter } from "~/hooks/use-typewriter";
 import { uploadAnswerVideo } from "./upload-video";
 import { LanguagePicker } from "./language-picker";
 import type { PickableLanguage } from "./language-picker";
+import { DevLlmPanel } from "./dev-llm-panel";
+import type { DevLlmCall } from "./dev-llm-panel";
 import { preventCapture, useCaptureDeterrent } from "./capture-guard";
 import {
   chooseLanguageAction,
@@ -52,6 +54,8 @@ interface StatusResponse {
   turn: TurnView | null;
   isComplete: boolean;
   nextQuestionAudioId: string | null;
+  /** Development only — empty in production. See `DevLlmPanel`. */
+  devLlmCalls?: DevLlmCall[];
 }
 
 type Phase = "answering" | "submitting" | "processing" | "error";
@@ -64,6 +68,7 @@ export function ActiveInterview({
   initialQuestionNumber,
   initialAttemptStatus,
   initialNeedsLanguage,
+  initialDevLlmCalls,
   languages,
   currentLanguage,
   m,
@@ -78,6 +83,8 @@ export function ActiveInterview({
   initialQuestionNumber: number;
   initialAttemptStatus: string;
   initialNeedsLanguage: boolean;
+  /** Development-only provider readout; always empty in production. */
+  initialDevLlmCalls: DevLlmCall[];
   /** Offered when detection is unusable, and in the picker as a backup. */
   languages: PickableLanguage[];
   /** Detected (or chosen) language key; null until the probe is scored. */
@@ -94,7 +101,9 @@ export function ActiveInterview({
   const [turn, setTurn] = useState<TurnView | null>(initialTurn);
   const [questionNumber, setQuestionNumber] = useState(initialQuestionNumber);
   // Progress is by skill, not turn: a follow-up keeps the same skill number.
-  const [skillNumber, setSkillNumber] = useState(Math.max(1, initialSkillNumber));
+  const [skillNumber, setSkillNumber] = useState(
+    Math.max(1, initialSkillNumber),
+  );
   const [phase, setPhase] = useState<Phase>(
     initialAttemptStatus === "processing" ||
       initialTurn?.status === "processing"
@@ -105,6 +114,14 @@ export function ActiveInterview({
     initialTurn?.status === "failed" ? initialTurn.errorMessage : null,
   );
   const [audioError, setAudioError] = useState(false);
+  /**
+   * Which model served the recent turns — development only.
+   *
+   * The server sends an empty list outside development, and the render below
+   * is additionally gated on NODE_ENV, so this cannot surface to a candidate.
+   */
+  const [devLlmCalls, setDevLlmCalls] =
+    useState<DevLlmCall[]>(initialDevLlmCalls);
   /** How often the candidate left the tab. Shown to them as a nudge. */
   /** Set when detection failed and the candidate must pick a language. */
   const [needsLanguage, setNeedsLanguage] = useState(initialNeedsLanguage);
@@ -404,6 +421,8 @@ export function ActiveInterview({
 
       const data = (await response.json()) as StatusResponse;
       if (data.language) setLanguage(data.language);
+      // Dev readout. Empty in production, so this is a no-op there.
+      if (data.devLlmCalls) setDevLlmCalls(data.devLlmCalls);
 
       if (data.isComplete) {
         stopPolling();
@@ -790,13 +809,21 @@ export function ActiveInterview({
     if (result.ok) {
       setNeedsLanguage(false);
       setError(null);
-      // The server has already re-asked (or delivered) a question in the
-      // chosen language. Poll picks it up and resets the recorder for it via
-      // the "new question" / "same question re-asked" branches. A plain
+      // Only wait when a question is actually coming. When the server re-asked
+      // (or delivered) one, poll picks it up and resets the recorder for it via
+      // the "new question" / "same question re-asked" branches — a plain
       // router.refresh() only updates server props, which this client
-      // component's own state ignores — leaving the old question frozen on
-      // screen with no audio and no recording. That was the stuck screen.
-      setPhase("processing");
+      // component's own state ignores, leaving the old question frozen on
+      // screen with no audio and no recording.
+      //
+      // But the switch can also legitimately change nothing on screen: the
+      // current answer is still processing, or already answered, or this is
+      // the probe. Entering "processing" then meant polling for a change that
+      // was never coming — the interview froze mid-question and recorded
+      // nothing until the candidate reloaded. Staying put keeps the question
+      // they are answering live, and the new language applies from the next
+      // one.
+      if (result.reasked) setPhase("processing");
     } else {
       setError(result.error ?? genericError);
     }
@@ -1096,6 +1123,15 @@ export function ActiveInterview({
           hint={m.interview.languageHint}
         />
       </div>
+
+      {/* Which model actually answered — development only.
+          `process.env.NODE_ENV` is inlined at build time, so in a production
+          bundle this whole branch is dead code and the panel is not even
+          shipped. The server independently sends an empty list outside
+          development, so there are two reasons a candidate can never see it. */}
+      {process.env.NODE_ENV === "development" ? (
+        <DevLlmPanel calls={devLlmCalls} />
+      ) : null}
     </CandidateSplit>
   );
 }

@@ -7,6 +7,8 @@ import { env } from "~/env";
 import type { WorkSkill } from "~/config/work-skills";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
 import { timed } from "./timing";
+import { recordLlmCall } from "./llm-activity";
+import type { LlmCall } from "./llm-activity";
 import { requestStructuredViaSarvam } from "./sarvam-chat";
 import type { SarvamChatKind } from "./sarvam-chat";
 import {
@@ -302,11 +304,51 @@ async function requestStructured<T>(args: {
     return result.data;
   };
 
-  const openaiFallback = () =>
-    timed(
-      `llm.openai-fallback.${args.kind}.${args.schemaName}`,
-      () => withRetry(run, { attempts: 2 }),
-      detail,
+  /**
+   * Run one leg and record who served it, for the development-only readout.
+   *
+   * Wraps rather than sprinkling `recordLlmCall` at each exit: every path —
+   * Sarvam, fallback, breaker-skip, plain OpenAI — then reports itself the
+   * same way, including when it throws. No-op outside development.
+   */
+  const track = async <R>(
+    provider: LlmCall["provider"],
+    note: string | undefined,
+    fn: () => Promise<R>,
+  ): Promise<R> => {
+    const start = performance.now();
+    try {
+      const result = await fn();
+      recordLlmCall({
+        provider,
+        kind: args.kind,
+        schemaName: args.schemaName,
+        ms: Math.round(performance.now() - start),
+        ok: true,
+        note,
+      });
+      return result;
+    } catch (error) {
+      recordLlmCall({
+        provider,
+        kind: args.kind,
+        schemaName: args.schemaName,
+        ms: Math.round(performance.now() - start),
+        ok: false,
+        // Provider messages only — never a key, a header or a prompt.
+        note: error instanceof Error ? error.message : "failed",
+      });
+      throw error;
+    }
+  };
+
+  const openaiFallback = (note: string) =>
+    track("openai-fallback", note, () =>
+      timed(
+        `llm.openai-fallback.${args.kind}.${args.schemaName}`,
+        () => withRetry(run, { attempts: 2 }),
+        detail,
+      ),
     );
 
   // Sarvam selected: try it, but never let a degraded Sarvam strand the
@@ -318,31 +360,31 @@ async function requestStructured<T>(args: {
   if (env.AI_PROVIDER === "sarvam") {
     // Breaker open and OpenAI available: don't even probe Sarvam — no wait.
     if (sarvamOpenUntil > Date.now() && env.OPENAI_API_KEY) {
-      return openaiFallback();
+      const seconds = Math.ceil((sarvamOpenUntil - Date.now()) / 1000);
+      return openaiFallback(`sarvam skipped — breaker open ${seconds}s more`);
     }
     try {
-      const result = await timed(
-        label,
-        () => requestStructuredViaSarvam(args),
-        detail,
+      const result = await track("sarvam", undefined, () =>
+        timed(label, () => requestStructuredViaSarvam(args), detail),
       );
       sarvamOpenUntil = 0; // healthy — close the breaker
       return result;
     } catch (error) {
       if (!env.OPENAI_API_KEY) throw error;
       sarvamOpenUntil = Date.now() + SARVAM_BREAKER_COOLDOWN_MS; // trip it
+      const reason = error instanceof Error ? error.message : "unknown";
       console.warn(
         `[llm] sarvam ${args.schemaName} failed; skipping sarvam for ${
           SARVAM_BREAKER_COOLDOWN_MS / 1000
-        }s, using openai: ${
-          error instanceof Error ? error.message : "unknown"
-        }`,
+        }s, using openai: ${reason}`,
       );
-      return openaiFallback();
+      return openaiFallback(`sarvam failed: ${reason}`);
     }
   }
 
-  return timed(label, () => withRetry(run, { attempts: 2 }), detail);
+  return track("openai", undefined, () =>
+    timed(label, () => withRetry(run, { attempts: 2 }), detail),
+  );
 }
 
 /* -------------------------------------------------------------------------- */

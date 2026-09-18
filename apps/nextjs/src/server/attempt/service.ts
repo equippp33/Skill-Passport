@@ -50,6 +50,8 @@ import { timed } from "~/server/services/timing";
 import { loadAudioBytes, storeAudio } from "~/server/interview/audio";
 import { deleteAudioObject } from "~/server/interview/storage";
 import { generateToken } from "~/server/admin/service";
+import { recentLlmCalls } from "~/server/services/llm-activity";
+import type { LlmCall } from "~/server/services/llm-activity";
 
 /**
  * Candidate attempt orchestration.
@@ -906,11 +908,21 @@ async function completeProbe(args: {
 }
 
 /** Candidate picked a language after detection failed. */
+/**
+ * Returns whether the question on screen is being replaced.
+ *
+ * The caller needs this: the candidate's screen waits for a new question only
+ * when one is actually coming. Several paths below legitimately change the
+ * language and touch nothing else (the current turn is mid-processing, or
+ * already answered, or is the probe) — and a client that assumed a re-ask was
+ * always on its way sat in "processing" forever, recording nothing, until the
+ * page was reloaded.
+ */
 export async function chooseLanguage(
   attempt: InterviewAttempt,
   interview: Interview,
   languageKey: string,
-): Promise<void> {
+): Promise<boolean> {
   const language = resolveInterviewLanguage(languageKey);
 
   await db
@@ -940,7 +952,7 @@ export async function chooseLanguage(
   // language that was just chosen.
   if (!turns.some((t) => t.turnNumber === next)) {
     await deliverTurn(attempt.id, interview, next, false);
-    return;
+    return true;
   }
 
   // Mid-interview switch. Re-ask what is on screen right now in the new
@@ -953,10 +965,11 @@ export async function chooseLanguage(
   // Only the question actually on screen can be rewritten in place; one
   // being processed or already answered is left alone. The discard above
   // has already dealt with everything after it either way.
-  if (!current || current.status !== "awaiting_answer") return;
-  if (current.kind === "language_probe") return;
+  if (!current || current.status !== "awaiting_answer") return false;
+  if (current.kind === "language_probe") return false;
 
   await reaskInLanguage(attempt.id, current, language);
+  return true;
 }
 
 /**
@@ -1544,9 +1557,7 @@ async function handleAnsweredTurn(args: {
 
   const skillId = turn.skillId as WorkSkillId | null;
   const eligible =
-    !turn.isFollowUp &&
-    !!skillId &&
-    interview.followUpSkills.includes(skillId);
+    !turn.isFollowUp && !!skillId && interview.followUpSkills.includes(skillId);
 
   // --- Eligible primary: score AND decide the follow-up in one call. --------
   // This is the one path with a provider call on the critical path (the
@@ -1765,6 +1776,12 @@ export interface AttemptStatus {
     errorMessage: string | null;
     skillId: WorkSkillId | null;
   } | null;
+  /**
+   * Which model served the recent turns. Development only — always an empty
+   * array in production, so it never reaches a real candidate's browser.
+   * See `~/server/services/llm-activity`.
+   */
+  devLlmCalls: LlmCall[];
 }
 
 /**
@@ -1838,6 +1855,7 @@ export async function getAttemptStatus(
           skillId: (current.skillId as WorkSkillId | null) ?? null,
         }
       : null,
+    devLlmCalls: recentLlmCalls(),
   };
 }
 

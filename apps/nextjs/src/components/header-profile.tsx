@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -13,13 +13,35 @@ import { createPortal } from "react-dom";
  * has the name to the header that renders it.
  */
 export function HeaderProfile({ name }: { name: string }) {
-  // The slot is server-rendered by the header, so it is already in the DOM at
-  // hydration — read it once rather than round-tripping through an effect.
-  const [slot] = useState<HTMLElement | null>(() =>
-    typeof document === "undefined"
-      ? null
-      : document.getElementById("candidate-header-slot"),
+  /**
+   * Whether hydration has finished.
+   *
+   * This used to read the slot during render, guarded by `typeof document`.
+   * That is a server/client branch: the server rendered nothing, the client's
+   * FIRST render produced the portal, and React reported a hydration mismatch
+   * and threw away the whole page tree to re-render it. On the interview that
+   * was not a cosmetic warning — regenerating the tree remounts
+   * `ActiveInterview`, whose cleanup releases the camera and microphone, so
+   * the candidate was left on a live question that recorded nothing until they
+   * reloaded.
+   *
+   * `useSyncExternalStore` exists for exactly this: it returns the server
+   * snapshot (false) during SSR *and* during hydration, so both renders agree,
+   * then re-renders with the client snapshot (true) once mounted. No effect,
+   * no setState, no mismatch. The store never changes, so the subscribe
+   * callback has nothing to do.
+   */
+  const hydrated = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
   );
+
+  // The slot is server-rendered by the header, so it is in the DOM by the time
+  // this runs — but only read it after hydration, never during it.
+  const slot = hydrated
+    ? document.getElementById("candidate-header-slot")
+    : null;
 
   if (!slot) return null;
 

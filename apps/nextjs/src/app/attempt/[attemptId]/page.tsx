@@ -14,6 +14,7 @@ import { getAttemptForCandidate } from "~/server/attempt/access";
 import { getTurns } from "~/server/attempt/service";
 import { uiMessages } from "~/server/language";
 import { isOpenAIConfigured } from "~/server/services/openai";
+import { recentLlmCalls, resetLlmCalls } from "~/server/services/llm-activity";
 import { uuidSchema } from "~/server/interview/validation";
 import { ActiveInterview } from "./active-interview";
 import { Instructions } from "./instructions";
@@ -85,6 +86,11 @@ export default async function AttemptPage({
     ? resolveInterviewLanguage(attempt.language).code
     : PROBE_SPOKEN_LANGUAGE_CODE;
 
+  // Dev readout: start this sitting with a clean slate, so the panel never
+  // shows turns from an interview that finished earlier on the same dev
+  // server. No-op outside development.
+  resetLlmCalls();
+
   return (
     <main className="w-full">
       <HeaderProfile name={attempt.candidateName} />
@@ -97,6 +103,10 @@ export default async function AttemptPage({
         }
         initialQuestionNumber={attempt.currentQuestionNumber}
         initialAttemptStatus={attempt.status}
+        // Dev readout: seeded here so the panel shows how the FIRST question
+        // was generated, rather than staying blank until the first poll.
+        // Empty outside development.
+        initialDevLlmCalls={recentLlmCalls()}
         initialNeedsLanguage={attempt.needsLanguageChoice}
         languages={SELECTABLE_INTERVIEW_LANGUAGES.map((l) => ({
           key: l.key,
