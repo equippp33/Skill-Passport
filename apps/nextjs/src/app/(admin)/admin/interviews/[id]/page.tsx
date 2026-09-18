@@ -9,6 +9,7 @@ import { getMessages } from "~/config/messages";
 import { uiLanguage } from "~/server/language";
 import { uuidSchema } from "~/server/interview/validation";
 import { formatDate } from "~/lib/utils";
+import { env } from "~/env";
 import { OpenToggle } from "../../open-toggle";
 import { ShareLink } from "../../share-link";
 import { CandidateGrid } from "./candidate-grid";
@@ -65,6 +66,32 @@ export default async function InterviewDetailPage({
               {details.questionCount} skill questions · created{" "}
               {formatDate(details.createdAt)}
             </p>
+            {/*
+             * Development only: what this link has cost so far.
+             *
+             * The counts are shown beside the total on purpose — a figure
+             * covering four runs out of seven reads as the whole bill unless
+             * it says otherwise, and the unmetered ones are interviews that
+             * predate the counters, not free ones.
+             */}
+            {details.devCostTotal ? (
+              <p className="mt-1 text-sm">
+                <span
+                  className="font-semibold tabular-nums"
+                  title="Estimated — rates in config/pricing.ts are unverified"
+                >
+                  {details.devCostTotal.total}
+                </span>
+                <span className="text-content-muted">
+                  {" "}
+                  across {details.devCostTotal.metered} metered interview
+                  {details.devCostTotal.metered === 1 ? "" : "s"}
+                  {details.devCostTotal.unmetered > 0
+                    ? ` · ${details.devCostTotal.unmetered} not metered`
+                    : ""}
+                </span>
+              </p>
+            ) : null}
           </div>
           <OpenToggle interviewId={details.id} isOpen={details.isOpen} />
         </div>
@@ -87,6 +114,8 @@ export default async function InterviewDetailPage({
       <CandidateGrid
         attempts={details.attempts}
         statusLabels={statusLabels}
+        interviewId={details.id}
+        isDev={env.NODE_ENV === "development"}
         returnTo={`/admin/interviews/${details.id}`}
       />
     </div>

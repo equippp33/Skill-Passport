@@ -2186,9 +2186,19 @@ async function abandonAttemptInner(
   if (attempt.status === "completed" || attempt.status === "failed") return;
   if (attempt.status === "not_started") return;
 
+  /**
+   * The interview ended when they stopped, not when we noticed.
+   *
+   * `updatedAt` is the last sign of life: the page pings every 20 seconds
+   * while it is open, so this is within a heartbeat of the moment the tab
+   * closed. Read before `settleScoring`, which can take a while and would
+   * otherwise drag the timestamp forward.
+   */
+  const endedAt = attempt.updatedAt;
+
   // Anything still being scored in the background belongs in the report.
   await settleScoring(attempt.id);
-  await finaliseAttempt(attempt.id, interview);
+  await finaliseAttempt(attempt.id, interview, endedAt);
 }
 
 /**
@@ -2253,6 +2263,16 @@ export async function sweepAbandonedAttempts(
 async function finaliseAttempt(
   attemptId: string,
   interview: Interview,
+  /**
+   * When the interview actually ended, if that is not now.
+   *
+   * The sweep finalises abandoned attempts whenever an admin next loads the
+   * dashboard, which can be hours after the candidate closed the tab. Stamping
+   * `completedAt` with the sweep's clock made the reported duration "how long
+   * until somebody looked at the admin page" — one attempt read as 2 hr 12 min
+   * for six minutes of interview.
+   */
+  endedAt?: Date,
 ): Promise<void> {
   const attempt = await reload(attemptId);
   const turns = await getTurns(attemptId);
@@ -2303,7 +2323,7 @@ async function finaliseAttempt(
       summary,
       strengths,
       improvements,
-      completedAt: new Date(),
+      completedAt: endedAt ?? new Date(),
       updatedAt: new Date(),
     })
     .where(eq(interviewAttemptsTable.id, attemptId));

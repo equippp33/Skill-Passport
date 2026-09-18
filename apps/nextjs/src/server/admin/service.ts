@@ -19,6 +19,9 @@ import {
 import type { Interview, InterviewAttempt } from "~/server/db/schema";
 import type { InterviewDetails } from "./dto";
 import { isWorkSkillId } from "~/config/work-skills";
+import { formatInr, interviewCostInr, wasMetered } from "~/config/pricing";
+import { env } from "~/env";
+import { deleteAudioObject } from "~/server/interview/storage";
 import type { WorkSkillId } from "~/config/work-skills";
 import { labelForCode } from "~/lib/spoken-languages";
 import type { SpokenLanguage } from "~/lib/spoken-languages";
@@ -336,6 +339,28 @@ export async function getInterviewDetails(
     getThumbnailVideos(attemptIds),
   ]);
 
+  /**
+   * The running total for this link. Development only.
+   *
+   * Summed over the attempts that were actually metered — the rest contribute
+   * nothing and are counted separately, rather than being folded in as zero
+   * and quietly dragging the total down.
+   */
+  const metered = attempts.filter((a) => wasMetered(a));
+  const devCostTotal =
+    env.NODE_ENV === "development"
+      ? {
+          total: formatInr(
+            metered.reduce(
+              (sum, a) => sum + interviewCostInr(a, env.AI_PROVIDER),
+              0,
+            ),
+          ),
+          metered: metered.length,
+          unmetered: attempts.length - metered.length,
+        }
+      : null;
+
   return {
     id: interview.id,
     title: interview.title,
@@ -355,8 +380,17 @@ export async function getInterviewDetails(
       spokenLanguages: spokenByAttempt.get(attempt.id) ?? [],
       overallScore: attempt.overallScore,
       awayCount: attempt.awayCount,
+      // Development only — see `~/config/pricing`. The check is here rather
+      // than in the component so the rate card never reaches the browser.
+      // Null in production, and null when this interview ran before the
+      // counters covered it — see `wasMetered`.
+      devCost:
+        env.NODE_ENV === "development" && wasMetered(attempt)
+          ? formatInr(interviewCostInr(attempt, env.AI_PROVIDER))
+          : null,
       createdAt: attempt.createdAt,
     })),
+    devCostTotal,
   };
 }
 
@@ -517,4 +551,62 @@ export async function listReports(adminId: string): Promise<ReportRow[]> {
     ...row,
     spokenLanguages: spoken.get(row.attemptId) ?? [],
   }));
+}
+
+/* -------------------------------------------------------------------------- */
+/*                          Development-only helpers                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Delete one attempt outright — recordings, turns, scores, everything.
+ *
+ * Development only, and deliberately so. Testing the interview flow leaves a
+ * long tail of half-finished attempts that make the candidate grid unreadable,
+ * and there is no sound product reason to let an admin destroy a real
+ * candidate's assessment from a hover button: a completed interview is
+ * evidence about a person, and the wrong click would be unrecoverable.
+ *
+ * The stored objects go first. The database rows cascade from the attempt, so
+ * deleting that first would strip the storage keys out from under us and leave
+ * the video sitting in the bucket with nothing pointing at it.
+ */
+export async function deleteAttemptInDev(
+  adminId: string,
+  attemptId: string,
+): Promise<void> {
+  if (env.NODE_ENV !== "development") {
+    throw new Error("Attempts can only be deleted in development.");
+  }
+
+  // Scoped to interviews this admin owns, exactly like every other read here.
+  const attempt = await db
+    .select({ id: interviewAttemptsTable.id })
+    .from(interviewAttemptsTable)
+    .innerJoin(
+      interviewsTable,
+      eq(interviewsTable.id, interviewAttemptsTable.interviewId),
+    )
+    .where(
+      and(
+        eq(interviewAttemptsTable.id, attemptId),
+        eq(interviewsTable.createdByUserId, adminId),
+      ),
+    )
+    .limit(1);
+  if (attempt.length === 0) return;
+
+  const clips = await db
+    .select({ storageKey: interviewAudioTable.storageKey })
+    .from(interviewAudioTable)
+    .where(eq(interviewAudioTable.attemptId, attemptId));
+
+  await Promise.all(
+    clips.map((clip) =>
+      deleteAudioObject(clip.storageKey).catch(() => undefined),
+    ),
+  );
+
+  await db
+    .delete(interviewAttemptsTable)
+    .where(eq(interviewAttemptsTable.id, attemptId));
 }

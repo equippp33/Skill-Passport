@@ -30,10 +30,16 @@ type Sort = "recent" | "score_desc" | "score_asc" | "name";
 export function CandidateGrid({
   attempts,
   statusLabels,
+  interviewId,
+  isDev,
   returnTo,
 }: {
   attempts: AttemptSummary[];
   statusLabels: Record<string, string>;
+  /** Which interview's page to refresh after a development-only delete. */
+  interviewId: string;
+  /** Shows the cost badge and the delete button. Never true in production. */
+  isDev: boolean;
   /** Where a candidate's report should return to. */
   returnTo: string;
 }) {
@@ -185,6 +191,8 @@ export function CandidateGrid({
               key={attempt.id}
               attempt={attempt}
               statusLabel={statusLabels[attempt.status] ?? attempt.status}
+              interviewId={interviewId}
+              isDev={isDev}
               returnTo={returnTo}
             />
           ))}

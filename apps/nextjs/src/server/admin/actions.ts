@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import {
   createGeneralInterview,
+  deleteAttemptInDev,
   requireAdmin,
   setInterviewOpen,
 } from "./service";
@@ -52,5 +53,22 @@ export async function setInterviewOpenAction(
   const admin = await requireAdmin("/admin");
   await setInterviewOpen(admin.id, interviewId, isOpen);
   revalidatePath("/admin/interviews");
+  revalidatePath("/admin");
+}
+
+/**
+ * Throw away one attempt. Development only — see `deleteAttemptInDev`.
+ *
+ * A server action is a public endpoint, so the environment check lives in the
+ * service beside the delete itself rather than in the component that renders
+ * the button. Hiding the button is a UI convenience; it is not the guard.
+ */
+export async function deleteAttemptAction(
+  attemptId: string,
+  interviewId: string,
+): Promise<void> {
+  const admin = await requireAdmin("/admin");
+  await deleteAttemptInDev(admin.id, attemptId);
+  revalidatePath(`/admin/interviews/${interviewId}`);
   revalidatePath("/admin");
 }

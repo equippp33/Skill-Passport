@@ -31,6 +31,13 @@ export interface AttemptSummary {
   spokenLanguages: { code: string; label: string; turns: number }[];
   overallScore: number | null;
   awayCount: number;
+  /**
+   * What this interview cost to run — development only, null in production.
+   *
+   * Sent ready-formatted ("₹2.14") rather than as counters or a number, so
+   * neither the rate card nor the arithmetic reaches the browser bundle.
+   */
+  devCost: string | null;
   createdAt: Date;
 }
 
@@ -43,4 +50,18 @@ export interface InterviewDetails {
   isOpen: boolean;
   createdAt: Date;
   attempts: AttemptSummary[];
+  /**
+   * What every interview under this link has cost so far — development only,
+   * null in production.
+   *
+   * Carries the counts as well as the total, because a total over four metered
+   * runs out of seven is a different claim from a total over all seven, and a
+   * number without that context invites being quoted as if it were the whole
+   * bill.
+   */
+  devCostTotal: {
+    total: string;
+    metered: number;
+    unmetered: number;
+  } | null;
 }
