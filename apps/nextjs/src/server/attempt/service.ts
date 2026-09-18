@@ -36,7 +36,11 @@ import {
   getWorkSkill,
 } from "~/config/work-skills";
 import type { WorkSkill, WorkSkillId } from "~/config/work-skills";
-import { isRepeatRequest, phraseIntent } from "~/config/repeat-requests";
+import {
+  isRepeatRequest,
+  phraseIntent,
+  yesNoIntent,
+} from "~/config/repeat-requests";
 import { FILLERS } from "~/config/fillers";
 import type { FillerKind } from "~/config/fillers";
 import { aggregateSkillScores } from "~/lib/scoring";
@@ -592,6 +596,19 @@ export interface AnswerAudio {
   mimeType: string;
   /** Length the recorder measured, for the admin's per-answer marker. */
   durationMs?: number | null;
+  /**
+   * Whether the browser's level meter heard an actual word in this recording.
+   *
+   * The deciding fact about whether an answer exists, and deliberately not the
+   * transcriber's opinion. Handed near-silence, Sarvam returns fluent
+   * plausible sentences — one interview ran eight questions deep on "Okay, so"
+   * invented from an empty room, scoring every one of them and moving on each
+   * time. The microphone cannot imagine a word; the model can.
+   *
+   * Absent on the recovery path, where there is no meter to ask — those fall
+   * back to trusting the transcript, which is the old behaviour.
+   */
+  heardSpeech?: boolean;
 }
 
 /**
@@ -800,6 +817,47 @@ async function processTurnInner(
       return;
     }
 
+    /**
+     * Nothing was said. Do not ask what was said.
+     *
+     * Returning here skips the provider call entirely — silence costs no STT
+     * request — and, more importantly, removes the only route by which an
+     * imagined transcript could become a scored answer.
+     */
+    if (answer?.heardSpeech === false) {
+      console.log(
+        `[attempt] silence turn=${turn.turnNumber} — no speech detected, not transcribed`,
+      );
+      if (answer) await archiveAnswerAudio(attemptId, turnId, answer);
+      if (turn.kind === "language_probe") {
+        await failTurn(
+          attemptId,
+          turnId,
+          "We could not hear an answer in that recording. Please check your microphone and record again.",
+        );
+      } else if (turn.addMorePromptedAt && turn.answerTranscript) {
+        /**
+         * They were asked whether they wanted to add anything, and said
+         * nothing. Silence answers that question: it means no.
+         *
+         * Re-asking here would be the interview forgetting an answer it
+         * already has and putting the same question again — which is what it
+         * used to do, and why saying nothing after a short answer felt like
+         * being stuck.
+         */
+        await handleAnsweredTurn({
+          attempt,
+          interview,
+          turn,
+          transcript: "",
+          languageCode: turn.detectedLanguageCode,
+        });
+      } else {
+        await repeatTurn(attemptId, turnId);
+      }
+      return;
+    }
+
     // --- 1. Transcribe, with detection always on ---------------------------
     // "unknown" lets Sarvam identify the language, which is how both the
     // initial detection and a later switch are noticed.
@@ -828,17 +886,38 @@ async function processTurnInner(
     const isProbe = turn.kind === "language_probe";
 
     if (!transcript || transcript.trim().length < 2) {
-      // Silence on a real question: re-ask it rather than throw a "check your
-      // microphone" error at someone who is just thinking or did not catch it.
-      // The probe still fails — with no words there is no language to detect.
-      // ponytail: no re-ask cap — a permanently silent mic re-asks every 15s;
-      // add a counter + move-on-after-N here if that ever bites.
+      /**
+       * A noise, but not words.
+       *
+       * The microphone heard something — this path is only reached when the
+       * level meter said so — and the transcriber found nothing in it. That is
+       * a cough, a sneeze, a cleared throat, a chair scraping. Asking "are you
+       * okay?" is what a person in the room would do, and it is a far better
+       * reply than re-reading the question at somebody who is spluttering.
+       *
+       * The question stays on screen and the microphone stays open, so they
+       * simply carry on when they are ready.
+       *
+       * The probe still fails — with no words there is no language to detect.
+       * ponytail: no cap here — somebody coughing into a hot mic gets asked
+       * every time; add a counter if that ever bites.
+       */
       if (isProbe) {
         await failTurn(
           attemptId,
           turnId,
           "We could not hear an answer in that recording. Please check your microphone and record again.",
         );
+        return;
+      }
+
+      const checkIn = await fillerAudioId(
+        attemptId,
+        "areYouOkay",
+        turn.turnNumber + turn.directiveSeq,
+      );
+      if (checkIn) {
+        await issueDirective(turnId, "play_filler", checkIn);
       } else {
         await repeatTurn(attemptId, turnId);
       }
@@ -1181,6 +1260,14 @@ async function reaskInLanguage(
       question: rewritten.question,
       questionTranslation: rewritten.translation,
       questionAudioId,
+      /**
+       * Any pending instruction is void: it points at a clip in the language
+       * the candidate has just rejected, and the browser prefers a directive's
+       * clip over the question's. Leaving it would re-ask in the new language
+       * on screen while still speaking the old one.
+       */
+      directiveAction: null,
+      directiveAudioId: null,
       updatedAt: new Date(),
     })
     .where(eq(interviewTurnsTable.id, turn.id));
@@ -1447,6 +1534,8 @@ const FILLER_PLAN_INDEX = 0;
 async function storeFillers(
   attemptId: string,
   language: InterviewLanguageKey,
+  /** Filled into the lines that address the candidate — see `{name}`. */
+  name: string | null,
 ): Promise<void> {
   const rows: (typeof interviewTurnVariantsTable.$inferInsert)[] = [];
 
@@ -1458,7 +1547,11 @@ async function storeFillers(
         role: "filler",
         ordinal: index,
         slug: kind,
-        text,
+        // Checking on someone by name is the whole point of the line; the
+        // space goes with the slot when there is no name to put in it.
+        text: name
+          ? text.replace("{name}", name)
+          : text.replace("{name}, ", "").replace(" {name}", ""),
       });
     });
   }
@@ -1612,7 +1705,11 @@ async function prepareWave(
       // The fixed lines first: they are needed from the very first answer,
       // and they are cheap enough that ordering them ahead of the questions
       // costs nothing measurable.
-      await storeFillers(attemptId, language.key);
+      await storeFillers(
+        attemptId,
+        language.key,
+        firstNameOf(attempt.candidateName),
+      );
 
       const comfortPlans = Array.from(
         { length: COMFORT_QUESTION_COUNT },
@@ -1874,7 +1971,6 @@ async function deliverTurn(
       ),
     );
   }
-
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2000,10 +2096,47 @@ async function handleAnsweredTurn(args: {
   transcript: string;
   languageCode: string | null;
 }): Promise<void> {
-  const { attempt, interview, turn, transcript, languageCode } = args;
+  const { attempt, interview, turn, languageCode } = args;
 
   const skillId = turn.skillId as WorkSkillId | null;
   const language = attempt.language as InterviewLanguageKey | null;
+
+  /**
+   * Are we hearing a reply to "would you like to add anything?"
+   *
+   * If so the answer proper is already recorded on the turn, and what just
+   * arrived is either a refusal, an acceptance, or the extra sentence they
+   * wanted to add. All three continue the same answer rather than replacing
+   * it, so they are joined.
+   */
+  const replyingToAddMore = Boolean(turn.addMorePromptedAt);
+  const answered = turn.answerTranscript?.trim() ?? "";
+  const reply = replyingToAddMore ? yesNoIntent(args.transcript) : null;
+
+  if (replyingToAddMore && reply === "yes") {
+    // They have more to say. Invite it and keep listening — the turn stays
+    // open, and whatever comes next lands in the `null` branch below.
+    const audioId = await fillerAudioId(
+      attempt.id,
+      "goAhead",
+      turn.turnNumber + turn.directiveSeq,
+    );
+    await issueDirective(turn.id, "play_filler", audioId);
+    return;
+  }
+
+  /**
+   * The transcript this turn is actually worth.
+   *
+   * A plain "no" is the end of a sentence we already have, not a new answer —
+   * scoring it would mark somebody down for declining to pad. Anything else
+   * said after the prompt is genuine continuation and joins what came before.
+   */
+  const transcript =
+    replyingToAddMore && reply === "no"
+      ? answered
+      : [answered, args.transcript.trim()].filter(Boolean).join(" ");
+
   const words = transcript.trim().split(/\s+/).filter(Boolean);
 
   /**
@@ -2023,7 +2156,7 @@ async function handleAnsweredTurn(args: {
    * is the guard; asking a candidate who gave a real answer would be rude, so
    * the length is.
    */
-  if (isThinAnswer && !turn.addMorePromptedAt && language) {
+  if (isThinAnswer && !replyingToAddMore && language) {
     const audioId = await fillerAudioId(
       attempt.id,
       "addMore",
@@ -2032,12 +2165,25 @@ async function handleAnsweredTurn(args: {
     if (audioId) {
       await db
         .update(interviewTurnsTable)
-        .set({ addMorePromptedAt: new Date(), updatedAt: new Date() })
+        .set({
+          addMorePromptedAt: new Date(),
+          // Kept now, while the turn stays open: a later "no, that's all"
+          // ends this turn, and this is the only copy of what they said.
+          answerTranscript: transcript,
+          detectedLanguageCode: languageCode,
+          updatedAt: new Date(),
+        })
         .where(eq(interviewTurnsTable.id, turn.id));
       await issueDirective(turn.id, "play_filler", audioId);
-      // Scored in the background all the same: if they say nothing more, what
-      // they already said is the answer and it should not go unmarked.
-      scheduleScoring(attempt, interview, turn, transcript, languageCode);
+      /**
+       * Not scored yet, on purpose.
+       *
+       * Every way out of this prompt — "no", "yes" then more, a continuation,
+       * or silence — comes back through this function and scores once at the
+       * bottom, against the complete answer. Marking it here as well would
+       * spend a second provider call to grade half of what they said, and the
+       * two would race to write the result.
+       */
       return;
     }
   }
@@ -2385,7 +2531,8 @@ export interface AttemptStatus {
    */
   clips: {
     easier: string | null;
-    takeYourTime: string | null;
+    whatHappened: string | null;
+    didNotGet: string | null;
     noProblem: string | null;
     closing: string | null;
   };
@@ -2529,29 +2676,33 @@ export async function getAttemptStatus(
    * is.
    */
   const listening = current?.status === "awaiting_answer";
-  const [easier, takeYourTime, noProblem, closing] = await Promise.all([
-    current
-      ? variantAudioId(
-          attempt.id,
-          current.planIndex,
-          "easier",
-          0,
-          current.questionAudioId,
-        )
-      : null,
-    // Seeded by turn so the reassurance is not the identical syllable at every
-    // question, which is what made the old acknowledgement grate.
-    listening && current
-      ? fillerAudioId(attempt.id, "takeYourTime", current.turnNumber)
-      : null,
-    listening && current
-      ? fillerAudioId(attempt.id, "noProblem", current.turnNumber)
-      : null,
-    attempt.status === "completed"
-      ? fillerAudioId(attempt.id, "closing", 0)
-      : null,
-  ]);
-  const clips = { easier, takeYourTime, noProblem, closing };
+  const [easier, whatHappened, didNotGet, noProblem, closing] =
+    await Promise.all([
+      current
+        ? variantAudioId(
+            attempt.id,
+            current.planIndex,
+            "easier",
+            0,
+            current.questionAudioId,
+          )
+        : null,
+      // Seeded by turn so the check-in is not the identical wording at every
+      // question, which is what made the old acknowledgement grate.
+      listening && current
+        ? fillerAudioId(attempt.id, "whatHappened", current.turnNumber)
+        : null,
+      listening && current
+        ? fillerAudioId(attempt.id, "didNotGet", current.turnNumber)
+        : null,
+      listening && current
+        ? fillerAudioId(attempt.id, "noProblem", current.turnNumber)
+        : null,
+      attempt.status === "completed"
+        ? fillerAudioId(attempt.id, "closing", 0)
+        : null,
+    ]);
+  const clips = { easier, whatHappened, didNotGet, noProblem, closing };
 
   return {
     attemptStatus: attempt.status,

@@ -13,8 +13,9 @@ import { useEffect, useRef } from "react";
  * expected of them, moves with the voice when the interviewer speaks, moves
  * with THEIR voice while they answer, and turns over slowly while it thinks.
  *
- * Original work. Layered radial gradients that drift over one another, drawn
- * from the app's own accent through to violet.
+ * Original work: a patch of sky seen through a porthole. Banks of cloud, each
+ * built from overlapping gradient puffs so they have a silhouette rather than
+ * a smudge, drifting one way at three different speeds.
  *
  * Performance, which matters because this is on screen for the whole
  * interview: no `filter: blur()` anywhere (it repaints the blurred region
@@ -199,35 +200,72 @@ export function VoiceOrb({
             "0 0 60px color-mix(in oklab, var(--accent) 35%, transparent), inset 0 -18px 30px rgba(255,255,255,0.35), inset 0 14px 26px rgba(40,80,190,0.28)",
         }}
       >
-        {/* Cloud. Three banks at different sizes, speeds and directions, each
-            a soft white ellipse with a long falloff — a gradient, never a
-            blur filter, so the whole thing stays on the compositor. Their
-            periods (29/37/43s) share no common factor worth noticing, so the
-            sky never visibly repeats. */}
+        {/*
+         * Cloud, in three banks.
+         *
+         * Each bank is a strip twice the orb's width carrying a tile one
+         * orb wide, repeated — so drifting it exactly -50% returns the
+         * pattern to where it began and the loop cannot be seen. The drift
+         * is linear and one-way; the gentle rise and fall lives on a wrapper
+         * so the two transforms compose instead of overwriting each other.
+         *
+         * A bank is several overlapping ellipses rather than one soft blob.
+         * That is what gives a cloud an edge: the body stays near-opaque well
+         * past the halfway stop and only then falls away, and the lumps of
+         * neighbouring puffs read as a silhouette. One wide, flat ellipse
+         * along the base gives the flat bottom that says cumulus rather than
+         * cotton wool. Still pure gradients — no `filter: blur()`, so the
+         * whole thing stays on the compositor for the length of an interview.
+         *
+         * Far bank drifts slowest, near bank fastest: the parallax is what
+         * makes it read as depth rather than a flat texture sliding past.
+         */}
         <div
-          className="orb-layer absolute inset-[-30%]"
-          style={{
-            background:
-              "radial-gradient(60% 34% at 38% 62%, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.55) 38%, transparent 68%)",
-            animation: `orb-cloud-a ${speaking ? "17s" : "29s"} ease-in-out infinite`,
-          }}
-        />
+          className="orb-bob absolute inset-x-0 top-[10%] h-[34%]"
+          style={{ animation: "orb-bob-b 23s ease-in-out infinite" }}
+        >
+          <div
+            className="orb-layer absolute inset-y-0 left-0 w-[200%]"
+            style={{
+              backgroundImage: CLOUD_FAR,
+              backgroundSize: "50% 100%",
+              backgroundRepeat: "repeat-x",
+              opacity: 0.7,
+              animation: `orb-drift ${speaking ? "38s" : "64s"} linear infinite`,
+            }}
+          />
+        </div>
+
         <div
-          className="orb-layer absolute inset-[-30%]"
-          style={{
-            background:
-              "radial-gradient(52% 26% at 64% 44%, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.4) 42%, transparent 70%)",
-            animation: `orb-cloud-b ${speaking ? "21s" : "37s"} ease-in-out infinite`,
-          }}
-        />
+          className="orb-bob absolute inset-x-0 top-[36%] h-[36%]"
+          style={{ animation: "orb-bob-a 19s ease-in-out infinite" }}
+        >
+          <div
+            className="orb-layer absolute inset-y-0 left-0 w-[200%]"
+            style={{
+              backgroundImage: CLOUD_MID,
+              backgroundSize: "50% 100%",
+              backgroundRepeat: "repeat-x",
+              opacity: 0.88,
+              animation: `orb-drift ${speaking ? "28s" : "47s"} linear infinite`,
+            }}
+          />
+        </div>
+
         <div
-          className="orb-layer absolute inset-[-30%]"
-          style={{
-            background:
-              "radial-gradient(70% 30% at 45% 78%, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.6) 34%, transparent 64%)",
-            animation: `orb-cloud-c ${speaking ? "25s" : "43s"} ease-in-out infinite`,
-          }}
-        />
+          className="orb-bob absolute inset-x-0 top-[56%] h-[42%]"
+          style={{ animation: "orb-bob-b 17s ease-in-out infinite" }}
+        >
+          <div
+            className="orb-layer absolute inset-y-0 left-0 w-[200%]"
+            style={{
+              backgroundImage: CLOUD_NEAR,
+              backgroundSize: "50% 100%",
+              backgroundRepeat: "repeat-x",
+              animation: `orb-drift ${speaking ? "20s" : "34s"} linear infinite`,
+            }}
+          />
+        </div>
 
         {/* The curve of the glass. Keeps it reading as a sphere now that the
             inside is flat sky rather than a lit ball. */}
@@ -242,6 +280,46 @@ export function VoiceOrb({
     </div>
   );
 }
+
+/**
+ * One tile of cloud, as a stack of gradients.
+ *
+ * Read each line as a puff: `radial-gradient(<width> <height> at <x> <y>, …)`.
+ * The alpha holds high to roughly the halfway stop and only then runs out,
+ * which is what gives a defined body with a soft rim; a gradient that starts
+ * fading immediately is the smudge this replaced.
+ *
+ * Nothing sits within about a tenth of either edge, so no cloud is cut in half
+ * at the seam where the tile repeats — the gaps between banks read as open sky.
+ */
+const CLOUD_NEAR = [
+  // Shadowed underside first, so the puffs sit on top of it.
+  "radial-gradient(34% 18% at 32% 78%, rgba(120,150,215,0.30) 0%, rgba(120,150,215,0.12) 55%, rgba(120,150,215,0) 80%)",
+  "radial-gradient(15% 30% at 18% 58%, rgba(255,255,255,0.99) 0%, rgba(255,255,255,0.93) 54%, rgba(255,255,255,0) 76%)",
+  "radial-gradient(13% 40% at 29% 48%, rgba(255,255,255,1) 0%, rgba(255,255,255,0.96) 52%, rgba(255,255,255,0) 74%)",
+  "radial-gradient(16% 28% at 40% 58%, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.92) 54%, rgba(255,255,255,0) 77%)",
+  // The flat base that ties the puffs into one cloud.
+  "radial-gradient(30% 11% at 29% 70%, rgba(255,255,255,0.97) 0%, rgba(255,255,255,0.88) 58%, rgba(255,255,255,0) 84%)",
+  "radial-gradient(11% 24% at 70% 56%, rgba(255,255,255,0.96) 0%, rgba(255,255,255,0.88) 52%, rgba(255,255,255,0) 76%)",
+  "radial-gradient(18% 9% at 72% 66%, rgba(255,255,255,0.94) 0%, rgba(255,255,255,0.8) 58%, rgba(255,255,255,0) 84%)",
+].join(", ");
+
+const CLOUD_MID = [
+  "radial-gradient(12% 26% at 22% 50%, rgba(255,255,255,0.97) 0%, rgba(255,255,255,0.9) 52%, rgba(255,255,255,0) 76%)",
+  "radial-gradient(15% 20% at 33% 56%, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.86) 54%, rgba(255,255,255,0) 78%)",
+  "radial-gradient(24% 9% at 28% 64%, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.76) 58%, rgba(255,255,255,0) 85%)",
+  "radial-gradient(14% 22% at 66% 46%, rgba(255,255,255,0.96) 0%, rgba(255,255,255,0.88) 52%, rgba(255,255,255,0) 77%)",
+  "radial-gradient(10% 30% at 76% 42%, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.9) 50%, rgba(255,255,255,0) 74%)",
+  "radial-gradient(22% 8% at 71% 56%, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.74) 58%, rgba(255,255,255,0) 86%)",
+].join(", ");
+
+/** Thinner and flatter: distance stretches cloud out and washes it down. */
+const CLOUD_FAR = [
+  "radial-gradient(20% 12% at 24% 46%, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.7) 56%, rgba(255,255,255,0) 84%)",
+  "radial-gradient(12% 16% at 34% 40%, rgba(255,255,255,0.88) 0%, rgba(255,255,255,0.68) 54%, rgba(255,255,255,0) 82%)",
+  "radial-gradient(26% 9% at 64% 58%, rgba(255,255,255,0.86) 0%, rgba(255,255,255,0.62) 58%, rgba(255,255,255,0) 86%)",
+  "radial-gradient(14% 13% at 78% 50%, rgba(255,255,255,0.84) 0%, rgba(255,255,255,0.6) 56%, rgba(255,255,255,0) 84%)",
+].join(", ");
 
 /** Announced to screen readers, which cannot see any of the above. */
 const ORB_LABEL: Record<OrbState, string> = {

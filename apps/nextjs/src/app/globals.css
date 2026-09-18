@@ -255,39 +255,46 @@ li {
  * the element by an animation frame rather than through React state — a
  * re-render per frame would cost far more than the paint does.
  */
-@keyframes orb-cloud-a {
-  0% {
-    transform: translate3d(-18%, 2%, 0) scale(1);
+/**
+ * Cloud drift.
+ *
+ * One direction, linear, forever — weather does not change its mind. The banks
+ * that use this are twice the width of the orb and tile at half that, so
+ * travelling exactly -50% lands the pattern back on itself and the loop is
+ * invisible. The previous version swung each bank left and right on an
+ * ease-in-out, which reads as sloshing rather than sky.
+ */
+@keyframes orb-drift {
+  from {
+    transform: translate3d(0, 0, 0);
   }
-  50% {
-    transform: translate3d(14%, -3%, 0) scale(1.08);
-  }
-  100% {
-    transform: translate3d(-18%, 2%, 0) scale(1);
-  }
-}
-
-@keyframes orb-cloud-b {
-  0% {
-    transform: translate3d(16%, -4%, 0) scale(1.05);
-  }
-  50% {
-    transform: translate3d(-15%, 4%, 0) scale(0.96);
-  }
-  100% {
-    transform: translate3d(16%, -4%, 0) scale(1.05);
+  to {
+    transform: translate3d(-50%, 0, 0);
   }
 }
 
-@keyframes orb-cloud-c {
-  0% {
-    transform: translate3d(-10%, -8%, 0) scale(0.98);
+/**
+ * A slow rise and fall, on a wrapper so it composes with the drift rather
+ * than fighting it for the same `transform`. Two of them, at periods with no
+ * useful common factor, so the banks never line up.
+ */
+@keyframes orb-bob-a {
+  0%,
+  100% {
+    transform: translate3d(0, 1.5%, 0);
   }
   50% {
-    transform: translate3d(12%, 7%, 0) scale(1.12);
+    transform: translate3d(0, -3%, 0);
   }
+}
+
+@keyframes orb-bob-b {
+  0%,
   100% {
-    transform: translate3d(-10%, -8%, 0) scale(0.98);
+    transform: translate3d(0, -2%, 0);
+  }
+  50% {
+    transform: translate3d(0, 2.5%, 0);
   }
 }
 
@@ -325,6 +332,7 @@ li {
  */
 @media (prefers-reduced-motion: reduce) {
   .orb-layer,
+  .orb-bob,
   .orb-breathe,
   .orb-ripple {
     animation: none !important;

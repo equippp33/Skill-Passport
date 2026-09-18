@@ -515,11 +515,15 @@ export const interviewTurnVariantsTable = pgTable(
     planIndex: smallint("plan_index").notNull(),
     role: turnVariantRoleEnum("role").notNull(),
     /**
-     * Which fixed line this is — `okay`, `takeYourTime`, `addMore` and so on.
-     * Null for everything that is not a filler, where the plan index and role
-     * already identify the row.
+     * Which fixed line this is — `okay`, `whatHappened`, `addMore` and so on.
+     *
+     * Empty for everything that is not a filler, where the plan index and role
+     * already identify the row. Empty rather than null because it is part of
+     * the unique index below, and Postgres treats nulls there as distinct from
+     * each other — which would let the same prepared question be inserted
+     * twice, the exact thing that index exists to prevent.
      */
-    slug: text("slug"),
+    slug: text("slug").notNull().default(""),
     /** Distinguishes the two probes. Always 0 for `primary` and `easier`. */
     ordinal: smallint("ordinal").notNull().default(0),
 
@@ -542,12 +546,25 @@ export const interviewTurnVariantsTable = pgTable(
   (t) => [
     // The voicer's queue: "what still needs audio for this attempt".
     index("interview_turn_variants_queue_idx").on(t.attemptId, t.audioStatus),
-    // One row per role per plan entry, so a retried wave cannot double up.
+    /**
+     * One row per role per plan entry, so a retried wave cannot double up.
+     *
+     * `slug` is part of the key, and has to be: every fixed line shares plan
+     * index 0 and role `filler`, and their ordinals each start at zero. Without
+     * it, `okay` #0 and `addMore` #0 collide, and the `onConflictDoNothing` that
+     * makes a retried wave safe silently threw away every kind but the first —
+     * so an interview had five ways to say "okay" and no way to say anything
+     * else, including the lines the silence ladder depends on.
+     *
+     * Questions carry an empty slug rather than a null one, so they still
+     * de-duplicate normally — see the column.
+     */
     uniqueIndex("interview_turn_variants_unique_idx").on(
       t.attemptId,
       t.planIndex,
       t.role,
       t.ordinal,
+      t.slug,
     ),
   ],
 );

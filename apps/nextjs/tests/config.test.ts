@@ -16,7 +16,11 @@ import {
   openerFor,
 } from "~/config/greeting";
 import { MESSAGES, t } from "~/config/messages";
-import { isRepeatRequest, phraseIntent } from "~/config/repeat-requests";
+import {
+  isRepeatRequest,
+  phraseIntent,
+  yesNoIntent,
+} from "~/config/repeat-requests";
 import { en } from "~/config/messages/en";
 import {
   WORK_SKILLS,
@@ -325,5 +329,41 @@ describe("UI and interview languages are independent", () => {
     expect(m.skills.reliability).toBe("Reliability");
     // ...while a session started in Marathi still drives Sarvam.
     expect(sessionLanguage("marathi").code).toBe("mr-IN");
+  });
+});
+
+describe("replies to a yes-or-no question", () => {
+  it.each([
+    ["no", "no"],
+    ["No, that's all", "no"],
+    ["नहीं", "no"],
+    ["बस इतना ही", "no"],
+    ["இல்லை", "no"],
+    ["లేదు", "no"],
+  ])("reads %j as a refusal", (text, expected) => {
+    expect(yesNoIntent(text)).toBe(expected);
+  });
+
+  it.each([
+    ["yes", "yes"],
+    ["हाँ", "yes"],
+    ["ஆமாம்", "yes"],
+    ["అవును", "yes"],
+  ])("reads %j as an acceptance", (text, expected) => {
+    expect(yesNoIntent(text)).toBe(expected);
+  });
+
+  /**
+   * The common case, and the one worth protecting: the candidate ignores the
+   * question and simply keeps answering. That continuation is the thing we
+   * were asking for, so it must not be mistaken for a yes or a no — plenty of
+   * real answers contain "no" somewhere in the middle.
+   */
+  it.each([
+    "I checked the order twice so there were no mistakes",
+    "We had to close the shop, so I stayed back and finished it",
+    "मैंने दोबारा जाँच की ताकि कोई गलती न हो",
+  ])("treats a real answer as neither: %j", (text) => {
+    expect(yesNoIntent(text)).toBeNull();
   });
 });

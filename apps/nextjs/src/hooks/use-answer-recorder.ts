@@ -796,6 +796,35 @@ export function useAnswerRecorder({
   const reset = useCallback(() => {
     clearTick();
     clearSegmentTimer();
+
+    /**
+     * Stop anything still rolling, and mean it.
+     *
+     * This used to set the state to "ready" and leave the MediaRecorder
+     * running, which reads as reset and is not. `startRecording` refuses to
+     * start while a recorder is live, so the next `beginAnswer` silently did
+     * nothing and the candidate sat in front of a question that was not being
+     * recorded — with a page reload the only way out. It showed up on a
+     * mid-answer language switch, which is exactly when reset is called with
+     * the microphone already open.
+     *
+     * `rollingOverRef` is cleared first so the segment handler settles the
+     * take instead of immediately starting another one.
+     */
+    rollingOverRef.current = false;
+    for (const rec of [audioRecorderRef.current, videoRecorderRef.current]) {
+      if (rec && rec.state !== "inactive") {
+        try {
+          rec.stop();
+        } catch {
+          // Already stopping. Nothing to do.
+        }
+      }
+    }
+    audioRecorderRef.current = null;
+    videoRecorderRef.current = null;
+    pendingStopsRef.current = 0;
+
     audioSegmentsRef.current = [];
     revokePreview();
     setBlob(null);

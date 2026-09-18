@@ -60,7 +60,8 @@ interface StatusResponse {
   directive: Directive | null;
   clips: {
     easier: string | null;
-    takeYourTime: string | null;
+    whatHappened: string | null;
+    didNotGet: string | null;
     noProblem: string | null;
     closing: string | null;
   };
@@ -178,6 +179,15 @@ export function ActiveInterview({
   const [speechRate, setSpeechRate] = useState(1);
   // Read by `speakAside`, which is built once and must not be rebuilt every
   // time the rate changes — it is a dependency of the poll loop.
+  /**
+   * Whether the microphone actually heard a word in the current answer.
+   *
+   * Sent with the upload. The transcriber cannot be trusted to tell silence
+   * from speech — handed an empty room it returns plausible sentences, and one
+   * interview ran eight questions deep on "Okay, so" invented from nothing,
+   * scoring every one of them.
+   */
+  const heardSpeechRef = useRef(false);
   const speechRateRef = useRef(speechRate);
   useEffect(() => {
     speechRateRef.current = speechRate;
@@ -216,7 +226,8 @@ export function ActiveInterview({
    */
   const clipsRef = useRef<StatusResponse["clips"]>({
     easier: null,
-    takeYourTime: null,
+    whatHappened: null,
+    didNotGet: null,
     noProblem: null,
     closing: null,
   });
@@ -648,6 +659,19 @@ export function ActiveInterview({
         setPhase("answering");
         return;
       }
+
+      /**
+       * No instruction any more: forget the last one.
+       *
+       * The player prefers the directive's clip over the question's, so a
+       * directive left in state outlives the turn it belonged to and every
+       * question after it is read out in the voice of a filler from three
+       * questions ago — or, once the old clip has been cleaned up, not read
+       * out at all. A language switch made it obvious, because that rewrites
+       * the question while leaving the stale directive pointing at audio in
+       * the language just rejected.
+       */
+      if (!data.directive) setDirective(null);
       // Dev readout. Empty in production, so this is a no-op there.
       // Dev readout only, and deliberately not a plain assignment: the server
       // sends `[]` in production, an empty array is truthy, and a fresh array
@@ -841,6 +865,8 @@ export function ActiveInterview({
         });
         form.append("turnNumber", String(turn.turnNumber));
         form.append("durationMs", String(durationMs));
+        // The microphone's verdict, not the transcriber's. See `heardSpeechRef`.
+        form.append("heardSpeech", String(heardSpeechRef.current));
 
         const response = await fetch(`/api/attempt/${attemptId}/answer`, {
           method: "POST",
@@ -880,6 +906,8 @@ export function ActiveInterview({
         const receipt = (await response.json().catch(() => null)) as {
           acknowledgementAudioId?: string | null;
         } | null;
+        // Null when nothing was said — there is nothing to acknowledge, and
+        // "got it" after a silence is the interviewer talking to itself.
         void speakAside(receipt?.acknowledgementAudioId ?? null);
 
         // Queue the clip and upload it in the background NOW, while the
@@ -968,6 +996,9 @@ export function ActiveInterview({
     paused: interjecting,
     noAnswerStages: NO_ANSWER_STAGES,
     onStage: handleSilenceStage,
+    onSpeechChange: (heard) => {
+      heardSpeechRef.current = heard;
+    },
     // Fires either when they go quiet after answering, or — if they never say
     // a word at all — once the last rung of the ladder is reached. Either way
     // `handleNext` decides what happens: a real answer is sent, near-silence
@@ -1269,10 +1300,10 @@ export function ActiveInterview({
           ) : null}
 
           {/*
-            * The silence ladder's voice. Always mounted, never given a `src`
-            * by React — `speakInterjection` sets it — so mounting it cannot
-            * disturb the question player beside it.
-            */}
+           * The silence ladder's voice. Always mounted, never given a `src`
+           * by React — `speakInterjection` sets it — so mounting it cannot
+           * disturb the question player beside it.
+           */}
           <audio
             ref={interjectionRef}
             hidden

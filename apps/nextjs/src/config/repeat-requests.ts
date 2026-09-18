@@ -283,3 +283,155 @@ export function phraseIntent(transcript: string): UtteranceIntent | null {
 export function isRepeatRequest(transcript: string): boolean {
   return phraseIntent(transcript) !== null;
 }
+
+/* -------------------------------------------------------------------------- */
+/*                      Answering a yes-or-no question                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * "Would you like to add anything?" — and what came back.
+ *
+ * Only ever consulted when the interviewer has just asked something with a
+ * yes-or-no answer, so the words here can be short ones that would be reckless
+ * to match anywhere else: plenty of real answers contain "no" or "haan" in
+ * passing, but almost none consist of it.
+ *
+ * A phrase list, like everything else on the answer path — no model call, so
+ * the reply is instant.
+ */
+const AFFIRMATIVE: string[] = [
+  "yes",
+  "yeah",
+  "yep",
+  "yup",
+  "sure",
+  "ok",
+  "okay",
+  "one more",
+  "one minute",
+  "i want to add",
+  "i would like to add",
+  "let me add",
+  "actually",
+  "हाँ",
+  "हां",
+  "जी",
+  "जी हाँ",
+  "हाँ जी",
+  "बिल्कुल",
+  "थोड़ा और",
+  "हो",
+  "होय",
+  "हो सांगतो",
+  "आणखी",
+  "হ্যাঁ",
+  "হ্যা",
+  "আরও",
+  "আর একটু",
+  "હા",
+  "હાજી",
+  "થોડું વધારે",
+  "ಹೌದು",
+  "ಹೂಂ",
+  "ಇನ್ನೂ",
+  "അതെ",
+  "ഉവ്വ്",
+  "കുറച്ചു കൂടി",
+  "ହଁ",
+  "ହଁ ଜୀ",
+  "ଆଉ କିଛି",
+  "ਹਾਂ",
+  "ਹਾਂ ਜੀ",
+  "ਹੋਰ",
+  "ஆமா",
+  "ஆம்",
+  "ஆமாம்",
+  "இன்னும்",
+  "అవును",
+  "ఔను",
+  "ఇంకా",
+];
+
+const NEGATIVE: string[] = [
+  "no",
+  "nope",
+  "nothing",
+  "no thanks",
+  "no thank you",
+  "that is all",
+  "thats all",
+  "that's it",
+  "thats it",
+  "i am done",
+  "im done",
+  "done",
+  "nothing else",
+  "next",
+  "next question",
+  "नहीं",
+  "नही",
+  "बस",
+  "बस इतना ही",
+  "कुछ नहीं",
+  "आगे बढ़िए",
+  "अगला सवाल",
+  "नाही",
+  "बस एवढंच",
+  "काही नाही",
+  "पुढे चला",
+  "না",
+  "আর কিছু না",
+  "এটুকুই",
+  "পরেরটা",
+  "ના",
+  "બસ",
+  "બીજું કંઈ નહીં",
+  "આગળ",
+  "ಇಲ್ಲ",
+  "ಅಷ್ಟೇ",
+  "ಬೇರೇನೂ ಇಲ್ಲ",
+  "ಮುಂದೆ",
+  "ഇല്ല",
+  "അത്രമാത്രം",
+  "വേറൊന്നുമില്ല",
+  "അടുത്തത്",
+  "ନାହିଁ",
+  "ଏତିକି",
+  "ଆଉ କିଛି ନାହିଁ",
+  "ପରବର୍ତ୍ତୀ",
+  "ਨਹੀਂ",
+  "ਬਸ",
+  "ਹੋਰ ਕੁਝ ਨਹੀਂ",
+  "ਅਗਲਾ",
+  "இல்ல",
+  "இல்லை",
+  "அவ்வளவுதான்",
+  "அடுத்தது",
+  "లేదు",
+  "అంతే",
+  "ఇంకేమీ లేదు",
+  "తరువాత",
+];
+
+/**
+ * Whether a reply to a yes-or-no question was a yes, a no, or neither.
+ *
+ * Null means "neither" — which, for the add-more prompt, is the most common
+ * and most useful outcome: the candidate ignored the question and simply
+ * carried on answering, and that continuation is what we actually wanted.
+ *
+ * Negative is checked first. "No, that's all" starts with a word on neither
+ * list in some languages but contains needles from both, and the refusal is
+ * the part that matters.
+ */
+export function yesNoIntent(transcript: string): "yes" | "no" | null {
+  const text = normalise(transcript);
+  if (!text) return null;
+  // Longer than this and it is an answer that happens to contain "no", not a
+  // reply to the question we asked.
+  if (text.split(" ").length > 5) return null;
+
+  if (matches(text, NEGATIVE)) return "no";
+  if (matches(text, AFFIRMATIVE)) return "yes";
+  return null;
+}

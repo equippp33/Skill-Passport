@@ -66,6 +66,15 @@ export async function POST(
       ? Math.round(declaredDuration)
       : null;
 
+  /**
+   * Did the browser's level meter hear a word?
+   *
+   * Only `"false"` counts as "no". Anything else — a missing field, an older
+   * client, a mangled value — is treated as speech, so a bad reading can only
+   * ever cost an extra transcription, never silently discard a real answer.
+   */
+  const heardSpeech = formData.get("heardSpeech") !== "false";
+
   if (!file) {
     return NextResponse.json(
       { error: "No recording was attached." },
@@ -118,6 +127,7 @@ export async function POST(
           segments,
           mimeType,
           durationMs,
+          heardSpeech,
         });
       });
     }
@@ -132,10 +142,12 @@ export async function POST(
     return NextResponse.json(
       {
         status: "processing",
-        acknowledgementAudioId: await acknowledgementClip(
-          found.attempt.id,
-          turnNumber,
-        ),
+        // Withheld when nothing was said: "got it" after a silence is the
+        // interviewer agreeing with itself, and it is what made an empty room
+        // sound like a conversation.
+        acknowledgementAudioId: heardSpeech
+          ? await acknowledgementClip(found.attempt.id, turnNumber)
+          : null,
       },
       { status: 202 },
     );

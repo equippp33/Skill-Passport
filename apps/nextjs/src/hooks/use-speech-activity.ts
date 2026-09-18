@@ -63,6 +63,7 @@ export function useSpeechActivity({
   paused,
   noAnswerStages,
   onStage,
+  onSpeechChange,
   onSilence,
 }: {
   /** The live microphone stream. Null while devices are not open. */
@@ -98,6 +99,17 @@ export function useSpeechActivity({
   noAnswerStages: SilenceStage[];
   /** Called as each rung is reached, with its id. */
   onStage: (id: string) => void;
+  /**
+   * Whether a word has been heard yet in this answer — `false` when watching
+   * starts, `true` the first time the level clears the speech threshold.
+   *
+   * The one honest answer to "did this person say anything?". The transcriber
+   * cannot be asked: handed near-silence it invents plausible speech, and an
+   * interview once ran eight questions deep on "Okay, so" hallucinated from an
+   * empty room. This is measured from the microphone, so it cannot be
+   * imagined.
+   */
+  onSpeechChange: (heard: boolean) => void;
   onSilence: () => void;
 }): { secondsRemaining: number | null; noAnswerIn: number | null } {
   /**
@@ -121,6 +133,11 @@ export function useSpeechActivity({
   useEffect(() => {
     onStageRef.current = onStage;
   }, [onStage]);
+
+  const onSpeechChangeRef = useRef(onSpeechChange);
+  useEffect(() => {
+    onSpeechChangeRef.current = onSpeechChange;
+  }, [onSpeechChange]);
 
   const stagesRef = useRef(noAnswerStages);
   useEffect(() => {
@@ -171,6 +188,8 @@ export function useSpeechActivity({
     let pausedMs = 0;
     let spoken = false;
     let fired = false;
+    // Each answer starts from "nothing heard".
+    onSpeechChangeRef.current(false);
 
     const timer = setInterval(() => {
       const now = Date.now();
@@ -203,6 +222,7 @@ export function useSpeechActivity({
 
       if (rms >= SPEECH_RMS_THRESHOLD) {
         lastVoiceAt = now;
+        if (!spoken) onSpeechChangeRef.current(true);
         spoken = true;
       } else if (spoken && now - startedAt >= minSpeechSeconds * 1000) {
         // They spoke and have now gone quiet — the normal end of an answer.

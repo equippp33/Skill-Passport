@@ -47,24 +47,26 @@ export const SILENCE_ADVANCE_SECONDS = 8;
 /**
  * What the interviewer does while a candidate says nothing at all.
  *
- * Silence is the moment a nervous fresher is most likely to be lost, and a
- * single deadline treats "thinking" and "frozen" the same. So: wait, reassure,
- * offer the question in plainer words, and only then move on — the rhythm a
- * person would use.
+ * Silence is where a nervous fresher is most likely to be lost, and treating
+ * it as an answer is how eight questions once went by with nobody speaking.
+ * So: check they are still there, ask whether the question landed, and only
+ * then stop waiting — the sequence a person would use.
  *
- * Seven seconds is long enough to be a pause rather than an interruption.
- * Fifteen is where reassurance has plainly not been enough and the wording
- * itself is the likely problem. Thirty is where insisting stops being kind:
- * the answer is submitted, the transcriber — more sensitive than the gate that
- * got us here — still sees the recording, and a truly empty one is skipped
- * server-side.
+ * Ten seconds is a pause rather than an interruption. Five more and the
+ * wording itself is the likely problem, so ask directly: "did you not follow
+ * the question?" is answerable, and answering it with "no" routes straight to
+ * the simpler version through the ordinary phrase matching. Forty is where
+ * insisting stops being kind — and that rung submits **nothing**, it re-asks
+ * the question, because a recording with no speech in it is not an answer
+ * however confidently the transcriber fills it in.
  *
- * `id` names the clip to play; see `AttemptStatus["clips"]`.
+ * `at` counts candidate silence only; the clock freezes while a rung is being
+ * spoken. `id` names the clip to play — see `AttemptStatus["clips"]`.
  */
 export const NO_ANSWER_STAGES: SilenceStage[] = [
-  { id: "takeYourTime", at: 7 },
-  { id: "easier", at: 15 },
-  { id: "noProblem", at: 30, final: true },
+  { id: "whatHappened", at: 10 },
+  { id: "didNotGet", at: 15 },
+  { id: "noProblem", at: 40, final: true },
 ];
 
 /**
