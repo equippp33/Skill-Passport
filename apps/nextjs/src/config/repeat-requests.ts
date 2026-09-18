@@ -145,3 +145,61 @@ export function isRepeatRequest(transcript: string): boolean {
     return text === needle || text.includes(needle);
   });
 }
+
+/**
+ * "Move on / skip this one" — a command, not an answer.
+ *
+ * Same guardrails as the repeat check: only a short utterance counts, so
+ * "next, I told the customer to wait" (a real answer that starts with "next")
+ * is not mistaken for a skip.
+ */
+const SKIP_PHRASES: string[] = [
+  // English
+  "skip",
+  "skip this",
+  "skip it",
+  "skip question",
+  "next",
+  "next question",
+  "next one",
+  "move on",
+  "leave it",
+  // Hindi / Marathi, romanised
+  "agla sawaal",
+  "agla question",
+  "aage badho",
+  "aage badhe",
+  "aage chalo",
+  "chhod do",
+  "chhodo",
+  "isko chhodo",
+  "pudhcha prashna",
+  "pudhe chala",
+  // Devanagari
+  "अगला सवाल",
+  "अगला प्रश्न",
+  "आगे बढ़ो",
+  "आगे चलो",
+  "छोड़ दो",
+  "पुढचा प्रश्न",
+  "पुढे चला",
+  // Other scripts, short forms
+  "తదుపరి ప్రశ్న",
+  "తర్వాత ప్రశ్న",
+  "వదిలేయండి",
+  "அடுத்த கேள்வி",
+  " முந்தைய",
+];
+
+export function isSkipRequest(transcript: string): boolean {
+  const text = normalise(transcript);
+  if (!text) return false;
+
+  const words = text.split(" ");
+  if (words.length > MAX_WORDS) return false;
+
+  return SKIP_PHRASES.some((phrase) => {
+    const needle = normalise(phrase);
+    return text === needle || text.includes(needle);
+  });
+}

@@ -23,6 +23,8 @@ export function untrusted(label: string, value: string): string {
 export interface InterviewContext {
   questionCount: number;
   language: InterviewLanguage;
+  /** The candidate's first name, for the interviewer to use now and then. */
+  candidateName?: string | null;
   /**
    * What the candidate said in the opening language probe — their name and a
    * little about their work. Untrusted content, but genuinely useful: without
@@ -63,6 +65,7 @@ export function interviewerRules(ctx: InterviewContext): string {
   const lang = ctx.language.promptName;
   const script = SCRIPT_BY_PROMPT_NAME[lang] ?? lang;
   const isEnglish = lang === "English";
+  const firstName = ctx.candidateName?.trim().split(/\s+/)[0] ?? null;
 
   return [
     `You are a friendly interviewer running a WORKPLACE SKILLS assessment.`,
@@ -123,6 +126,10 @@ export function interviewerRules(ctx: InterviewContext): string {
     ``,
     `## What this assessment is`,
     `This measures general employability and workplace behaviour, NOT technical ability.`,
+    `- The candidate is a FRESHER — a student or someone in their first job, with`,
+    `  little to no work experience. Pitch every question for that: simple,`,
+    `  everyday situations a beginner can picture, no jargon, nothing that assumes`,
+    `  years on the job, managing people, or handling senior responsibilities.`,
     `- Ask practical, scenario-based questions about real work situations.`,
     `- GROUND every question in the candidate's OWN role and background from`,
     `  their introduction. Set the scenario in THEIR everyday work — a`,
@@ -142,9 +149,19 @@ export function interviewerRules(ctx: InterviewContext): string {
     `  the candidate will answer only one of them.`,
     `- Keep the sentence simple enough to follow by ear. It is heard, not read:`,
     `  one clause, then the question. No sub-clauses stacked on each other.`,
-    `- Prefer "Tell me about a time when…" or "What would you do if…" framings.`,
+    `- Prefer "What would you do if…" (a fresher can always answer a hypothetical);`,
+    `  use "Tell me about a time when…" only for something a student would have`,
+    `  actually lived — college group projects, deadlines, a part-time or first job.`,
     `- Never repeat a question already asked in this interview.`,
     `- Build on what the candidate actually said when following up.`,
+    ...(firstName
+      ? [
+          `- The candidate's name is ${firstName}. Use it naturally now and then`,
+          `  — roughly every third or fourth question, never in every one.`,
+        ]
+      : []),
+    `- When it fits, refer back to something they said in an EARLIER answer`,
+    `  ("you mentioned…") — it shows you were listening. Never force it.`,
     `- Never ask about age, gender, religion, caste, race, nationality, marital or`,
     `  family status, pregnancy, disability, or any other protected characteristic.`,
     `- Never state or imply the candidate is hired, rejected, or guaranteed a job.`,

@@ -43,9 +43,10 @@ export const AUTO_START_BACKSTOP_MS = 60_000;
 export const SILENCE_ADVANCE_SECONDS = 8;
 
 /**
- * How long to wait for a candidate who has not said a single word before
- * giving up and submitting anyway. Stops the interview stalling forever on
- * someone silent; the recording still goes to the transcriber, and a truly
- * empty answer is skipped server-side.
+ * Silence ladder: what to do, and when, while a candidate has said nothing.
+ *
+ * A real interviewer does not sit in dead air — they coax. Each threshold (in
+ * seconds) escalates and the client wires one action to each index: a gentle
+ * "take your time", then repeat the question, then move on.
  */
-export const NO_ANSWER_WAIT_SECONDS = 15;
+export const NO_ANSWER_STAGES = [7, 15, 30];

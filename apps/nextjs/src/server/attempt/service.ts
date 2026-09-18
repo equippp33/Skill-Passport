@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, or, sql } from "drizzle-orm";
 
 import { db } from "~/server/db";
 import {
@@ -13,16 +13,9 @@ import type {
   InterviewAttempt,
   InterviewTurn,
 } from "~/server/db/schema";
-import {
-  LANGUAGE_CONFIDENCE_THRESHOLD,
-  languageFromCode,
-  resolveInterviewLanguage,
-} from "~/config/languages";
+import { resolveInterviewLanguage } from "~/config/languages";
 import type { InterviewLanguageKey } from "~/config/languages";
-import {
-  PROBE_QUESTION_TEXT,
-  PROBE_SPOKEN_LANGUAGE_CODE,
-} from "~/config/greeting";
+import { OPENING_BY_KEY } from "~/config/greeting";
 import {
   LANGUAGE_PROBE_TURN,
   WORK_SKILLS,
@@ -31,7 +24,7 @@ import {
   getWorkSkill,
 } from "~/config/work-skills";
 import type { WorkSkill, WorkSkillId } from "~/config/work-skills";
-import { isRepeatRequest } from "~/config/repeat-requests";
+import { isRepeatRequest, isSkipRequest } from "~/config/repeat-requests";
 import { aggregateSkillScores } from "~/lib/scoring";
 import { ProviderError, toUserMessage } from "~/server/services/errors";
 import {
@@ -41,7 +34,6 @@ import {
   generateInterviewSummary,
   generateQuestion,
   scoreAndMaybeFollowUp,
-  translateQuestion,
 } from "~/server/services/openai";
 import type { InterviewContext, PriorTurn } from "~/server/services/openai";
 import { generateSpeech, transcribeAudio } from "~/server/services/sarvam";
@@ -104,6 +96,8 @@ export interface CandidateDetails {
   name: string;
   email: string | null;
   phone: string | null;
+  /** Interview language chosen up front; fixed for the whole session. */
+  language: InterviewLanguageKey;
 }
 
 /**
@@ -126,6 +120,7 @@ export async function createAttempt(
       candidateName: details.name,
       candidateEmail: details.email,
       candidatePhone: details.phone,
+      language: details.language,
       status: "not_started",
     })
     .returning({ id: interviewAttemptsTable.id });
@@ -169,6 +164,7 @@ function contextFor(
   return {
     questionCount: interview.questionCount,
     language: resolveInterviewLanguage(attempt.language),
+    candidateName: attempt.candidateName,
     candidateIntroduction: introduction ?? null,
   };
 }
@@ -203,16 +199,29 @@ function toHistory(turns: InterviewTurn[]): PriorTurn[] {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Begin an attempt by creating the language probe.
+ * Begin an attempt by creating the opening turn.
+ *
+ * The candidate has already chosen their language, so the opener is asked and
+ * spoken in it from the first word. It still captures the introduction used to
+ * ground later questions (kept under `kind: "language_probe"` so
+ * `introductionFor` keeps working) — it is no longer a language probe.
  *
  * Idempotent: a refresh or double click returns the existing state rather than
- * creating a second turn. No OpenAI call happens here — the probe is fixed
- * text, because we do not yet know what language to generate in.
+ * creating a second turn. No OpenAI call — the opener is fixed per-language text.
  */
 export async function startAttempt(attemptId: string): Promise<void> {
   const attempt = await reload(attemptId);
   const existing = await getTurns(attemptId);
   if (attempt.status !== "not_started" || existing.length > 0) return;
+  if (!attempt.language) {
+    throw new AttemptError(
+      "invalid_state",
+      "No interview language was chosen for this attempt.",
+    );
+  }
+
+  const language = resolveInterviewLanguage(attempt.language);
+  const opening = OPENING_BY_KEY[language.key];
 
   const [claimed] = await db
     .update(interviewAttemptsTable)
@@ -230,7 +239,7 @@ export async function startAttempt(attemptId: string): Promise<void> {
     )
     .returning({ id: interviewAttemptsTable.id });
 
-  // Another request won the race; it created the probe.
+  // Another request won the race; it created the opener.
   if (!claimed) return;
 
   await db.insert(interviewTurnsTable).values({
@@ -238,15 +247,15 @@ export async function startAttempt(attemptId: string): Promise<void> {
     turnNumber: LANGUAGE_PROBE_TURN,
     kind: "language_probe",
     skillId: null,
-    question: PROBE_QUESTION_TEXT,
+    question: opening,
     status: "awaiting_answer",
   });
 
   await tryAttachQuestionAudio(
     attemptId,
     LANGUAGE_PROBE_TURN,
-    PROBE_QUESTION_TEXT,
-    PROBE_SPOKEN_LANGUAGE_CODE,
+    opening,
+    language.code,
   );
 }
 
@@ -327,10 +336,7 @@ export async function regenerateQuestionAudio(
   const turn = turns.find((t) => t.turnNumber === turnNumber);
   if (!turn || turn.questionAudioId) return Boolean(turn?.questionAudioId);
 
-  const code =
-    turn.kind === "language_probe" || !attempt.language
-      ? PROBE_SPOKEN_LANGUAGE_CODE
-      : resolveInterviewLanguage(attempt.language).code;
+  const code = resolveInterviewLanguage(attempt.language ?? "english").code;
 
   return tryAttachQuestionAudio(attempt.id, turnNumber, turn.question, code);
 }
@@ -612,54 +618,32 @@ async function archiveAnswerAudio(
  *
  * The pieces are transcribed IN PARALLEL, not one after another — a long
  * answer is cut into ~25-second segments, and transcribing them serially made
- * the wait scale with how long the candidate spoke (five segments meant five
- * Sarvam calls back to back). Firing them together turns that into roughly the
- * time of a single segment. Order still matters for the final transcript, so
- * the results are stitched back together in segment order regardless of which
- * finished first.
+ * the wait scale with how long the candidate spoke. Firing them together turns
+ * that into roughly the time of a single segment; results are stitched back in
+ * segment order regardless of which finished first.
  *
- * The language reported is the one from the longest-transcribing segment —
- * the opening few words of a reply are the least reliable place to judge
- * from, and a candidate who switches language mid-answer should be read as
- * whatever they mostly spoke.
+ * The language is FIXED — the candidate chose it up front — so every segment is
+ * transcribed in it rather than letting Sarvam free-guess per segment. Locking
+ * the language is also what stops the old silence-hallucination: told a language,
+ * Sarvam no longer invents a stray phrase in a random script on a silent tail.
  */
-/**
- * Longest transcribed slice wins the language vote, and a short slice in a
- * DIFFERENT language than that winner is dropped.
- *
- * Sarvam, told to detect ("unknown"), free-guesses a language per segment and
- * on a silent tail hallucinates a stray phrase in a random script — the
- * "આપણે હા ચાલો" / "achcha achcha" garbage that used to get appended to
- * answers. A real answer slice is substantial; a hallucination is short and
- * off-language. So detection still runs every turn (switching works), but the
- * junk slice is discarded and cannot corrupt the transcript or flip the
- * detected language.
- */
-const HALLUCINATION_MAX_CHARS = 40;
-
-async function transcribeSegments(answer: AnswerAudio): Promise<{
-  transcript: string;
-  languageCode: string | null;
-  languageProbability: number | null;
-}> {
+async function transcribeSegments(
+  answer: AnswerAudio,
+  languageCode: string,
+): Promise<string> {
   const settled = await Promise.all(
     answer.segments.map(async (segment) => {
       try {
         const result = await transcribeAudio({
           audio: segment,
           mimeType: answer.mimeType,
-          languageCode: "unknown",
+          languageCode,
         });
-        return {
-          ok: true as const,
-          text: result.transcript?.trim() ?? "",
-          code: result.languageCode,
-          probability: result.languageProbability,
-        };
+        return { ok: true as const, text: result.transcript?.trim() ?? "" };
       } catch (error) {
         // One bad slice must not lose the whole answer — a rollover can leave
-        // a final fragment of a fraction of a second, which is exactly the
-        // sort of thing a transcriber rejects.
+        // a final fragment of a fraction of a second, which a transcriber
+        // rejects.
         console.error(
           `[attempt] segment transcription failed: ${
             error instanceof Error ? error.message : "unknown"
@@ -670,42 +654,17 @@ async function transcribeSegments(answer: AnswerAudio): Promise<{
     }),
   );
 
-  // First pass: the longest slice decides the answer's language. It is the
-  // most real thing here — a hallucination on silence is always short.
-  let best: { code: string | null; probability: number | null; len: number } = {
-    code: null,
-    probability: null,
-    len: -1,
-  };
+  const parts: string[] = [];
   let failures = 0;
   for (const result of settled) {
     if (!result.ok) {
       failures += 1;
       continue;
     }
-    if (result.text.length > best.len) {
-      best = {
-        code: result.code,
-        probability: result.probability,
-        len: result.text.length,
-      };
-    }
+    if (result.text) parts.push(result.text);
   }
 
-  // Second pass, in segment order so the transcript reads the way it was
-  // spoken. Drop a short slice whose language differs from the winner — that
-  // is a silence hallucination, not part of the answer.
-  const parts: string[] = [];
-  for (const result of settled) {
-    if (!result.ok || !result.text) continue;
-    const offDominant =
-      best.code !== null && result.code !== null && result.code !== best.code;
-    if (offDominant && result.text.length < HALLUCINATION_MAX_CHARS) continue;
-    parts.push(result.text);
-  }
-
-  // Every slice failed: that is a real failure, and the caller should say so
-  // rather than score an empty answer.
+  // Every slice failed: a real failure — say so rather than score an empty one.
   if (failures > 0 && parts.length === 0) {
     throw new ProviderError({
       provider: "sarvam",
@@ -716,11 +675,7 @@ async function transcribeSegments(answer: AnswerAudio): Promise<{
     });
   }
 
-  return {
-    transcript: parts.join(" "),
-    languageCode: best.code,
-    languageProbability: best.probability,
-  };
+  return parts.join(" ");
 }
 
 export async function processTurn(
@@ -769,32 +724,42 @@ export async function processTurn(
       return;
     }
 
-    // --- 1. Transcribe, with detection always on ---------------------------
-    // "unknown" lets Sarvam identify the language, which is how both the
-    // initial detection and a later switch are noticed.
+    // --- 1. Transcribe in the FIXED interview language ---------------------
+    // The candidate chose it up front, so there is nothing to detect or switch;
+    // transcribing in it also stops Sarvam hallucinating on silent tails.
     //
-    // Archiving runs alongside rather than before it: the two are
-    // independent, and overlapping them keeps the turn as short as the
-    // slower of the two rather than their sum.
-    const [, transcription] = await Promise.all([
+    // Archiving runs alongside rather than before it: the two are independent,
+    // and overlapping them keeps the turn as short as the slower of the two.
+    if (!attempt.language) {
+      await failTurn(
+        attemptId,
+        turnId,
+        "No interview language is set. Please start again.",
+      );
+      return;
+    }
+    const language = resolveInterviewLanguage(attempt.language);
+    const [, transcript] = await Promise.all([
       answer
         ? archiveAnswerAudio(attemptId, turnId, answer)
         : Promise.resolve(),
-      transcribeSegments(audioRow),
+      transcribeSegments(audioRow, language.code),
     ]);
-    const { transcript, languageCode, languageProbability } = transcription;
 
-    // Diagnostic: what Sarvam actually heard, and whether we read it as a
-    // "repeat the question" request. A repeat spoken in English during a
-    // non-English interview can be mis-transcribed into the session script and
-    // slip past isRepeatRequest — this line is how we confirm that.
     console.log(
-      `[attempt] heard turn=${turn.turnNumber} lang=${languageCode} repeat=${isRepeatRequest(
+      `[attempt] heard turn=${turn.turnNumber} lang=${language.key} repeat=${isRepeatRequest(
         transcript,
       )} transcript=${JSON.stringify(transcript.slice(0, 160))}`,
     );
 
     const isProbe = turn.kind === "language_probe";
+
+    // "Skip / next question" — a command, not an answer. Only on real questions;
+    // the opening turn cannot be skipped (it captures the introduction).
+    if (!isProbe && isSkipRequest(transcript)) {
+      await skipTurn(attempt, interview, turn.turnNumber);
+      return;
+    }
 
     if (!transcript || transcript.trim().length < 2) {
       // Silence on a real question: re-ask it rather than throw a "check your
@@ -818,12 +783,8 @@ export async function processTurn(
     // understand", "what should I say?" — rather than an attempt at the
     // question? The phrase list catches the obvious ones instantly; for
     // anything subtler the model judges, so we respond and re-ask like a real
-    // interviewer instead of scoring it as the answer. The probe is never
-    // classified: its only job is to capture a language sample.
-    const detected = languageFromCode(languageCode);
-    const confident =
-      (languageProbability ?? 0) >= LANGUAGE_CONFIDENCE_THRESHOLD;
-
+    // interviewer instead of scoring it as the answer. The opening turn is
+    // never classified: its only job is to capture the introduction.
     const looksLikeRepeat = isRepeatRequest(transcript);
     const isDoubt =
       looksLikeRepeat ||
@@ -851,55 +812,19 @@ export async function processTurn(
       return;
     }
 
-    if (turn.kind === "language_probe") {
-      await completeProbe({
-        attempt,
-        interview,
-        turnId,
-        transcript,
-        languageCode,
-        detected,
-        confident,
-      });
+    if (isProbe) {
+      await completeProbe({ attempt, interview, turnId, transcript });
       return;
     }
 
-    // --- 2. A candidate who switched language is followed ------------------
-    let activeLanguage = attempt.language as InterviewLanguageKey | null;
-    if (detected && confident && detected !== activeLanguage) {
-      activeLanguage = detected;
-      await db
-        .update(interviewAttemptsTable)
-        .set({
-          language: detected,
-          languageConfidence: languageProbability ?? null,
-          updatedAt: new Date(),
-        })
-        .where(eq(interviewAttemptsTable.id, attemptId));
-      console.info(
-        `[attempt] language switched attempt=${attemptId} -> ${detected}`,
-      );
-      // The NEXT question was prepared an answer ahead, in the language just
-      // abandoned. Drop it so `handleAnsweredTurn` regenerates it in the new
-      // language — otherwise the switch only takes effect one question later,
-      // which is the "lag" that made switching look broken.
-      await discardPreparedQuestions(attemptId, turn.turnNumber);
-    }
-    if (!activeLanguage) {
-      await failTurn(
-        attemptId,
-        turnId,
-        "We could not determine your language. Please choose one and try again.",
-      );
-      return;
-    }
-
+    // Language is fixed for the whole interview (chosen up front), so there is
+    // no detection or switching — the answer is scored and we move on.
     await handleAnsweredTurn({
-      attempt: { ...attempt, language: activeLanguage },
+      attempt,
       interview,
       turn,
       transcript,
-      languageCode,
+      languageCode: language.code,
     });
   } catch (error) {
     const message =
@@ -914,212 +839,30 @@ export async function processTurn(
 }
 
 /**
- * Finish the language probe.
+ * Finish the opening turn.
  *
- * On a confident, supported detection the attempt is locked to that language
- * and the first real question is generated. Otherwise the candidate is asked
- * to choose — we never guess a language and conduct a whole interview in it.
+ * The language is already fixed (chosen up front), so this just records the
+ * candidate's introduction and delivers the first real question.
  */
 async function completeProbe(args: {
   attempt: InterviewAttempt;
   interview: Interview;
   turnId: string;
   transcript: string;
-  languageCode: string | null;
-  detected: InterviewLanguageKey | null;
-  confident: boolean;
 }): Promise<void> {
-  const { attempt, interview, turnId, transcript, languageCode } = args;
+  const { attempt, interview, turnId, transcript } = args;
 
   await db
     .update(interviewTurnsTable)
     .set({
       answerTranscript: transcript,
-      detectedLanguageCode: languageCode,
       status: "completed",
       processingStartedAt: null,
       updatedAt: new Date(),
     })
     .where(eq(interviewTurnsTable.id, turnId));
 
-  if (!args.detected || !args.confident) {
-    await db
-      .update(interviewAttemptsTable)
-      .set({
-        needsLanguageChoice: true,
-        status: "in_progress",
-        updatedAt: new Date(),
-      })
-      .where(eq(interviewAttemptsTable.id, attempt.id));
-    return;
-  }
-
-  await db
-    .update(interviewAttemptsTable)
-    .set({
-      language: args.detected,
-      languageConfidence: null,
-      needsLanguageChoice: false,
-      status: "in_progress",
-      updatedAt: new Date(),
-    })
-    .where(eq(interviewAttemptsTable.id, attempt.id));
-
   await deliverTurn(attempt.id, interview, LANGUAGE_PROBE_TURN + 1);
-}
-
-/** Candidate picked a language after detection failed. */
-export async function chooseLanguage(
-  attempt: InterviewAttempt,
-  interview: Interview,
-  languageKey: string,
-): Promise<void> {
-  const language = resolveInterviewLanguage(languageKey);
-
-  await db
-    .update(interviewAttemptsTable)
-    .set({
-      language: language.key,
-      needsLanguageChoice: false,
-      updatedAt: new Date(),
-    })
-    .where(eq(interviewAttemptsTable.id, attempt.id));
-
-  // Before anything else, and regardless of what the candidate is looking
-  // at: questions are prepared an answer ahead, so a switch has to reach
-  // past the one on screen. Anything already written for a later turn is in
-  // the language they just rejected.
-  //
-  // This used to sit below the guards further down, which meant switching
-  // while the current answer was still processing — exactly when someone
-  // realises the language is wrong — skipped it, and the next question came
-  // back in the old language.
-  await discardPreparedQuestions(attempt.id, attempt.currentQuestionNumber);
-
-  const turns = await getTurns(attempt.id);
-  const next = LANGUAGE_PROBE_TURN + 1;
-
-  // Nothing asked yet: the first real question is simply written in the
-  // language that was just chosen.
-  if (!turns.some((t) => t.turnNumber === next)) {
-    await deliverTurn(attempt.id, interview, next, false);
-    return;
-  }
-
-  // Mid-interview switch. Re-ask what is on screen right now in the new
-  // language rather than waiting for the next question — a candidate who
-  // says they cannot follow the language is telling us about the question
-  // in front of them, and leaving it there makes them answer it anyway.
-  const current = turns.find(
-    (t) => t.turnNumber === attempt.currentQuestionNumber,
-  );
-  // Only the question actually on screen can be rewritten in place; one
-  // being processed or already answered is left alone. The discard above
-  // has already dealt with everything after it either way.
-  if (!current || current.status !== "awaiting_answer") return;
-  if (current.kind === "language_probe") return;
-
-  await reaskInLanguage(attempt.id, current, language);
-}
-
-/**
- * Drop questions prepared ahead of where the candidate actually is.
- *
- * Only unanswered turns past the current one: an answered turn is part of
- * the record, and the current one is rewritten in place by
- * `reaskInLanguage` so the candidate is not left staring at a blank card.
- *
- * The voiced clips those turns pointed at are deleted too, otherwise they
- * sit in storage forever with nothing referencing them.
- */
-async function discardPreparedQuestions(
-  attemptId: string,
-  currentTurnNumber: number,
-): Promise<void> {
-  const stale = await db.query.interviewTurnsTable.findMany({
-    where: and(
-      eq(interviewTurnsTable.attemptId, attemptId),
-      gt(interviewTurnsTable.turnNumber, currentTurnNumber),
-      isNull(interviewTurnsTable.answerTranscript),
-    ),
-  });
-  if (stale.length === 0) return;
-
-  await db.delete(interviewTurnsTable).where(
-    inArray(
-      interviewTurnsTable.id,
-      stale.map((t) => t.id),
-    ),
-  );
-
-  const audioIds = stale
-    .map((t) => t.questionAudioId)
-    .filter((id): id is string => Boolean(id));
-  if (audioIds.length === 0) return;
-
-  const clips = await db.query.interviewAudioTable.findMany({
-    where: inArray(interviewAudioTable.id, audioIds),
-  });
-  await Promise.all(clips.map((clip) => deleteAudioObject(clip.storageKey)));
-  await db
-    .delete(interviewAudioTable)
-    .where(inArray(interviewAudioTable.id, audioIds));
-}
-
-/**
- * Rewrite one pending question into another language and re-voice it.
- *
- * Best-effort in both halves: if translation fails the question stays as it
- * was, which is worse than switching but far better than blanking the
- * question the candidate is looking at.
- */
-async function reaskInLanguage(
-  attemptId: string,
-  turn: InterviewTurn,
-  language: ReturnType<typeof resolveInterviewLanguage>,
-): Promise<void> {
-  // The English original is the best source to translate from — going
-  // language A -> B directly compounds whatever A already lost.
-  const source = turn.questionTranslation ?? turn.question;
-
-  let rewritten;
-  try {
-    rewritten = await translateQuestion(
-      {
-        questionCount: 0,
-        language,
-        candidateIntroduction: null,
-      },
-      source,
-    );
-  } catch (error) {
-    console.error(
-      `[attempt] re-ask translation failed turn=${turn.id}: ${
-        error instanceof Error ? error.message : "unknown"
-      }`,
-    );
-    return;
-  }
-
-  // Voiced first, then swapped in as one update. Writing the new text with
-  // the audio cleared and filling it in afterwards would leave the question
-  // briefly captioned "audio unavailable"; a null here means TTS genuinely
-  // failed, which is what the retry button is for.
-  const questionAudioId = await synthesiseQuestionAudio(
-    attemptId,
-    rewritten.question,
-    language.code,
-  );
-
-  await db
-    .update(interviewTurnsTable)
-    .set({
-      question: rewritten.question,
-      questionTranslation: rewritten.translation,
-      questionAudioId,
-      updatedAt: new Date(),
-    })
-    .where(eq(interviewTurnsTable.id, turn.id));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1529,6 +1272,38 @@ async function advanceOrFinish(
     return;
   }
   await deliverTurn(attempt.id, interview, turn.turnNumber + 1);
+}
+
+/**
+ * Skip the current question at the candidate's request.
+ *
+ * Marked completed but UNSCORED — skipping is not penalised (see the scoring
+ * note): the skill simply reads as unassessed, like one never reached. Then we
+ * move on exactly as a real answer would.
+ */
+export async function skipTurn(
+  attempt: InterviewAttempt,
+  interview: Interview,
+  turnNumber: number,
+): Promise<void> {
+  const turn = (await getTurns(attempt.id)).find(
+    (t) => t.turnNumber === turnNumber,
+  );
+  if (!turn || turn.status === "completed") return;
+
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      status: "completed",
+      answerTranscript: turn.answerTranscript ?? "(skipped)",
+      evaluation: "The candidate chose to skip this question.",
+      score: null,
+      processingStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turn.id));
+
+  await advanceOrFinish(attempt, interview, turn);
 }
 
 /**

@@ -47,7 +47,8 @@ export function useSpeechActivity({
   active,
   silenceSeconds,
   minSpeechSeconds,
-  maxWaitSeconds,
+  noAnswerStages,
+  onNoAnswerStage,
   onSilence,
 }: {
   /** The live microphone stream. Null while devices are not open. */
@@ -59,12 +60,13 @@ export function useSpeechActivity({
   /** Never fire before the answer is at least this long. */
   minSpeechSeconds: number;
   /**
-   * If the candidate never says anything, give up after this long and submit
-   * anyway rather than waiting forever — the recording still goes to the
-   * transcriber, which is more sensitive than this gate, and a truly empty one
-   * is skipped server-side.
+   * When the candidate has said nothing, escalate through these thresholds (in
+   * seconds, ascending): `onNoAnswerStage(i)` fires once as each is crossed.
+   * The caller decides what each stage does — nudge, repeat, then move on — so
+   * a silent candidate is coaxed rather than left in dead air.
    */
-  maxWaitSeconds: number;
+  noAnswerStages: number[];
+  onNoAnswerStage: (index: number) => void;
   onSilence: () => void;
 }): { secondsRemaining: number | null; noAnswerIn: number | null } {
   /**
@@ -83,6 +85,10 @@ export function useSpeechActivity({
   useEffect(() => {
     onSilenceRef.current = onSilence;
   }, [onSilence]);
+  const onNoAnswerStageRef = useRef(onNoAnswerStage);
+  useEffect(() => {
+    onNoAnswerStageRef.current = onNoAnswerStage;
+  }, [onNoAnswerStage]);
 
   useEffect(() => {
     if (!active || !stream) return;
@@ -115,6 +121,7 @@ export function useSpeechActivity({
     let lastVoiceAt = Date.now();
     let spoken = false;
     let fired = false;
+    const firedStages = new Set<number>();
 
     const timer = setInterval(() => {
       analyser.getByteTimeDomainData(samples);
@@ -153,20 +160,16 @@ export function useSpeechActivity({
         }
         remaining = left;
       } else if (!spoken) {
-        // Not a word yet — count down to giving up, and submit when it runs
-        // out so the interview is never stuck waiting on someone silent.
-        const left = Math.ceil((maxWaitSeconds * 1000 - (now - startedAt)) / 1000);
-
-        if (left <= 0) {
-          if (fired) return;
-          fired = true;
-          clearInterval(timer);
-          setSecondsRemaining(null);
-          setNoAnswerIn(null);
-          onSilenceRef.current();
-          return;
+        // Not a word yet — escalate through the nudge stages. Each fires once;
+        // the caller nudges, then repeats, then moves on. No auto-submit here.
+        const elapsedMs = now - startedAt;
+        for (let i = 0; i < noAnswerStages.length; i += 1) {
+          if (elapsedMs >= noAnswerStages[i]! * 1000 && !firedStages.has(i)) {
+            firedStages.add(i);
+            onNoAnswerStageRef.current(i);
+          }
         }
-        waiting = left;
+        waiting = Math.round(elapsedMs / 1000);
       }
 
       setSecondsRemaining(remaining);
@@ -179,7 +182,7 @@ export function useSpeechActivity({
       analyser.disconnect();
       void context.close().catch(() => undefined);
     };
-  }, [stream, active, silenceSeconds, minSpeechSeconds, maxWaitSeconds]);
+  }, [stream, active, silenceSeconds, minSpeechSeconds, noAnswerStages]);
 
   // Guarded rather than cleared: while nothing is being watched there is no
   // countdown, whatever the last sample happened to leave behind.

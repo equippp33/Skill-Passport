@@ -3,6 +3,7 @@ import { z } from "zod";
 import { PHONE_DIGITS, phoneDigits } from "~/lib/phone";
 
 import { WORK_SKILL_COUNT } from "~/config/work-skills";
+import { INTERVIEW_LANGUAGE_KEYS } from "~/config/languages";
 
 /**
  * Shared client/server validation contract.
@@ -94,4 +95,12 @@ export const candidateDetailsSchema = z.object({
     .refine((v) => v === null || v.length === PHONE_DIGITS, {
       message: "Enter a 10-digit phone number.",
     }),
+  /**
+   * The interview language, chosen up front and fixed for the whole interview.
+   * One of the supported interview languages; the whole session — questions,
+   * speech, transcription — runs in it, with no mid-interview switching.
+   */
+  language: z.enum(INTERVIEW_LANGUAGE_KEYS as [string, ...string[]], {
+    message: "Choose the language for your interview.",
+  }),
 });

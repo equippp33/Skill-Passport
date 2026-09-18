@@ -3,29 +3,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { Alert, Button, Card, CardContent, Progress } from "~/components/ui";
+import { Alert, Button, Progress } from "~/components/ui";
 import { CameraPreview } from "~/components/camera-preview";
-import { CandidateSplit } from "~/components/candidate-split";
+import { AiBlob } from "./ai-blob";
+import { Waveform } from "./waveform";
 import { t } from "~/config/messages";
 import type { Messages } from "~/config/messages";
 import type { WorkSkillId } from "~/config/work-skills";
 import { useAnswerRecorder } from "~/hooks/use-answer-recorder";
 import { useSpeechActivity } from "~/hooks/use-speech-activity";
+import { useFullscreen } from "~/hooks/use-fullscreen";
 import { useTypewriter } from "~/hooks/use-typewriter";
 import { uploadAnswerVideo } from "./upload-video";
-import { LanguagePicker } from "./language-picker";
-import type { PickableLanguage } from "./language-picker";
 import { preventCapture, useCaptureDeterrent } from "./capture-guard";
 import {
-  chooseLanguageAction,
   retryQuestionAudioAction,
+  skipTurnAction,
 } from "~/server/attempt/actions";
 import {
   MAX_ANSWER_SECONDS,
   MIN_ANSWER_BLOB_BYTES,
   AUTO_START_BACKSTOP_MS,
   MIN_ANSWER_SECONDS,
-  NO_ANSWER_WAIT_SECONDS,
+  NO_ANSWER_STAGES,
   POLL_INTERVAL_MS,
   POLL_TIMEOUT_MS,
   SILENCE_ADVANCE_SECONDS,
@@ -47,8 +47,6 @@ interface StatusResponse {
   currentQuestionNumber: number;
   totalSkills: number;
   skillNumber: number;
-  needsLanguageChoice: boolean;
-  language: string | null;
   turn: TurnView | null;
   isComplete: boolean;
   nextQuestionAudioId: string | null;
@@ -63,9 +61,8 @@ export function ActiveInterview({
   initialTurn,
   initialQuestionNumber,
   initialAttemptStatus,
-  initialNeedsLanguage,
-  languages,
-  currentLanguage,
+  fillerUrls,
+  nudgeUrl,
   m,
   languageCode,
 }: {
@@ -77,20 +74,16 @@ export function ActiveInterview({
   initialTurn: TurnView | null;
   initialQuestionNumber: number;
   initialAttemptStatus: string;
-  initialNeedsLanguage: boolean;
-  /** Offered when detection is unusable, and in the picker as a backup. */
-  languages: PickableLanguage[];
-  /** Detected (or chosen) language key; null until the probe is scored. */
-  currentLanguage: string | null;
+  /** Rotating filler clips, one played the instant an answer is sent. */
+  fillerUrls: string[];
+  /** "Take your time" nudge, played when the candidate goes quiet. */
+  nudgeUrl: string;
   m: Messages;
   /** BCP-47 code of the session language, for correct text rendering. */
   languageCode: string;
 }) {
   const router = useRouter();
 
-  // Reactive so the picker shows the detected language once the probe is
-  // scored, instead of sitting on "Detecting…" until a full reload.
-  const [language, setLanguage] = useState<string | null>(currentLanguage);
   const [turn, setTurn] = useState<TurnView | null>(initialTurn);
   const [questionNumber, setQuestionNumber] = useState(initialQuestionNumber);
   // Progress is by skill, not turn: a follow-up keeps the same skill number.
@@ -105,13 +98,60 @@ export function ActiveInterview({
     initialTurn?.status === "failed" ? initialTurn.errorMessage : null,
   );
   const [audioError, setAudioError] = useState(false);
-  /** How often the candidate left the tab. Shown to them as a nudge. */
-  /** Set when detection failed and the candidate must pick a language. */
-  const [needsLanguage, setNeedsLanguage] = useState(initialNeedsLanguage);
-  const [choosingLanguage, setChoosingLanguage] = useState(false);
   const [retryingAudio, setRetryingAudio] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  /** Candidate asked for slower speech; stays on for the rest of the session.
+   *  Declared before the audio helpers below, which read the ref when playing. */
+  const [slower, setSlower] = useState(false);
+  const slowerRef = useRef(false);
+
+  /** One filler element whose src is swapped to a random variant each turn, so
+   *  it never sounds like a recording and never fights the question audio. The
+   *  variants are pre-warmed into the browser cache so the swap plays instantly. */
+  const fillerRef = useRef<HTMLAudioElement | null>(null);
+  const lastFillerRef = useRef(-1);
+  useEffect(() => {
+    for (const url of fillerUrls) {
+      const warm = new Audio();
+      warm.preload = "auto";
+      warm.src = url;
+    }
+  }, [fillerUrls]);
+  const playFiller = useCallback(() => {
+    const el = fillerRef.current;
+    const count = fillerUrls.length;
+    if (!el || count === 0) return;
+    // Pick a variant different from the last one played.
+    let idx = Math.floor(Math.random() * count);
+    if (count > 1 && idx === lastFillerRef.current) idx = (idx + 1) % count;
+    lastFillerRef.current = idx;
+    try {
+      el.src = fillerUrls[idx]!;
+      el.currentTime = 0;
+      el.playbackRate = slowerRef.current ? 0.85 : 1;
+      void el.play().catch(() => undefined);
+    } catch {
+      // Best-effort — a blocked filler just means the old silent gap.
+    }
+  }, [fillerUrls]);
+  const stopFiller = useCallback(() => {
+    const el = fillerRef.current;
+    if (el && !el.paused) el.pause();
+  }, []);
+
+  /** The whole interview is a fullscreen stage; a gate nudges them back in. */
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const { isFullscreen, request: requestFullscreen } = useFullscreen(stageRef);
+  /** True while the interviewer is speaking (question or filler) — the blob. */
+  const [speaking, setSpeaking] = useState(false);
+  useEffect(() => {
+    slowerRef.current = slower;
+    // Apply live to anything currently playing, not just the next clip.
+    const rate = slower ? 0.85 : 1;
+    if (audioRef.current) audioRef.current.playbackRate = rate;
+    if (fillerRef.current) fillerRef.current.playbackRate = rate;
+  }, [slower]);
   /** Latest turn, read by callbacks that must not re-create on every change. */
   const turnRef = useRef<TurnView | null>(initialTurn);
   useEffect(() => {
@@ -139,7 +179,6 @@ export function ActiveInterview({
    * server ones. ponytail: console-only; delete the marks once tuned.
    */
   const questionShownAtRef = useRef(0);
-  const audioLoadStartRef = useRef(0);
   const answerEndedAtRef = useRef(0);
 
   // The answer is submitted automatically — when the candidate pauses (see the
@@ -403,7 +442,6 @@ export function ActiveInterview({
       if (!response.ok) throw new Error("status request failed");
 
       const data = (await response.json()) as StatusResponse;
-      if (data.language) setLanguage(data.language);
 
       if (data.isComplete) {
         stopPolling();
@@ -431,13 +469,6 @@ export function ActiveInterview({
       // candidate is still answering this one. Without this the download
       // starts at the moment the question appears, and they sit through it.
       warmNextQuestionAudio(data.nextQuestionAudioId);
-
-      setNeedsLanguage(data.needsLanguageChoice);
-      if (data.needsLanguageChoice) {
-        stopPolling();
-        setPhase("answering");
-        return;
-      }
 
       // Same question, back to unanswered: the candidate asked to hear it
       // again, so play it and start listening rather than waiting for a
@@ -560,6 +591,9 @@ export function ActiveInterview({
       submittingRef.current = true;
       setPhase("submitting");
       setError(null);
+      // Acknowledge out loud the instant the answer goes — this is what turns
+      // the STT->GPT->TTS gap from dead air into a reply.
+      playFiller();
 
       try {
         // One part per segment, in order. A long answer arrives as several
@@ -623,7 +657,7 @@ export function ActiveInterview({
         submittingRef.current = false;
       }
     },
-    [turn, attemptId, router, genericError, flushRecordings],
+    [turn, attemptId, router, genericError, flushRecordings, playFiller],
   );
 
   /**
@@ -659,6 +693,71 @@ export function ActiveInterview({
     submitCurrentAnswerRef.current = () => void handleNext();
   }, [handleNext]);
 
+  /* ------------------------------ tap / voice controls ----------------------- */
+
+  /** Play the "take your time" nudge (own element; drives the blob). */
+  const nudgeRef = useRef<HTMLAudioElement | null>(null);
+  const playNudge = useCallback(() => {
+    const el = nudgeRef.current;
+    if (!el) return;
+    try {
+      el.currentTime = 0;
+      el.playbackRate = slowerRef.current ? 0.85 : 1;
+      void el.play().catch(() => undefined);
+    } catch {
+      // Best-effort.
+    }
+  }, []);
+
+  /** Replay the current question audio from the start. No server call. */
+  const handleRepeat = useCallback(() => {
+    const el = audioRef.current;
+    if (!el || !turnRef.current?.questionAudioId) return;
+    try {
+      el.currentTime = 0;
+      el.playbackRate = slowerRef.current ? 0.85 : 1;
+      void el.play().catch(() => undefined);
+    } catch {
+      // Best-effort; the question is still on screen.
+    }
+  }, []);
+
+  /** Move past the current question, unscored, and poll for the next. */
+  const skipRef = useRef(false);
+  const handleSkip = useCallback(async () => {
+    const active = turnRef.current;
+    if (skipRef.current || !active) return;
+    skipRef.current = true;
+    // Block any pending auto-submit for this turn, and quiet everything.
+    submittedTurnRef.current = active.turnNumber;
+    stopFiller();
+    const el = audioRef.current;
+    if (el && !el.paused) el.pause();
+    resetRecorder();
+    setError(null);
+    setPhase("processing");
+    const result = await skipTurnAction(attemptId, active.turnNumber);
+    skipRef.current = false;
+    if (!result.ok) {
+      setError(genericError);
+      setPhase("error");
+    }
+    // Success: the phase-driven poll picks up the next question.
+  }, [attemptId, genericError, stopFiller, resetRecorder]);
+
+  /**
+   * The silence ladder: coax a quiet candidate rather than sit in dead air.
+   * 0 → gentle "take your time"; 1 → repeat the question; 2 → move on.
+   */
+  const handleNoAnswerStage = useCallback(
+    (i: number) => {
+      if (i === 0) playNudge();
+      else if (i === 1) handleRepeat();
+      else void handleSkip();
+    },
+    [playNudge, handleRepeat, handleSkip],
+  );
+
   /* ---------------------------- finished speaking ---------------------------- */
 
   /**
@@ -674,12 +773,11 @@ export function ActiveInterview({
     active: recorder.isRecording && !isBusy,
     silenceSeconds: SILENCE_ADVANCE_SECONDS,
     minSpeechSeconds: MIN_ANSWER_SECONDS,
-    maxWaitSeconds: NO_ANSWER_WAIT_SECONDS,
-    // Fires either when they go quiet after answering, or — if they never say
-    // a word at all — once the wait itself runs out. Either way `handleNext`
-    // decides what happens: a real answer is sent, near-silence surfaces the
-    // "too short, record again" prompt instead of hanging forever.
+    // They spoke, then went quiet — send the answer.
     onSilence: () => void handleNext(),
+    // They have said nothing — coax through the ladder rather than sit silent.
+    noAnswerStages: NO_ANSWER_STAGES,
+    onNoAnswerStage: (i) => void handleNoAnswerStage(i),
   });
 
   /* ------------------------------ question audio ----------------------------- */
@@ -698,6 +796,13 @@ export function ActiveInterview({
 
   useEffect(() => {
     if (phase !== "answering" || turnNumber === null) return;
+    // Hold everything behind the fullscreen gate: playing the question (and the
+    // beginAnswer fallback that follows a blocked play) must not run while the
+    // candidate is still looking at "Continue in fullscreen" — otherwise the
+    // first question is spent, and recording starts, before they have even
+    // begun. The click that enters fullscreen is also the gesture that unblocks
+    // audio, so playback here succeeds right after it.
+    if (!isFullscreen) return;
     // Exactly once per question. Re-entering this effect for any other
     // reason must never restart the audio: calling `play()` on an element
     // that has already ended plays the question again, over the candidate's
@@ -705,6 +810,8 @@ export function ActiveInterview({
     if (playedForTurnRef.current === turnNumber) return;
     playedForTurnRef.current = turnNumber;
     questionShownAtRef.current = performance.now();
+    // The question has arrived — cut the filler so the two never overlap.
+    stopFiller();
 
     let timer: ReturnType<typeof setTimeout> | null = null;
     const el = audioRef.current;
@@ -730,6 +837,7 @@ export function ActiveInterview({
 
     if (el && turnRef.current?.questionAudioId) {
       el.currentTime = 0;
+      el.playbackRate = slowerRef.current ? 0.85 : 1;
       void el.play().catch(() => {
         timer = setTimeout(beginAnswer, 400);
       });
@@ -749,7 +857,15 @@ export function ActiveInterview({
       if (timer) clearTimeout(timer);
       clearTimeout(backstop);
     };
-  }, [turnNumber, phase, beginAnswer, startQuestionCapture, playIntoRecording]);
+  }, [
+    turnNumber,
+    phase,
+    isFullscreen,
+    beginAnswer,
+    startQuestionCapture,
+    playIntoRecording,
+    stopFiller,
+  ]);
 
   async function handleRetryAudio() {
     if (!turn) return;
@@ -780,81 +896,6 @@ export function ActiveInterview({
 
   /* ---------------------------------- render --------------------------------- */
 
-  /* --------------------------- language selection -------------------------- */
-
-  async function pickLanguage(key: string) {
-    setChoosingLanguage(true);
-    setLanguage(key); // reflect the choice at once
-    const result = await chooseLanguageAction(attemptId, key);
-    setChoosingLanguage(false);
-    if (result.ok) {
-      setNeedsLanguage(false);
-      setError(null);
-      // The server has already re-asked (or delivered) a question in the
-      // chosen language. Poll picks it up and resets the recorder for it via
-      // the "new question" / "same question re-asked" branches. A plain
-      // router.refresh() only updates server props, which this client
-      // component's own state ignores — leaving the old question frozen on
-      // screen with no audio and no recording. That was the stuck screen.
-      setPhase("processing");
-    } else {
-      setError(result.error ?? genericError);
-    }
-  }
-
-  // Detection was unusable, so ask rather than conduct a whole interview in a
-  // language the candidate may not speak.
-  if (needsLanguage) {
-    return (
-      <div className="mx-auto max-w-3xl space-y-5">
-        <Card>
-          <CardContent className="space-y-4 pt-6">
-            <div>
-              <h1 className="text-lg font-medium">
-                {m.interview.chooseLanguageTitle}
-              </h1>
-              <p className="mt-1 text-sm text-content-muted">
-                {m.interview.chooseLanguageBody}
-              </p>
-            </div>
-
-            {/* A grid rather than the dropdown used mid-interview: here
-                choosing is the only thing on screen, so every option should
-                be visible at once instead of behind a click. */}
-            <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 sm:grid-cols-3">
-              {languages.map((lang) => (
-                <button
-                  key={lang.key}
-                  type="button"
-                  onClick={() => void pickLanguage(lang.key)}
-                  disabled={choosingLanguage}
-                  className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border-subtle bg-surface px-3 py-2.5 text-left transition-colors hover:border-border-strong hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <span
-                    aria-hidden
-                    className="grid size-7 shrink-0 place-items-center rounded-md bg-surface-muted text-[13px] leading-none font-semibold text-content-muted"
-                  >
-                    {lang.symbol}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium">
-                      {lang.displayName}
-                    </span>
-                    <span className="block text-xs text-content-muted">
-                      {lang.promptName}
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            {error ? <Alert tone="danger">{error}</Alert> : null}
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   if (!turn) {
     return (
       <Alert tone="danger" title={m.interview.unavailableTitle}>
@@ -863,67 +904,76 @@ export function ActiveInterview({
     );
   }
 
+  const progressLabel = t(m.interview.questionProgress, {
+    current: skillNumber,
+    total: totalSkills,
+  });
+
   return (
-    <CandidateSplit
-      step={3}
-      camera={
-        <CameraPreview
-          stream={recorder.previewStream}
-          className="h-56 w-full lg:h-full lg:aspect-auto"
-          hint="Your webcam is recorded alongside your answer."
-        />
-      }
+    <div
+      ref={stageRef}
+      className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-linear-to-b from-surface to-surface-muted"
     >
-      {/* Progress is by skill; a follow-up holds the same number. */}
-      <div>
-        <div className="flex items-baseline justify-between gap-3">
+      {/* One filler element; its src is swapped to a random variant per turn
+          (variants are pre-warmed on mount). Played the moment an answer is sent
+          to mask the processing gap, and it drives the blob too. */}
+      <audio
+        ref={fillerRef}
+        preload="auto"
+        className="hidden"
+        onPlay={() => setSpeaking(true)}
+        onEnded={() => setSpeaking(false)}
+        onPause={() => setSpeaking(false)}
+      />
+      {/* "Take your time" nudge for the silence ladder. */}
+      <audio
+        ref={nudgeRef}
+        src={nudgeUrl}
+        preload="auto"
+        className="hidden"
+        onPlay={() => setSpeaking(true)}
+        onEnded={() => setSpeaking(false)}
+        onPause={() => setSpeaking(false)}
+      />
+
+      {/* Top: progress by skill (a follow-up holds the same number). */}
+      <header className="shrink-0 px-6 pt-5">
+        <div className="mx-auto flex max-w-5xl items-baseline justify-between gap-3">
           <p className="text-sm font-medium text-content-muted">
-            {t(m.interview.questionProgress, {
-              current: skillNumber,
-              total: totalSkills,
-            })}
+            {progressLabel}
           </p>
           <p className="text-sm text-content-muted tabular-nums">
             {Math.round((skillNumber / totalSkills) * 100)}%
           </p>
         </div>
-        <div className="mt-2">
-          <Progress
-            value={skillNumber}
-            max={totalSkills}
-            label={t(m.interview.questionProgress, {
-              current: skillNumber,
-              total: totalSkills,
-            })}
-          />
+        <div className="mx-auto mt-2 max-w-5xl">
+          <Progress value={skillNumber} max={totalSkills} label={progressLabel} />
         </div>
-      </div>
+      </header>
 
-      {/* Selection, copy and context menu are blocked on the question so it
-          cannot be trivially pasted elsewhere. This is a deterrent only —
-          see the note on `useCaptureDeterrent`. */}
-      <Card
-        onCopy={preventCapture}
-        onCut={preventCapture}
-        onContextMenu={preventCapture}
-        onDragStart={preventCapture}
-        className="border-accent/20 border-t-4 border-t-accent select-none"
-      >
-        <CardContent className="space-y-4 pt-5">
-          {/* Only the opening turn is labelled. The skill each later question
-              targets is never shown — that would hand the candidate the answer
-              the question is meant to draw out on its own. */}
+      {/* Centre stage: the interviewer orb and the question it is asking. */}
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 px-6">
+        <AiBlob speaking={speaking} className="shrink-0" />
+
+        {/* Selection, copy and context menu are blocked so the question cannot
+            be trivially pasted elsewhere — a deterrent only. */}
+        <div
+          onCopy={preventCapture}
+          onCut={preventCapture}
+          onContextMenu={preventCapture}
+          onDragStart={preventCapture}
+          className="w-full max-w-3xl text-center select-none"
+        >
           {turn.kind === "language_probe" ? (
-            <p className="text-xs font-medium tracking-wide text-content-muted uppercase">
+            <p className="mb-2 text-xs font-medium tracking-wide text-content-muted uppercase">
               {m.interview.introduction}
             </p>
           ) : null}
 
-          {/* The visible text types out as it is spoken; the full question is
-              given once to assistive tech via the visually-hidden copy so a
-              screen reader is not spammed one character at a time. */}
+          {/* Typed out as it is spoken; the full text is given once to assistive
+              tech so a screen reader is not spammed one character at a time. */}
           <h1
-            className="text-xl leading-relaxed font-medium sm:text-2xl"
+            className="text-2xl leading-relaxed font-medium text-balance sm:text-3xl"
             lang={languageCode}
           >
             <span aria-hidden="true">
@@ -937,165 +987,198 @@ export function ActiveInterview({
             <span className="sr-only">{turn.question}</span>
           </h1>
 
-          {/* English rendering, for reviewers who do not read the interview
-              language. Absent when the interview is already in English. */}
           {turn.questionTranslation ? (
             <p
-              className="border-l-2 border-border-strong pl-3 text-sm leading-relaxed text-content-muted"
+              className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-content-muted"
               lang="en"
             >
               {turn.questionTranslation}
             </p>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-3">
-            {turn.questionAudioId ? (
-              <>
-                <audio
-                  ref={audioRef}
-                  src={`/api/media/${turn.questionAudioId}?attempt=${attemptId}`}
-                  // Second attempt at starting the webcam. On the first
-                  // question the media stream can still be resolving when
-                  // the effect above runs, and by playback it is ready.
-                  // Idempotent, so this is free when it already started.
-                  // Second chance to start the webcam, at the moment audio
-                  // begins: the media stream may not have been ready when
-                  // the effect ran. Idempotent, so this is free otherwise.
-                  onPlay={startQuestionCapture}
-                  onLoadStart={() => {
-                    audioLoadStartRef.current = performance.now();
-                  }}
-                  // Buffered enough to begin — on bad internet this is the
-                  // gap that leaves the text sitting there in silence.
-                  onCanPlay={() => {
-                    const from = audioLoadStartRef.current;
-                    if (from) {
-                      console.log(
-                        `[timing] client.audio-download ${Math.round(
-                          performance.now() - from,
-                        )}ms`,
-                      );
-                    }
-                  }}
-                  // Voice actually started: the number to compare against the
-                  // question appearing (questionShownAtRef).
-                  onPlaying={() => {
-                    const from = questionShownAtRef.current;
-                    if (from) {
-                      console.log(
-                        `[timing] client.question→audio ${Math.round(
-                          performance.now() - from,
-                        )}ms`,
-                      );
-                    }
-                  }}
-                  // Recording starts when the question finishes playing.
-                  // Without this the candidate is left on "getting ready".
-                  onEnded={beginAnswer}
-                  onError={() => {
-                    setAudioError(true);
-                    // Broken audio must not strand them either.
-                    beginAnswer();
-                  }}
-                  preload="auto"
-                  className="hidden"
-                />
-                {/* No replay button — a candidate who missed the question just
-                    asks ("can you repeat that?") and the interviewer replays
-                    it. */}
-              </>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm text-content-muted">
-                  {m.interview.audioUnavailable}
-                </p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleRetryAudio}
-                  disabled={retryingAudio}
-                >
-                  {retryingAudio
-                    ? m.interview.generatingAudio
-                    : m.interview.retryAudio}
-                </Button>
-              </div>
-            )}
-          </div>
-
+          {turn.questionAudioId ? (
+            <audio
+              ref={audioRef}
+              src={`/api/media/${turn.questionAudioId}?attempt=${attemptId}`}
+              onPlay={startQuestionCapture}
+              onPlaying={() => {
+                setSpeaking(true);
+                const from = questionShownAtRef.current;
+                if (from) {
+                  console.log(
+                    `[timing] client.question→audio ${Math.round(
+                      performance.now() - from,
+                    )}ms`,
+                  );
+                }
+              }}
+              // Recording starts when the question finishes playing; without
+              // this the candidate is left on "getting ready".
+              onEnded={() => {
+                setSpeaking(false);
+                beginAnswer();
+              }}
+              onError={() => {
+                setSpeaking(false);
+                setAudioError(true);
+                // Broken audio must not strand them either.
+                beginAnswer();
+              }}
+              preload="auto"
+              className="hidden"
+            />
+          ) : (
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+              <p className="text-sm text-content-muted">
+                {m.interview.audioUnavailable}
+              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRetryAudio}
+                disabled={retryingAudio}
+              >
+                {retryingAudio
+                  ? m.interview.generatingAudio
+                  : m.interview.retryAudio}
+              </Button>
+            </div>
+          )}
           {audioError ? (
-            <p className="text-sm text-content-muted">
+            <p className="mt-2 text-sm text-content-muted">
               {m.interview.audioFailed}
             </p>
           ) : null}
-        </CardContent>
-      </Card>
+        </div>
 
-      {/* Answer state — no bar, no timer, no clutter. A recording pulse while
-          they speak; a quiet spinner while the next question is prepared. */}
-      <div role="status" aria-live="polite" className="min-h-6">
-        {savingRecordings ? (
-          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-accent-soft px-4 py-3 text-sm text-accent">
+        {/* Answer state — a recording pulse while they speak; a quiet spinner
+            while the next question is prepared. */}
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex min-h-8 items-center"
+        >
+          {savingRecordings ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-full bg-accent-soft px-4 py-2 text-sm text-accent">
+              <span
+                aria-hidden="true"
+                className="size-4 shrink-0 animate-spin rounded-full border-2 border-accent/25 border-t-accent"
+              />
+              <span>{m.interview.savingRecordings}</span>
+              <Button size="sm" variant="secondary" onClick={goToResult}>
+                {m.dashboard.viewResult}
+              </Button>
+            </div>
+          ) : isBusy ? (
             <span
               aria-hidden="true"
-              className="size-4 shrink-0 animate-spin rounded-full border-2 border-accent/25 border-t-accent"
+              className="inline-block size-5 animate-spin rounded-full border-2 border-border-subtle border-t-accent"
             />
-            <span>{m.interview.savingRecordings}</span>
-            <Button size="sm" variant="secondary" onClick={goToResult}>
-              {m.dashboard.viewResult}
-            </Button>
+          ) : recorder.isRecording ? (
+            <div className="flex flex-col items-center gap-1">
+              {/* You're being heard — live bars of the candidate's own voice. */}
+              <Waveform stream={recorder.stream} active={recorder.isRecording} />
+              <p className="flex items-center gap-2 text-sm text-content-muted">
+                <span
+                  aria-hidden
+                  className="size-2.5 shrink-0 animate-pulse rounded-full bg-danger"
+                />
+                {speech.noAnswerIn !== null
+                  ? m.interview.waitingForAnswer
+                  : m.interview.keepSpeaking}
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Tap controls — same actions as the voice commands, for anyone who
+            would rather press than speak. Only on real questions (not the
+            opening), and never while a turn is being processed. */}
+        {turn.kind === "skill" ? (
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={handleRepeat}
+              disabled={isBusy}
+              className="rounded-full border border-border-subtle bg-surface px-4 py-2 text-sm font-medium text-content transition-colors hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              🔁 Repeat
+            </button>
+            <button
+              type="button"
+              onClick={() => setSlower((v) => !v)}
+              aria-pressed={slower}
+              className={`rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+                slower
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border-subtle bg-surface text-content hover:bg-surface-muted"
+              }`}
+            >
+              🐢 Slower
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSkip()}
+              disabled={isBusy}
+              className="rounded-full border border-border-subtle bg-surface px-4 py-2 text-sm font-medium text-content transition-colors hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              ⏭️ Skip
+            </button>
           </div>
-        ) : isBusy ? (
-          <span
-            aria-hidden="true"
-            className="inline-block size-4 animate-spin rounded-full border-2 border-border-subtle border-t-accent"
-          />
-        ) : recorder.isRecording ? (
-          <p className="flex items-center gap-2 text-sm text-content-muted">
-            <span
-              aria-hidden
-              className="size-2.5 shrink-0 animate-pulse rounded-full bg-danger"
-            />
-            {/* Visibly different from "keep speaking": before a first word is
-                heard, that line reads as if they already started and stalled.
-                This confirms the mic is live and waiting, not frozen. */}
-            {speech.noAnswerIn !== null
-              ? m.interview.waitingForAnswer
-              : m.interview.keepSpeaking}
-          </p>
+        ) : null}
+
+        {error ? (
+          <Alert tone="danger" title={m.interview.errorTitle} className="max-w-md">
+            <p>{error}</p>
+            <div className="mt-3">
+              <Button size="sm" variant="secondary" onClick={handleRetrySubmit}>
+                {m.interview.recordAgain}
+              </Button>
+            </div>
+          </Alert>
+        ) : null}
+
+        {recorder.errorMessage ? (
+          <Alert
+            tone="danger"
+            title={m.interview.micProblemTitle}
+            className="max-w-md"
+          >
+            {recorder.errorMessage}
+          </Alert>
         ) : null}
       </div>
 
-      {error ? (
-        <Alert tone="danger" title={m.interview.errorTitle}>
-          <p>{error}</p>
-          <div className="mt-3">
-            <Button size="sm" variant="secondary" onClick={handleRetrySubmit}>
-              {m.interview.recordAgain}
-            </Button>
-          </div>
-        </Alert>
-      ) : null}
-
-      {recorder.errorMessage ? (
-        <Alert tone="danger" title={m.interview.micProblemTitle}>
-          {recorder.errorMessage}
-        </Alert>
-      ) : null}
-
-      {/* Backup language switch — a fallback for automatic detection, kept at
-          the foot of the panel so it is in reach without being in the way. */}
-      <div className="mt-auto pt-2">
-        <LanguagePicker
-          languages={languages}
-          value={language}
-          onSelect={(key) => void pickLanguage(key)}
-          busy={choosingLanguage}
-          disabled={isBusy}
-          label={m.interview.languageLabel}
-          hint={m.interview.languageHint}
+      {/* The candidate's self-view, bottom-right like a call. */}
+      <div className="absolute right-4 bottom-4 w-40 sm:w-56">
+        <CameraPreview
+          stream={recorder.previewStream}
+          className="w-full shadow-(--shadow-raised)"
         />
       </div>
-    </CandidateSplit>
+
+      {/* Fullscreen gate. Shown until they are in fullscreen — the button is the
+          user gesture the browser needs both to go fullscreen AND to unblock
+          audio autoplay, so the first question speaks right after it. */}
+      {!isFullscreen ? (
+        <div className="absolute inset-0 z-50 grid place-items-center bg-content/85 px-6 text-center backdrop-blur-sm">
+          <div className="max-w-sm space-y-4">
+            <h2 className="text-xl font-semibold text-white">
+              Your interview is ready
+            </h2>
+            <p className="text-sm leading-relaxed text-white/80">
+              This runs in fullscreen so you can focus. Please stay in fullscreen
+              until the interview is finished.
+            </p>
+            {/* Entering fullscreen is the gesture that also unblocks audio; the
+                question-play effect (gated on `isFullscreen`) then speaks the
+                current question right after. */}
+            <Button size="lg" onClick={requestFullscreen}>
+              Continue in fullscreen
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }

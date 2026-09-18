@@ -106,6 +106,27 @@ body {
   }
 }
 
+/* The interviewer orb — a slow breath at rest, a quicker pulse while speaking. */
+@keyframes ai-blob-idle {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+@keyframes ai-blob-talk {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.13);
+  }
+}
+
 dialog[open] {
   animation: modal-in 150ms cubic-bezier(0.2, 0, 0, 1);
 }

@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 
 import { Alert, Button, FieldError, Input, Label } from "~/components/ui";
 import { PHONE_DIGITS, normalisePhoneInput } from "~/lib/phone";
+import { SELECTABLE_INTERVIEW_LANGUAGES } from "~/config/languages";
 import { beginAttemptAction } from "~/server/attempt/actions";
 import type { CandidateFormState } from "~/server/attempt/actions";
 
@@ -57,6 +58,38 @@ export function StartForm({ token }: { token: string }) {
         />
         <span id="name-error">
           <FieldError>{state.fieldErrors?.name}</FieldError>
+        </span>
+      </div>
+
+      <div>
+        <Label htmlFor="language">Interview language</Label>
+        {/* Chosen once, here, and fixed for the whole interview — every
+            question is asked and spoken in it, and there is no switching
+            mid-way. Native names so a candidate finds their own language. */}
+        <select
+          id="language"
+          name="language"
+          defaultValue=""
+          required
+          className="min-h-11 w-full rounded-lg border border-border-subtle bg-surface px-3 text-sm"
+          aria-invalid={state.fieldErrors?.language ? true : undefined}
+          aria-describedby="language-hint language-error"
+        >
+          <option value="" disabled>
+            Choose your language…
+          </option>
+          {SELECTABLE_INTERVIEW_LANGUAGES.map((lang) => (
+            <option key={lang.key} value={lang.key}>
+              {lang.displayName} · {lang.promptName}
+            </option>
+          ))}
+        </select>
+        <p id="language-hint" className="mt-1 text-xs text-content-muted">
+          The whole interview will be in this language. Pick the one you speak
+          most comfortably.
+        </p>
+        <span id="language-error">
+          <FieldError>{state.fieldErrors?.language}</FieldError>
         </span>
       </div>
 

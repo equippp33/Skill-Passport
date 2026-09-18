@@ -9,10 +9,11 @@ import {
   setAttemptCookie,
 } from "./access";
 import { candidateDetailsSchema } from "~/server/interview/validation";
+import type { InterviewLanguageKey } from "~/config/languages";
 import {
-  chooseLanguage,
   createAttempt,
   regenerateQuestionAudio,
+  skipTurn,
   startAttempt,
 } from "./service";
 
@@ -42,6 +43,7 @@ export async function beginAttemptAction(
     name: formData.get("name"),
     email: formData.get("email"),
     phone: formData.get("phone"),
+    language: formData.get("language"),
   });
 
   if (!parsed.success) {
@@ -59,6 +61,7 @@ export async function beginAttemptAction(
     name: parsed.data.name,
     email: parsed.data.email,
     phone: parsed.data.phone,
+    language: parsed.data.language as InterviewLanguageKey,
   });
 
   // The only time this token leaves the server. From here on the cookie is
@@ -83,21 +86,21 @@ export async function startAttemptAction(
   }
 }
 
-/** Used when detection was unusable and the candidate picked a language. */
-export async function chooseLanguageAction(
+/** Candidate tapped "skip" — move past the current question, unscored. */
+export async function skipTurnAction(
   attemptId: string,
-  languageKey: string,
-): Promise<{ ok: boolean; error?: string }> {
+  turnNumber: number,
+): Promise<{ ok: boolean }> {
   const found = await getAttemptForCandidate(attemptId);
-  if (!found) return { ok: false, error: "Your session has expired." };
+  if (!found) return { ok: false };
 
   try {
-    await chooseLanguage(found.attempt, found.interview, languageKey);
+    await skipTurn(found.attempt, found.interview, turnNumber);
     revalidatePath(`/attempt/${attemptId}`);
     return { ok: true };
   } catch (error) {
-    console.error("[attempt] language choice failed", error);
-    return { ok: false, error: "Could not set that language." };
+    console.error("[attempt] skip failed", error);
+    return { ok: false };
   }
 }
 

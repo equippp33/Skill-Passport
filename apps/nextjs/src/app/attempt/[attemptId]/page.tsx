@@ -4,11 +4,9 @@ import { notFound, redirect } from "next/navigation";
 import { Alert } from "~/components/ui";
 import { HeaderProfile } from "~/components/header-profile";
 import { PreventBackNavigation } from "~/components/prevent-back-navigation";
-import {
-  SELECTABLE_INTERVIEW_LANGUAGES,
-  resolveInterviewLanguage,
-} from "~/config/languages";
-import { PROBE_SPOKEN_LANGUAGE_CODE } from "~/config/greeting";
+import { resolveInterviewLanguage } from "~/config/languages";
+import type { InterviewLanguageKey } from "~/config/languages";
+import { FILLERS_BY_KEY } from "~/config/greeting";
 import { WORK_SKILL_COUNT, WORK_SKILL_IDS } from "~/config/work-skills";
 import { getAttemptForCandidate } from "~/server/attempt/access";
 import { getTurns } from "~/server/attempt/service";
@@ -80,10 +78,13 @@ export default async function AttemptPage({
   const current =
     turns.find((t) => t.turnNumber === attempt.currentQuestionNumber) ?? null;
 
-  // Before detection the question is spoken in the neutral probe language.
-  const languageCode = attempt.language
-    ? resolveInterviewLanguage(attempt.language).code
-    : PROBE_SPOKEN_LANGUAGE_CODE;
+  // The language is fixed at the start, so it is always set here.
+  const languageKey = (attempt.language ?? "english") as InterviewLanguageKey;
+  const languageCode = resolveInterviewLanguage(languageKey).code;
+  // One URL per rotating filler variant, so the client can vary them per turn.
+  const fillerUrls = FILLERS_BY_KEY[languageKey].map(
+    (_, i) => `/api/filler/${languageKey}?v=${i}`,
+  );
 
   return (
     <main className="w-full">
@@ -97,14 +98,8 @@ export default async function AttemptPage({
         }
         initialQuestionNumber={attempt.currentQuestionNumber}
         initialAttemptStatus={attempt.status}
-        initialNeedsLanguage={attempt.needsLanguageChoice}
-        languages={SELECTABLE_INTERVIEW_LANGUAGES.map((l) => ({
-          key: l.key,
-          displayName: l.displayName,
-          promptName: l.promptName,
-          symbol: l.symbol,
-        }))}
-        currentLanguage={attempt.language}
+        fillerUrls={fillerUrls}
+        nudgeUrl={`/api/nudge/${languageKey}`}
         initialTurn={
           current
             ? {
