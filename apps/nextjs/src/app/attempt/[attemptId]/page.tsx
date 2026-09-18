@@ -14,6 +14,10 @@ import { getAttemptForCandidate } from "~/server/attempt/access";
 import { getTurns } from "~/server/attempt/service";
 import { uiMessages } from "~/server/language";
 import { isOpenAIConfigured } from "~/server/services/openai";
+import {
+  beginActivitySession,
+  recentActivity,
+} from "~/server/services/dev-activity";
 import { uuidSchema } from "~/server/interview/validation";
 import { ActiveInterview } from "./active-interview";
 import { Instructions } from "./instructions";
@@ -85,6 +89,11 @@ export default async function AttemptPage({
     ? resolveInterviewLanguage(attempt.language).code
     : PROBE_SPOKEN_LANGUAGE_CODE;
 
+  // Dev readout: clears the buffer when this is a different attempt from the
+  // last one, so a sitting never shows the previous interview's calls. Must
+  // run before `recentActivity()` below. No-op outside development.
+  beginActivitySession(attempt.id);
+
   return (
     <main className="w-full">
       <HeaderProfile name={attempt.candidateName} />
@@ -98,6 +107,11 @@ export default async function AttemptPage({
         initialQuestionNumber={attempt.currentQuestionNumber}
         initialAttemptStatus={attempt.status}
         initialNeedsLanguage={attempt.needsLanguageChoice}
+        // Dev readout: seeded here so the panel is populated from the first
+        // paint rather than staying blank until the first poll. Empty outside
+        // development.
+        initialDevActivity={recentActivity()}
+        devStartedAt={attempt.startedAt?.toISOString() ?? null}
         languages={SELECTABLE_INTERVIEW_LANGUAGES.map((l) => ({
           key: l.key,
           displayName: l.displayName,

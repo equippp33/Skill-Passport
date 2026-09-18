@@ -1,5 +1,7 @@
 import "server-only";
 
+import { recordActivity } from "./dev-activity";
+
 /**
  * Wrap an async call and log how long it took.
  *
@@ -19,10 +21,20 @@ export async function timed<T>(
   detail?: () => string,
 ): Promise<T> {
   const start = performance.now();
+  // Tracked so the development readout can show a failed leg as failed. The
+  // terminal line is unchanged.
+  let ok = true;
   try {
     return await fn();
+  } catch (error) {
+    ok = false;
+    throw error;
   } finally {
     const ms = Math.round(performance.now() - start);
     console.log(`[timing] ${label} ${ms}ms${detail ? ` ${detail()}` : ""}`);
+    // Every external leg already passes through here, so this one line gives
+    // the in-browser panel brain, STT and TTS without touching their call
+    // sites. No-op outside development.
+    recordActivity(label, ms, ok);
   }
 }

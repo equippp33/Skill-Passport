@@ -15,6 +15,8 @@ import { useTypewriter } from "~/hooks/use-typewriter";
 import { uploadAnswerVideo } from "./upload-video";
 import { LanguagePicker } from "./language-picker";
 import type { PickableLanguage } from "./language-picker";
+import { DevActivityPanel } from "~/components/dev-activity-panel";
+import type { ActivityEvent } from "~/components/dev-activity-panel";
 import { preventCapture, useCaptureDeterrent } from "./capture-guard";
 import {
   chooseLanguageAction,
@@ -52,6 +54,8 @@ interface StatusResponse {
   turn: TurnView | null;
   isComplete: boolean;
   nextQuestionAudioId: string | null;
+  /** Development only — empty in production. See `DevActivityPanel`. */
+  devActivity?: ActivityEvent[];
 }
 
 type Phase = "answering" | "submitting" | "processing" | "error";
@@ -64,6 +68,8 @@ export function ActiveInterview({
   initialQuestionNumber,
   initialAttemptStatus,
   initialNeedsLanguage,
+  initialDevActivity,
+  devStartedAt,
   languages,
   currentLanguage,
   m,
@@ -78,6 +84,10 @@ export function ActiveInterview({
   initialQuestionNumber: number;
   initialAttemptStatus: string;
   initialNeedsLanguage: boolean;
+  /** Development-only service readout; always empty in production. */
+  initialDevActivity: ActivityEvent[];
+  /** Attempt start (ISO) for the dev panel's interview clock. */
+  devStartedAt: string | null;
   /** Offered when detection is unusable, and in the picker as a backup. */
   languages: PickableLanguage[];
   /** Detected (or chosen) language key; null until the probe is scored. */
@@ -94,7 +104,9 @@ export function ActiveInterview({
   const [turn, setTurn] = useState<TurnView | null>(initialTurn);
   const [questionNumber, setQuestionNumber] = useState(initialQuestionNumber);
   // Progress is by skill, not turn: a follow-up keeps the same skill number.
-  const [skillNumber, setSkillNumber] = useState(Math.max(1, initialSkillNumber));
+  const [skillNumber, setSkillNumber] = useState(
+    Math.max(1, initialSkillNumber),
+  );
   const [phase, setPhase] = useState<Phase>(
     initialAttemptStatus === "processing" ||
       initialTurn?.status === "processing"
@@ -105,6 +117,17 @@ export function ActiveInterview({
     initialTurn?.status === "failed" ? initialTurn.errorMessage : null,
   );
   const [audioError, setAudioError] = useState(false);
+  /**
+   * Which service served each leg — development only.
+   *
+   * The server sends an empty list outside development, and the render
+   * below is additionally gated on NODE_ENV, so this cannot surface to a
+   * candidate.
+   */
+  const [devActivity, setDevActivity] =
+    useState<ActivityEvent[]>(initialDevActivity);
+  /** Dismissed with the panel's cross; comes back on reload. */
+  const [devPanelClosed, setDevPanelClosed] = useState(false);
   /** How often the candidate left the tab. Shown to them as a nudge. */
   /** Set when detection failed and the candidate must pick a language. */
   const [needsLanguage, setNeedsLanguage] = useState(initialNeedsLanguage);
@@ -404,6 +427,22 @@ export function ActiveInterview({
 
       const data = (await response.json()) as StatusResponse;
       if (data.language) setLanguage(data.language);
+      // Dev readout. Empty in production, so this is a no-op there.
+      // Dev readout only, and deliberately not a plain assignment: the server
+      // sends `[]` in production, an empty array is truthy, and a fresh array
+      // identity on every poll would re-render the whole interview once a
+      // second for
+      // every candidate. Skip empties, and in development replace only when
+      // the tail actually moved — returning `prev` makes React bail out.
+      const next = data.devActivity;
+      if (next && next.length > 0) {
+        setDevActivity((prev) =>
+          prev.length === next.length &&
+          prev[prev.length - 1]?.at === next[next.length - 1]?.at
+            ? prev
+            : next,
+        );
+      }
 
       if (data.isComplete) {
         stopPolling();
@@ -1096,6 +1135,19 @@ export function ActiveInterview({
           hint={m.interview.languageHint}
         />
       </div>
+
+      {/* Which service served each leg — development only.
+          `process.env.NODE_ENV` is inlined at build time, so in a production
+          bundle this whole branch is dead code and the panel is not even
+          shipped. The server independently sends an empty list outside
+          development, so there are two reasons a candidate never sees it. */}
+      {process.env.NODE_ENV === "development" && !devPanelClosed ? (
+        <DevActivityPanel
+          events={devActivity}
+          startedAt={devStartedAt}
+          onClose={() => setDevPanelClosed(true)}
+        />
+      ) : null}
     </CandidateSplit>
   );
 }

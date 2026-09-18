@@ -15,6 +15,37 @@ export function formatDuration(totalSeconds: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+/**
+ * How long something took, in words: `24 min`, `1 hr 5 min`, `48 sec`.
+ *
+ * Deliberately not `formatDuration`'s `m:ss` — that reads as a clip length,
+ * and a 75-minute interview rendering as `75:12` invites being misread as
+ * hours. Returns an em dash when either end is missing (an interview still in
+ * progress has no completion time) or when the clock ran backwards.
+ */
+export function formatSpan(
+  from: Date | string | null,
+  to: Date | string | null,
+): string {
+  if (!from || !to) return "—";
+  const start = typeof from === "string" ? new Date(from) : from;
+  const end = typeof to === "string" ? new Date(to) : to;
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return "—";
+  }
+
+  const seconds = Math.floor((end.getTime() - start.getTime()) / 1000);
+  if (seconds < 0) return "—";
+  if (seconds < 60) return `${seconds} sec`;
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours} hr` : `${hours} hr ${rest} min`;
+}
+
 export function formatDate(value: Date | string | null): string {
   if (!value) return "—";
   const date = typeof value === "string" ? new Date(value) : value;

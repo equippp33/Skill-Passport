@@ -49,6 +49,8 @@ import { timed } from "~/server/services/timing";
 import { loadAudioBytes, storeAudio } from "~/server/interview/audio";
 import { deleteAudioObject } from "~/server/interview/storage";
 import { generateToken } from "~/server/admin/service";
+import { recentActivity } from "~/server/services/dev-activity";
+import type { ActivityEvent } from "~/server/services/dev-activity";
 
 /**
  * Candidate attempt orchestration.
@@ -1552,9 +1554,7 @@ async function handleAnsweredTurn(args: {
 
   const skillId = turn.skillId as WorkSkillId | null;
   const eligible =
-    !turn.isFollowUp &&
-    !!skillId &&
-    interview.followUpSkills.includes(skillId);
+    !turn.isFollowUp && !!skillId && interview.followUpSkills.includes(skillId);
 
   // --- Eligible primary: score AND decide the follow-up in one call. --------
   // This is the one path with a provider call on the critical path (the
@@ -1773,6 +1773,12 @@ export interface AttemptStatus {
     errorMessage: string | null;
     skillId: WorkSkillId | null;
   } | null;
+  /**
+   * Which service served each leg (brain, STT, TTS) recently. Development
+   * only — always an empty array in production, so it never reaches a real
+   * candidate's browser. See `~/server/services/dev-activity`.
+   */
+  devActivity: ActivityEvent[];
 }
 
 /**
@@ -1846,6 +1852,7 @@ export async function getAttemptStatus(
           skillId: (current.skillId as WorkSkillId | null) ?? null,
         }
       : null,
+    devActivity: recentActivity(),
   };
 }
 

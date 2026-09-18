@@ -88,9 +88,6 @@ export default async function AdminReportsPage() {
                         report.language,
                       )}{" "}
                       · {formatDate(report.completedAt ?? report.createdAt)}
-                      {report.awayCount > 0
-                        ? ` · left tab ${report.awayCount}×`
-                        : ""}
                     </p>
                   </div>
 

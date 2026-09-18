@@ -24,6 +24,19 @@ export default async function AdminLayout({
   const admin = await requireAdmin("/admin");
   const m = uiMessages();
 
+  /**
+   * The development provider readout, imported only when it will be used.
+   *
+   * A static `import` of a client component from a server component registers
+   * it in the client manifest whether or not it ever renders — gating just the
+   * JSX shipped the whole panel to production. Importing inside a branch the
+   * bundler can fold to `false` keeps it out of the build entirely.
+   */
+  const DevActivityDock =
+    process.env.NODE_ENV === "development"
+      ? (await import("~/components/dev-activity-dock")).DevActivityDock
+      : null;
+
   return (
     <div className="min-h-screen">
       <a
@@ -60,13 +73,12 @@ export default async function AdminLayout({
           <AdminSidebar mobile />
         </header>
 
-        <main
-          id="main"
-          className="w-full space-y-4 px-4 py-4 sm:px-6 lg:px-8"
-        >
+        <main id="main" className="w-full space-y-4 px-4 py-4 sm:px-6 lg:px-8">
           {children}
         </main>
       </div>
+
+      {DevActivityDock ? <DevActivityDock /> : null}
     </div>
   );
 }

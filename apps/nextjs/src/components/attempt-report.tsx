@@ -13,7 +13,12 @@ import type { WorkSkillId } from "~/config/work-skills";
 import type { InterviewAttempt, InterviewTurn } from "~/server/db/schema";
 import { aggregateSkillScores } from "~/lib/scoring";
 import { spokenLanguages } from "~/lib/spoken-languages";
-import { formatDate, formatDateTime, formatDuration } from "~/lib/utils";
+import {
+  formatDate,
+  formatDateTime,
+  formatDuration,
+  formatSpan,
+} from "~/lib/utils";
 
 /**
  * The interview report.
@@ -90,11 +95,11 @@ export function AttemptReport({
                   : "—"
               }
             />
+            {/* Wall-clock from first question to submission, so a rushed or
+                an abandoned-and-resumed sitting is visible at a glance. */}
             <Detail
-              label="Left the tab"
-              value={
-                attempt.awayCount > 0 ? `${attempt.awayCount} times` : "no"
-              }
+              label="Duration"
+              value={formatSpan(attempt.startedAt, attempt.completedAt)}
             />
             <Detail label="Completed" value={formatDate(attempt.completedAt)} />
           </CardContent>
