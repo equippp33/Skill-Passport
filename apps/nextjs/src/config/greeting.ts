@@ -23,7 +23,7 @@ import type { InterviewLanguageKey } from "./languages";
 export const PROBE_SPOKEN_LANGUAGE_CODE = INTERVIEW_LANGUAGES.english.code;
 
 export const PROBE_SPOKEN_TEXT =
-  "Hello, and welcome. Let's start with something easy — what do you " +
+  "Hello {name}, and welcome. Let's start with something easy — what do you " +
   "enjoy most about what you are doing right now?";
 
 /**
@@ -71,9 +71,6 @@ export const PROBE_PROMPTS: { code: string; text: string }[] = [
   },
 ];
 
-/** Stored as the probe turn's question text. */
-export const PROBE_QUESTION_TEXT = PROBE_SPOKEN_TEXT;
-
 /* -------------------------------------------------------------------------- */
 /*                        Spoken openers, per language                        */
 /* -------------------------------------------------------------------------- */
@@ -97,25 +94,45 @@ export const PROBE_QUESTION_BY_LANGUAGE: Record<InterviewLanguageKey, string> =
   {
     english: PROBE_SPOKEN_TEXT,
     hindi:
-      "नमस्ते, आपका स्वागत है। शुरुआत कुछ आसान से करते हैं — अभी आप जो कर रहे हैं, उसमें आपको सबसे अच्छा क्या लगता है?",
+      "नमस्ते {name}, आपका स्वागत है। शुरुआत कुछ आसान से करते हैं — अभी आप जो कर रहे हैं, उसमें आपको सबसे अच्छा क्या लगता है?",
     marathi:
-      "नमस्कार, तुमचं स्वागत आहे. सुरुवात सोप्या गोष्टीने करूया — सध्या तुम्ही जे करताय, त्यात तुम्हाला सगळ्यात जास्त काय आवडतं?",
+      "नमस्कार {name}, तुमचं स्वागत आहे. सुरुवात सोप्या गोष्टीने करूया — सध्या तुम्ही जे करताय, त्यात तुम्हाला सगळ्यात जास्त काय आवडतं?",
     bengali:
-      "নমস্কার, আপনাকে স্বাগতম। সহজ কিছু দিয়েই শুরু করি — এখন আপনি যা করছেন, তার মধ্যে আপনার সবচেয়ে ভালো কী লাগে?",
+      "নমস্কার {name}, আপনাকে স্বাগতম। সহজ কিছু দিয়েই শুরু করি — এখন আপনি যা করছেন, তার মধ্যে আপনার সবচেয়ে ভালো কী লাগে?",
     gujarati:
-      "નમસ્તે, તમારું સ્વાગત છે. શરૂઆત કંઈક સરળથી કરીએ — અત્યારે તમે જે કરો છો, તેમાં તમને સૌથી વધારે શું ગમે છે?",
+      "નમસ્તે {name}, તમારું સ્વાગત છે. શરૂઆત કંઈક સરળથી કરીએ — અત્યારે તમે જે કરો છો, તેમાં તમને સૌથી વધારે શું ગમે છે?",
     kannada:
-      "ನಮಸ್ಕಾರ, ಸ್ವಾಗತ. ಸುಲಭವಾದ ವಿಷಯದಿಂದಲೇ ಶುರು ಮಾಡೋಣ — ಈಗ ನೀವು ಏನು ಮಾಡ್ತಿದ್ದೀರೋ, ಅದರಲ್ಲಿ ನಿಮಗೆ ಅತೀ ಹೆಚ್ಚು ಇಷ್ಟವಾಗೋದು ಏನು?",
+      "ನಮಸ್ಕಾರ {name}, ಸ್ವಾಗತ. ಸುಲಭವಾದ ವಿಷಯದಿಂದಲೇ ಶುರು ಮಾಡೋಣ — ಈಗ ನೀವು ಏನು ಮಾಡ್ತಿದ್ದೀರೋ, ಅದರಲ್ಲಿ ನಿಮಗೆ ಅತೀ ಹೆಚ್ಚು ಇಷ್ಟವಾಗೋದು ಏನು?",
     malayalam:
-      "നമസ്കാരം, സ്വാഗതം. എളുപ്പമുള്ള ഒരു ചോദ്യത്തിൽ തുടങ്ങാം — ഇപ്പോൾ നിങ്ങൾ ചെയ്യുന്നതിൽ ഏറ്റവും ഇഷ്ടം എന്താണ്?",
-    odia: "ନମସ୍କାର, ସ୍ୱାଗତ। ସହଜ କିଛିରୁ ଆରମ୍ଭ କରିବା — ଏବେ ଆପଣ ଯାହା କରୁଛନ୍ତି, ସେଥିରେ ଆପଣଙ୍କୁ ସବୁଠାରୁ ଭଲ କଣ ଲାଗେ?",
+      "നമസ്കാരം {name}, സ്വാഗതം. എളുപ്പമുള്ള ഒരു ചോദ്യത്തിൽ തുടങ്ങാം — ഇപ്പോൾ നിങ്ങൾ ചെയ്യുന്നതിൽ ഏറ്റവും ഇഷ്ടം എന്താണ്?",
+    odia: "ନମସ୍କାର {name}, ସ୍ୱାଗତ। ସହଜ କିଛିରୁ ଆରମ୍ଭ କରିବା — ଏବେ ଆପଣ ଯାହା କରୁଛନ୍ତି, ସେଥିରେ ଆପଣଙ୍କୁ ସବୁଠାରୁ ଭଲ କଣ ଲାଗେ?",
     punjabi:
-      "ਸਤ ਸ੍ਰੀ ਅਕਾਲ, ਤੁਹਾਡਾ ਸੁਆਗਤ ਹੈ। ਸ਼ੁਰੂਆਤ ਕਿਸੇ ਸੌਖੀ ਗੱਲ ਤੋਂ ਕਰਦੇ ਹਾਂ — ਹੁਣ ਤੁਸੀਂ ਜੋ ਕਰ ਰਹੇ ਹੋ, ਉਸ ਵਿੱਚ ਤੁਹਾਨੂੰ ਸਭ ਤੋਂ ਵੱਧ ਕੀ ਪਸੰਦ ਹੈ?",
+      "ਸਤ ਸ੍ਰੀ ਅਕਾਲ {name}, ਤੁਹਾਡਾ ਸੁਆਗਤ ਹੈ। ਸ਼ੁਰੂਆਤ ਕਿਸੇ ਸੌਖੀ ਗੱਲ ਤੋਂ ਕਰਦੇ ਹਾਂ — ਹੁਣ ਤੁਸੀਂ ਜੋ ਕਰ ਰਹੇ ਹੋ, ਉਸ ਵਿੱਚ ਤੁਹਾਨੂੰ ਸਭ ਤੋਂ ਵੱਧ ਕੀ ਪਸੰਦ ਹੈ?",
     tamil:
-      "வணக்கம், வரவேற்கிறோம். ஏதாவது சுலபமானதுல ஆரம்பிக்கலாம் — இப்போ நீங்க பண்றதுல உங்களுக்கு எது ரொம்ப பிடிக்கும்?",
+      "வணக்கம் {name}, வரவேற்கிறோம். ஏதாவது சுலபமானதுல ஆரம்பிக்கலாம் — இப்போ நீங்க பண்றதுல உங்களுக்கு எது ரொம்ப பிடிக்கும்?",
     telugu:
-      "నమస్కారం, స్వాగతం. ఏదైనా సులభమైన దాంతో మొదలుపెడదాం — ఇప్పుడు మీరు చేస్తున్న దాంట్లో మీకు బాగా నచ్చేది ఏంటి?",
+      "నమస్కారం {name}, స్వాగతం. ఏదైనా సులభమైన దాంతో మొదలుపెడదాం — ఇప్పుడు మీరు చేస్తున్న దాంట్లో మీకు బాగా నచ్చేది ఏంటి?",
   };
+
+/**
+ * The opener with the candidate's name in it.
+ *
+ * Every opener carries a `{name}` slot right after the greeting, which is
+ * where a name falls naturally in all eleven of these languages — "नमस्ते
+ * Priya, आपका स्वागत है". The very first thing a nervous candidate hears is
+ * their own name, which is the cheapest reassurance there is.
+ *
+ * The space goes with the slot when there is no name to put in it, so an
+ * attempt created without one still reads as ordinary speech rather than
+ * "Hello , and welcome".
+ */
+export function openerFor(
+  language: InterviewLanguageKey,
+  name: string | null,
+): string {
+  const template = PROBE_QUESTION_BY_LANGUAGE[language];
+  return name ? template.replace("{name}", name) : template.replace(" {name}", "");
+}
 
 /**
  * Said when the candidate answers in a language they did not choose.

@@ -8,9 +8,12 @@ import {
   TRANSLATED_LANGUAGE_KEYS,
   resolveLanguage,
 } from "~/config/languages";
+import type { InterviewLanguageKey } from "~/config/languages";
 import {
   PROBE_SPOKEN_LANGUAGE_CODE,
+  PROBE_QUESTION_BY_LANGUAGE,
   PROBE_SPOKEN_TEXT,
+  openerFor,
 } from "~/config/greeting";
 import { MESSAGES, t } from "~/config/messages";
 import { isRepeatRequest, phraseIntent } from "~/config/repeat-requests";
@@ -135,9 +138,33 @@ describe("language probe opener", () => {
   // a repeat of the form they had just filled in. It is a warm-up now: one
   // easy, open question that gets them talking.
   it("is one short, easy, open question", () => {
-    expect(PROBE_SPOKEN_TEXT.toLowerCase()).not.toMatch(/name/);
-    expect(PROBE_SPOKEN_TEXT.split("?")).toHaveLength(2);
-    expect(PROBE_SPOKEN_TEXT.split(/\s+/).length).toBeLessThan(35);
+    const spoken = openerFor("english", "Priya");
+    expect(spoken.toLowerCase()).not.toMatch(/your name/);
+    expect(spoken.split("?")).toHaveLength(2);
+    expect(spoken.split(/\s+/).length).toBeLessThan(35);
+  });
+
+  // The name goes in the greeting, where it falls naturally in all eleven
+  // languages — and the slot must never survive into something spoken aloud.
+  it("greets every candidate by name, in every language", () => {
+    for (const key of Object.keys(
+      PROBE_QUESTION_BY_LANGUAGE,
+    ) as InterviewLanguageKey[]) {
+      expect(PROBE_QUESTION_BY_LANGUAGE[key]).toContain("{name}");
+      expect(openerFor(key, "Priya")).toContain("Priya");
+      expect(openerFor(key, "Priya")).not.toContain("{name}");
+    }
+  });
+
+  // An attempt created without a usable name still has to read as speech.
+  it("reads naturally when there is no name", () => {
+    for (const key of Object.keys(
+      PROBE_QUESTION_BY_LANGUAGE,
+    ) as InterviewLanguageKey[]) {
+      const spoken = openerFor(key, null);
+      expect(spoken).not.toContain("{name}");
+      expect(spoken).not.toMatch(/\s,/);
+    }
   });
 });
 

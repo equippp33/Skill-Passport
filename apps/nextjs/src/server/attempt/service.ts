@@ -24,7 +24,7 @@ import {
 } from "~/config/languages";
 import type { InterviewLanguageKey } from "~/config/languages";
 import {
-  PROBE_QUESTION_BY_LANGUAGE,
+  openerFor,
   PROBE_SPOKEN_LANGUAGE_CODE,
   WRONG_LANGUAGE_NOTICE,
 } from "~/config/greeting";
@@ -181,8 +181,23 @@ function contextFor(
   return {
     questionCount: interview.questionCount,
     language: resolveInterviewLanguage(attempt.language),
+    candidateName: firstNameOf(attempt.candidateName),
     candidateIntroduction: introduction ?? null,
   };
+}
+
+/**
+ * What to actually call someone, from the full name they typed in.
+ *
+ * The first word, because "Priya Sharma, tell me about a time..." is a summons
+ * and not a conversation. Capped and stripped of punctuation: this is free
+ * text a candidate typed, it is about to be spoken aloud by TTS, and a name
+ * that is forty characters of symbols is not a name.
+ */
+function firstNameOf(fullName: string): string | null {
+  const first = fullName.trim().split(/\s+/)[0] ?? "";
+  const cleaned = first.replace(/[^\p{L}\p{M}'-]/gu, "").slice(0, 32);
+  return cleaned.length >= 2 ? cleaned : null;
 }
 
 /**
@@ -302,7 +317,7 @@ async function startAttemptInner(
   // Another request won the race; it created the probe.
   if (!claimed) return;
 
-  const opener = PROBE_QUESTION_BY_LANGUAGE[language.key];
+  const opener = openerFor(language.key, firstNameOf(attempt.candidateName));
 
   await db.insert(interviewTurnsTable).values({
     attemptId,

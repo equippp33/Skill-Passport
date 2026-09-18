@@ -34,7 +34,7 @@ import {
   startAttempt,
   submitAnswer,
 } from "~/server/attempt/service";
-import { PROBE_QUESTION_BY_LANGUAGE } from "~/config/greeting";
+import { openerFor } from "~/config/greeting";
 import { LANGUAGE_PROBE_TURN } from "~/config/work-skills";
 
 /**
@@ -235,8 +235,10 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
     expect(attempt?.language).toBe("hindi");
     expect(attempt?.needsLanguageChoice).toBe(false);
 
+    // Greeted by their own first name, in the language they chose.
     const turns = await getTurns(attemptId);
-    expect(turns[0]!.question).toBe(PROBE_QUESTION_BY_LANGUAGE.hindi);
+    expect(turns[0]!.question).toBe(openerFor("hindi", "Candidate"));
+    expect(turns[0]!.question).toContain("Candidate");
   });
 
   it("is idempotent when started twice", async () => {
