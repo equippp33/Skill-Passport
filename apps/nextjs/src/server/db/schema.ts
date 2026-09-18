@@ -183,6 +183,9 @@ export const interviewAttemptsTable = pgTable(
     candidateName: text("candidate_name").notNull(),
     candidateEmail: text("candidate_email"),
     candidatePhone: text("candidate_phone"),
+    /** The candidate's course/field, from the start form. Grounds questions and
+     *  lets the first one be prepared before the interview begins. */
+    candidateCourse: text("candidate_course"),
 
     /**
      * Detected from the candidate's first spoken answer, then used for every

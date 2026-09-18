@@ -24,7 +24,11 @@ import {
   getWorkSkill,
 } from "~/config/work-skills";
 import type { WorkSkill, WorkSkillId } from "~/config/work-skills";
-import { isRepeatRequest, isSkipRequest } from "~/config/repeat-requests";
+import {
+  isRepeatRequest,
+  isSkipRequest,
+  isSlowerRequest,
+} from "~/config/repeat-requests";
 import { aggregateSkillScores } from "~/lib/scoring";
 import { ProviderError, toUserMessage } from "~/server/services/errors";
 import {
@@ -98,6 +102,8 @@ export interface CandidateDetails {
   phone: string | null;
   /** Interview language chosen up front; fixed for the whole session. */
   language: InterviewLanguageKey;
+  /** Course / field of study, for grounding and pre-preparing questions. */
+  course: string | null;
 }
 
 /**
@@ -120,6 +126,7 @@ export async function createAttempt(
       candidateName: details.name,
       candidateEmail: details.email,
       candidatePhone: details.phone,
+      candidateCourse: details.course,
       language: details.language,
       status: "not_started",
     })
@@ -165,6 +172,7 @@ function contextFor(
     questionCount: interview.questionCount,
     language: resolveInterviewLanguage(attempt.language),
     candidateName: attempt.candidateName,
+    candidateCourse: attempt.candidateCourse,
     candidateIntroduction: introduction ?? null,
   };
 }
@@ -212,7 +220,14 @@ function toHistory(turns: InterviewTurn[]): PriorTurn[] {
 export async function startAttempt(attemptId: string): Promise<void> {
   const attempt = await reload(attemptId);
   const existing = await getTurns(attemptId);
-  if (attempt.status !== "not_started" || existing.length > 0) return;
+  // Guard on the OPENER specifically, not "any turn" — the first question may
+  // already have been prepared ahead by `prewarmFirstQuestion` while the
+  // candidate was on the device-check screen, and that must not stop the
+  // opener from being created here.
+  const openerExists = existing.some(
+    (turn) => turn.turnNumber === LANGUAGE_PROBE_TURN,
+  );
+  if (attempt.status !== "not_started" || openerExists) return;
   if (!attempt.language) {
     throw new AttemptError(
       "invalid_state",
@@ -259,6 +274,38 @@ export async function startAttempt(attemptId: string): Promise<void> {
   );
 }
 
+/**
+ * Prepare the first real question WHILE the candidate is still on the device
+ * check, so it is ready the instant they finish the opening turn.
+ *
+ * Grounded in the course they entered on the form — the intro answer does not
+ * exist yet, so this one question trades intro-grounding for a zero-wait start;
+ * every later question still uses the intro and prior answers. Best-effort: if
+ * it fails, the question is simply generated the normal way when reached.
+ */
+export async function prewarmFirstQuestion(
+  attempt: InterviewAttempt,
+  interview: Interview,
+): Promise<void> {
+  if (!attempt.language || attempt.status !== "not_started") return;
+  const existing = await getTurns(attempt.id);
+  if (existing.length > 0) return; // already started or already prewarmed
+
+  try {
+    await generateAndInsertQuestion(
+      attempt.id,
+      interview,
+      LANGUAGE_PROBE_TURN + 1,
+    );
+  } catch (error) {
+    console.error(
+      `[attempt] prewarm failed attempt=${attempt.id}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /*                              Question audio                                */
 /* -------------------------------------------------------------------------- */
@@ -280,9 +327,10 @@ async function synthesiseQuestionAudio(
   attemptId: string,
   text: string,
   languageCode: string,
+  pace?: number,
 ): Promise<string | null> {
   try {
-    const speech = await generateSpeech(text, { languageCode });
+    const speech = await generateSpeech(text, { languageCode, pace });
     return await timed("r2.store.question", () =>
       storeAudio({
         attemptId,
@@ -528,6 +576,48 @@ async function speakDoubtResponse(
   if (previousAudioId) await discardAudioClip(previousAudioId);
 }
 
+/**
+ * Re-voice the CURRENT question slower, at the candidate's request.
+ *
+ * Same question text — only the audio changes (a lower TTS pace). Falls back to
+ * a plain replay if the slow clip cannot be made.
+ */
+async function revoiceSlower(
+  attempt: InterviewAttempt,
+  turn: InterviewTurn,
+): Promise<void> {
+  const language = resolveInterviewLanguage(attempt.language ?? "english");
+  const audioId = await synthesiseQuestionAudio(
+    attempt.id,
+    turn.question,
+    language.code,
+    0.7, // noticeably slower than the default 0.9
+  );
+  if (!audioId) {
+    await repeatTurn(attempt.id, turn.id);
+    return;
+  }
+  const previousAudioId = turn.questionAudioId;
+
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      questionAudioId: audioId,
+      status: "awaiting_answer",
+      errorMessage: null,
+      processingStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turn.id));
+
+  await db
+    .update(interviewAttemptsTable)
+    .set({ status: "in_progress", updatedAt: new Date() })
+    .where(eq(interviewAttemptsTable.id, attempt.id));
+
+  if (previousAudioId) await discardAudioClip(previousAudioId);
+}
+
 async function failTurn(
   attemptId: string,
   turnId: string,
@@ -758,6 +848,12 @@ export async function processTurn(
     // the opening turn cannot be skipped (it captures the introduction).
     if (!isProbe && isSkipRequest(transcript)) {
       await skipTurn(attempt, interview, turn.turnNumber);
+      return;
+    }
+
+    // "Say it slower" — re-voice the same question at a lower pace.
+    if (!isProbe && isSlowerRequest(transcript)) {
+      await revoiceSlower(attempt, turn);
       return;
     }
 

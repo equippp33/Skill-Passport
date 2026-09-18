@@ -203,3 +203,54 @@ export function isSkipRequest(transcript: string): boolean {
     return text === needle || text.includes(needle);
   });
 }
+
+/**
+ * "Say it slower" — a command. The current question is re-voiced at a slower
+ * pace. Same short-utterance guard as the others.
+ */
+const SLOWER_PHRASES: string[] = [
+  // English
+  "slowly",
+  "slower",
+  "slow down",
+  "speak slowly",
+  "say it slowly",
+  "too fast",
+  "bit slow",
+  // Hindi / Marathi, romanised
+  "dheere",
+  "dheere",
+  "dheere boliye",
+  "dheere bolo",
+  "aaram se boliye",
+  "halu bola",
+  "halu bola na",
+  "savkash",
+  "savkash bola",
+  // Devanagari
+  "धीरे",
+  "धीरे बोलिए",
+  "धीरे बोलो",
+  "हळू बोला",
+  "सावकाश",
+  "सावकाश बोला",
+  // Other scripts
+  "నెమ్మదిగా",
+  "నెమ్మదిగా చెప్పండి",
+  "మెల్లగా",
+  "மெதுவாக",
+  "மெதுவாக சொல்லுங்கள்",
+];
+
+export function isSlowerRequest(transcript: string): boolean {
+  const text = normalise(transcript);
+  if (!text) return false;
+
+  const words = text.split(" ");
+  if (words.length > MAX_WORDS) return false;
+
+  return SLOWER_PHRASES.some((phrase) => {
+    const needle = normalise(phrase);
+    return text === needle || text.includes(needle);
+  });
+}

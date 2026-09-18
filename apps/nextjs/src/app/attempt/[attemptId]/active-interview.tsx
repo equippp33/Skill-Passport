@@ -101,11 +101,6 @@ export function ActiveInterview({
   const [retryingAudio, setRetryingAudio] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  /** Candidate asked for slower speech; stays on for the rest of the session.
-   *  Declared before the audio helpers below, which read the ref when playing. */
-  const [slower, setSlower] = useState(false);
-  const slowerRef = useRef(false);
-
   /** One filler element whose src is swapped to a random variant each turn, so
    *  it never sounds like a recording and never fights the question audio. The
    *  variants are pre-warmed into the browser cache so the swap plays instantly. */
@@ -128,8 +123,7 @@ export function ActiveInterview({
     lastFillerRef.current = idx;
     try {
       el.src = fillerUrls[idx]!;
-      el.currentTime = 0;
-      el.playbackRate = slowerRef.current ? 0.85 : 1;
+      el.currentTime = 0;
       void el.play().catch(() => undefined);
     } catch {
       // Best-effort — a blocked filler just means the old silent gap.
@@ -145,13 +139,6 @@ export function ActiveInterview({
   const { isFullscreen, request: requestFullscreen } = useFullscreen(stageRef);
   /** True while the interviewer is speaking (question or filler) — the blob. */
   const [speaking, setSpeaking] = useState(false);
-  useEffect(() => {
-    slowerRef.current = slower;
-    // Apply live to anything currently playing, not just the next clip.
-    const rate = slower ? 0.85 : 1;
-    if (audioRef.current) audioRef.current.playbackRate = rate;
-    if (fillerRef.current) fillerRef.current.playbackRate = rate;
-  }, [slower]);
   /** Latest turn, read by callbacks that must not re-create on every change. */
   const turnRef = useRef<TurnView | null>(initialTurn);
   useEffect(() => {
@@ -701,8 +688,7 @@ export function ActiveInterview({
     const el = nudgeRef.current;
     if (!el) return;
     try {
-      el.currentTime = 0;
-      el.playbackRate = slowerRef.current ? 0.85 : 1;
+      el.currentTime = 0;
       void el.play().catch(() => undefined);
     } catch {
       // Best-effort.
@@ -714,8 +700,7 @@ export function ActiveInterview({
     const el = audioRef.current;
     if (!el || !turnRef.current?.questionAudioId) return;
     try {
-      el.currentTime = 0;
-      el.playbackRate = slowerRef.current ? 0.85 : 1;
+      el.currentTime = 0;
       void el.play().catch(() => undefined);
     } catch {
       // Best-effort; the question is still on screen.
@@ -836,8 +821,7 @@ export function ActiveInterview({
     startQuestionCapture();
 
     if (el && turnRef.current?.questionAudioId) {
-      el.currentTime = 0;
-      el.playbackRate = slowerRef.current ? 0.85 : 1;
+      el.currentTime = 0;
       void el.play().catch(() => {
         timer = setTimeout(beginAnswer, 400);
       });
@@ -1069,11 +1053,6 @@ export function ActiveInterview({
                 {m.dashboard.viewResult}
               </Button>
             </div>
-          ) : isBusy ? (
-            <span
-              aria-hidden="true"
-              className="inline-block size-5 animate-spin rounded-full border-2 border-border-subtle border-t-accent"
-            />
           ) : recorder.isRecording ? (
             <div className="flex flex-col items-center gap-1">
               {/* You're being heard — live bars of the candidate's own voice. */}
@@ -1091,41 +1070,6 @@ export function ActiveInterview({
           ) : null}
         </div>
 
-        {/* Tap controls — same actions as the voice commands, for anyone who
-            would rather press than speak. Only on real questions (not the
-            opening), and never while a turn is being processed. */}
-        {turn.kind === "skill" ? (
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <button
-              type="button"
-              onClick={handleRepeat}
-              disabled={isBusy}
-              className="rounded-full border border-border-subtle bg-surface px-4 py-2 text-sm font-medium text-content transition-colors hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              🔁 Repeat
-            </button>
-            <button
-              type="button"
-              onClick={() => setSlower((v) => !v)}
-              aria-pressed={slower}
-              className={`rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
-                slower
-                  ? "border-accent bg-accent-soft text-accent"
-                  : "border-border-subtle bg-surface text-content hover:bg-surface-muted"
-              }`}
-            >
-              🐢 Slower
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleSkip()}
-              disabled={isBusy}
-              className="rounded-full border border-border-subtle bg-surface px-4 py-2 text-sm font-medium text-content transition-colors hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              ⏭️ Skip
-            </button>
-          </div>
-        ) : null}
 
         {error ? (
           <Alert tone="danger" title={m.interview.errorTitle} className="max-w-md">

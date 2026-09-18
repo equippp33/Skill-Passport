@@ -22,6 +22,13 @@
       "when": 1789459269787,
       "tag": "0002_steady_misty_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789768265232,
+      "tag": "0003_futuristic_wraith",
+      "breakpoints": true
     }
   ]
 }

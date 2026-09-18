@@ -12,6 +12,7 @@ import { candidateDetailsSchema } from "~/server/interview/validation";
 import type { InterviewLanguageKey } from "~/config/languages";
 import {
   createAttempt,
+  prewarmFirstQuestion,
   regenerateQuestionAudio,
   skipTurn,
   startAttempt,
@@ -44,6 +45,7 @@ export async function beginAttemptAction(
     email: formData.get("email"),
     phone: formData.get("phone"),
     language: formData.get("language"),
+    course: formData.get("course"),
   });
 
   if (!parsed.success) {
@@ -62,12 +64,27 @@ export async function beginAttemptAction(
     email: parsed.data.email,
     phone: parsed.data.phone,
     language: parsed.data.language as InterviewLanguageKey,
+    course: parsed.data.course,
   });
 
   // The only time this token leaves the server. From here on the cookie is
   // what proves the candidate owns this attempt.
   await setAttemptCookie(accessToken);
   redirect(`/attempt/${attemptId}`);
+}
+
+/**
+ * Fire-and-forget: prepare the first question while the candidate reads the
+ * instructions / tests their device, so the interview starts with no wait.
+ */
+export async function prewarmAttemptAction(attemptId: string): Promise<void> {
+  const found = await getAttemptForCandidate(attemptId);
+  if (!found) return;
+  try {
+    await prewarmFirstQuestion(found.attempt, found.interview);
+  } catch (error) {
+    console.error("[attempt] prewarm action failed", error);
+  }
 }
 
 export async function startAttemptAction(

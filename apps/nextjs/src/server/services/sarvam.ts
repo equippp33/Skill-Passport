@@ -202,7 +202,7 @@ export interface SpeechResult {
  */
 export async function generateSpeech(
   text: string,
-  options: { languageCode: string; speaker?: string },
+  options: { languageCode: string; speaker?: string; pace?: number },
 ): Promise<SpeechResult> {
   const clipped = text.trim().slice(0, TTS_MAX_CHARS);
   if (!clipped) {
@@ -227,9 +227,9 @@ export async function generateSpeech(
           model: env.SARVAM_TTS_MODEL,
           // MP3 instead of the default WAV — ~10x smaller to store and send.
           output_audio_codec: "mp3",
-          // ponytail: slightly slower than default (1.0) so questions are
-          // easier to follow. Tune here if it needs to change.
-          pace: 0.9,
+          // Slightly slower than default (1.0) so questions are easier to
+          // follow; a candidate who asks to slow down gets an even lower pace.
+          pace: options.pace ?? 0.9,
         }),
       },
       TTS_TIMEOUT_MS,

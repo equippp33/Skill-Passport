@@ -103,4 +103,12 @@ export const candidateDetailsSchema = z.object({
   language: z.enum(INTERVIEW_LANGUAGE_KEYS as [string, ...string[]], {
     message: "Choose the language for your interview.",
   }),
+  /** Course / field of study, used to ground and pre-prepare questions. */
+  course: z
+    .string()
+    .trim()
+    .max(120, "Keep the course under 120 characters.")
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v && v.length > 0 ? v : null)),
 });

@@ -127,6 +127,13 @@ body {
   }
 }
 
+/* Slow rotation of the orb's inner sheen, so it looks alive even at rest. */
+@keyframes ai-blob-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 dialog[open] {
   animation: modal-in 150ms cubic-bezier(0.2, 0, 0, 1);
 }

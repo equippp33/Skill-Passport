@@ -5,10 +5,10 @@ import { cn } from "~/lib/utils";
 /**
  * The interviewer, as a living orb.
  *
- * It breathes gently at rest and pulses harder while the interviewer is
- * speaking, so the candidate has something alive to look at — the Zoom-call
- * feeling of talking to someone, not filling a form. Purely decorative: no
- * state of its own, driven entirely by the `speaking` flag.
+ * A glass-like sphere: a slowly rotating conic sheen so it looks alive even at
+ * rest, radial highlights for depth, and a soft glow that swells while the
+ * interviewer is speaking. Breathes gently at rest, pulses harder when talking.
+ * Purely decorative — driven entirely by the `speaking` flag, no state.
  */
 export function AiBlob({
   speaking,
@@ -19,37 +19,51 @@ export function AiBlob({
 }) {
   return (
     <div className={cn("relative grid place-items-center", className)}>
-      {/* Outer halo — expands and fades outward only while speaking. */}
+      {/* Outer glow — swells while speaking. */}
       <span
         aria-hidden
         className={cn(
-          "absolute rounded-full bg-accent/25 blur-2xl transition-all duration-700",
-          speaking ? "size-[26rem] opacity-100" : "size-72 opacity-60",
+          "absolute rounded-full blur-3xl transition-all duration-700",
+          speaking ? "size-[30rem] bg-accent/30" : "size-80 bg-accent/20",
         )}
       />
-      {/* Mid glow. */}
+
+      {/* The sphere. */}
       <span
         aria-hidden
-        className={cn(
-          "absolute rounded-full bg-accent/30 blur-xl transition-all duration-500",
-          speaking ? "size-72" : "size-56",
-        )}
-      />
-      {/* The orb itself — a soft gradient sphere that breathes. */}
-      <span
-        aria-hidden
-        className={cn(
-          "relative rounded-full bg-linear-to-br from-accent via-accent to-accent/50 shadow-[0_20px_80px_-10px_var(--color-accent)]",
-          "size-44 sm:size-52",
-        )}
+        className="relative size-44 overflow-hidden rounded-full shadow-[0_18px_70px_-10px_var(--color-accent)] sm:size-52"
         style={{
           animation: speaking
             ? "ai-blob-talk 1.1s ease-in-out infinite"
-            : "ai-blob-idle 4.5s ease-in-out infinite",
+            : "ai-blob-idle 5s ease-in-out infinite",
         }}
       >
-        {/* Inner highlight, for depth. */}
-        <span className="absolute inset-3 rounded-full bg-linear-to-br from-white/30 to-transparent" />
+        {/* Rotating conic sheen — the "life". Oversized so no hard edges show. */}
+        <span
+          className="absolute inset-[-30%] rounded-full"
+          style={{
+            background:
+              "conic-gradient(from 0deg, var(--color-accent), color-mix(in oklab, var(--color-accent), white 45%), var(--color-accent), color-mix(in oklab, var(--color-accent), black 35%), var(--color-accent))",
+            animation: speaking
+              ? "ai-blob-rotate 4s linear infinite"
+              : "ai-blob-rotate 12s linear infinite",
+          }}
+        />
+        {/* Top-left highlight and bottom-right shade make it read as a sphere. */}
+        <span
+          className="absolute inset-0 rounded-full"
+          style={{
+            background:
+              "radial-gradient(circle at 34% 28%, rgba(255,255,255,0.6), rgba(255,255,255,0) 55%)",
+          }}
+        />
+        <span
+          className="absolute inset-0 rounded-full"
+          style={{
+            background:
+              "radial-gradient(circle at 68% 78%, rgba(0,0,0,0.35), rgba(0,0,0,0) 55%)",
+          }}
+        />
       </span>
     </div>
   );

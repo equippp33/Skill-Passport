@@ -25,6 +25,8 @@ export interface InterviewContext {
   language: InterviewLanguage;
   /** The candidate's first name, for the interviewer to use now and then. */
   candidateName?: string | null;
+  /** The candidate's course / field of study, from the start form. */
+  candidateCourse?: string | null;
   /**
    * What the candidate said in the opening language probe — their name and a
    * little about their work. Untrusted content, but genuinely useful: without
@@ -204,6 +206,13 @@ export function contextBlock(ctx: InterviewContext): string {
   return [
     `Interview language: ${ctx.language.promptName}`,
     `Total questions in this interview: ${ctx.questionCount}`,
+    ...(ctx.candidateCourse
+      ? [
+          `The candidate's course / field is: ${ctx.candidateCourse}. Set`,
+          `scenarios in that world where it fits — but keep it about workplace`,
+          `BEHAVIOUR, never a technical/subject test.`,
+        ]
+      : []),
     ...(ctx.candidateIntroduction
       ? [
           ``,

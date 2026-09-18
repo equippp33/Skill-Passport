@@ -62,6 +62,25 @@ export function StartForm({ token }: { token: string }) {
       </div>
 
       <div>
+        <Label htmlFor="course">
+          Course{" "}
+          <span className="font-normal text-content-muted">(optional)</span>
+        </Label>
+        <Input
+          id="course"
+          name="course"
+          maxLength={120}
+          className="min-h-11"
+          placeholder="e.g. Accounting, Nursing, ITI Electrician"
+          aria-invalid={state.fieldErrors?.course ? true : undefined}
+          aria-describedby="course-error"
+        />
+        <span id="course-error">
+          <FieldError>{state.fieldErrors?.course}</FieldError>
+        </span>
+      </div>
+
+      <div>
         <Label htmlFor="language">Interview language</Label>
         {/* Chosen once, here, and fixed for the whole interview — every
             question is asked and spoken in it, and there is no switching
