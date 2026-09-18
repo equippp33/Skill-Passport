@@ -122,67 +122,19 @@ export function isWorkSkillId(value: string): value is WorkSkillId {
   return SKILLS_BY_ID.has(value as WorkSkillId);
 }
 
-/**
- * Which skill a given turn assesses.
- *
- * Turns are grouped so that consecutive turns on the same skill act as genuine
- * follow-ups. With `questionCount = 10` each skill gets one question; with
- * `20`, turns 1-2 cover skill 1, turns 3-4 cover skill 2, and so on.
- *
- * The mapping is computed server-side from the turn number, so the model can
- * never change which skill is being assessed.
- */
-export function skillForTurn(
-  turnNumber: number,
-  questionCount: number,
-): WorkSkill {
-  const perSkill = Math.max(1, Math.round(questionCount / WORK_SKILL_COUNT));
-  const index = Math.floor((turnNumber - 1) / perSkill);
-  return WORK_SKILLS[Math.min(index, WORK_SKILL_COUNT - 1)]!;
-}
-
-/** True when this turn is a follow-up on the same skill as the previous turn. */
-export function isFollowUpTurn(
-  turnNumber: number,
-  questionCount: number,
-): boolean {
-  if (turnNumber <= 1) return false;
-  return (
-    skillForTurn(turnNumber, questionCount).id ===
-    skillForTurn(turnNumber - 1, questionCount).id
-  );
-}
-
 /* -------------------------------------------------------------------------- */
 /*                          Turn numbering per attempt                        */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Turn 1 of every attempt is the language probe, so the skill questions run
- * from turn 2. Keeping the arithmetic here means no caller has to remember
- * the offset.
+ * Turn 1 of every attempt is the language probe, so the interview proper runs
+ * from turn 2. Keeping the arithmetic here means no caller has to remember the
+ * offset.
+ *
+ * Nothing else about turn numbering is fixed any more. Questions used to map
+ * to skills by arithmetic on the turn number; they are now prepared in advance
+ * and each delivered turn records the plan entry it came from, because a
+ * follow-up inserted mid-interview shifts every turn number after it and would
+ * have misfiled the entire remainder.
  */
 export const LANGUAGE_PROBE_TURN = 1;
-
-/** Total turns a candidate answers: the probe plus one question per skill. */
-export function totalTurns(questionCount: number): number {
-  return questionCount + 1;
-}
-
-/** The skill a turn assesses, or null for the language probe. */
-export function skillForAttemptTurn(
-  turnNumber: number,
-  questionCount: number,
-): WorkSkill | null {
-  if (turnNumber <= LANGUAGE_PROBE_TURN) return null;
-  return skillForTurn(turnNumber - LANGUAGE_PROBE_TURN, questionCount);
-}
-
-/** True when this turn follows up on the same skill as the previous one. */
-export function isAttemptFollowUp(
-  turnNumber: number,
-  questionCount: number,
-): boolean {
-  if (turnNumber <= LANGUAGE_PROBE_TURN + 1) return false;
-  return isFollowUpTurn(turnNumber - LANGUAGE_PROBE_TURN, questionCount);
-}

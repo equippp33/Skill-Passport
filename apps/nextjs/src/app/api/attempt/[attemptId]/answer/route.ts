@@ -7,6 +7,7 @@ import {
 import { getAttemptForCandidate } from "~/server/attempt/access";
 import {
   AttemptError,
+  acknowledgementClip,
   processTurn,
   submitAnswer,
 } from "~/server/attempt/service";
@@ -121,7 +122,23 @@ export async function POST(
       });
     }
 
-    return NextResponse.json({ status: "processing" }, { status: 202 });
+    /**
+     * The receipt carries the interviewer's "okay".
+     *
+     * Not a poll away: by the time the next poll came back the silence this
+     * exists to fill would already have happened. Seeded by turn so it is not
+     * the identical syllable eleven times.
+     */
+    return NextResponse.json(
+      {
+        status: "processing",
+        acknowledgementAudioId: await acknowledgementClip(
+          found.attempt.id,
+          turnNumber,
+        ),
+      },
+      { status: 202 },
+    );
   } catch (error) {
     if (error instanceof AttemptError) {
       const status =

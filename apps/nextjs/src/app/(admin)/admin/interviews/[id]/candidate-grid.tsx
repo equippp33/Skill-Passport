@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { Input, Select } from "~/components/ui";
 import type { AttemptSummary } from "~/server/admin/dto";
@@ -36,6 +37,30 @@ export function CandidateGrid({
   /** Where a candidate's report should return to. */
   returnTo: string;
 }) {
+  const router = useRouter();
+
+  /**
+   * Keep a live interview live.
+   *
+   * These cards are server-rendered, so a candidate who finishes while this
+   * page is open stays "In progress" until someone reloads — which is how it
+   * looked as though interviews never completed. Re-fetching the server
+   * components is cheap and leaves the filter and sort state alone, unlike a
+   * full reload.
+   *
+   * Only while something is actually running: once every attempt has settled
+   * there is nothing to watch, and polling an idle page forever is rude to
+   * both the database and the laptop.
+   */
+  const watching = attempts.some(
+    (a) => a.status === "in_progress" || a.status === "processing",
+  );
+  useEffect(() => {
+    if (!watching) return;
+    const id = setInterval(() => router.refresh(), 10_000);
+    return () => clearInterval(id);
+  }, [watching, router]);
+
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<Group>("all");
   const [sort, setSort] = useState<Sort>("recent");

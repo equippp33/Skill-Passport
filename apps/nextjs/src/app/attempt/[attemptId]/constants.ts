@@ -1,3 +1,5 @@
+import type { SilenceStage } from "~/hooks/use-speech-activity";
+
 /**
  * Client-side interview timings.
  *
@@ -43,9 +45,34 @@ export const AUTO_START_BACKSTOP_MS = 60_000;
 export const SILENCE_ADVANCE_SECONDS = 8;
 
 /**
- * How long to wait for a candidate who has not said a single word before
- * giving up and submitting anyway. Stops the interview stalling forever on
- * someone silent; the recording still goes to the transcriber, and a truly
- * empty answer is skipped server-side.
+ * What the interviewer does while a candidate says nothing at all.
+ *
+ * Silence is the moment a nervous fresher is most likely to be lost, and a
+ * single deadline treats "thinking" and "frozen" the same. So: wait, reassure,
+ * offer the question in plainer words, and only then move on — the rhythm a
+ * person would use.
+ *
+ * Seven seconds is long enough to be a pause rather than an interruption.
+ * Fifteen is where reassurance has plainly not been enough and the wording
+ * itself is the likely problem. Thirty is where insisting stops being kind:
+ * the answer is submitted, the transcriber — more sensitive than the gate that
+ * got us here — still sees the recording, and a truly empty one is skipped
+ * server-side.
+ *
+ * `id` names the clip to play; see `AttemptStatus["clips"]`.
  */
-export const NO_ANSWER_WAIT_SECONDS = 15;
+export const NO_ANSWER_STAGES: SilenceStage[] = [
+  { id: "takeYourTime", at: 7 },
+  { id: "easier", at: 15 },
+  { id: "noProblem", at: 30, final: true },
+];
+
+/**
+ * Longest anything will wait on a spoken aside.
+ *
+ * A clip that never reports `ended` — a stalled download, a codec the browser
+ * quietly gave up on — must not hold a candidate on a finished interview, or
+ * freeze the silence ladder mid-answer. Twelve seconds is comfortably longer
+ * than the longest of these lines.
+ */
+export const ASIDE_MAX_MS = 12_000;

@@ -36,6 +36,7 @@ export function LanguagePicker({
   busy = false,
   label,
   hint,
+  compact = false,
 }: {
   languages: PickableLanguage[];
   /** Current language key, or null before detection has run. */
@@ -45,6 +46,14 @@ export function LanguagePicker({
   busy?: boolean;
   label: string;
   hint?: string;
+  /**
+   * Trigger only — no visible label, no hint.
+   *
+   * For the header, where the surrounding chrome already says what this is
+   * and a sentence of explanation beside it would crowd the bar. The label
+   * still reaches assistive tech through `aria-label`.
+   */
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -128,9 +137,11 @@ export function LanguagePicker({
   return (
     <div ref={rootRef} className="relative">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span id={labelId} className="text-sm text-content-muted">
-          {label}
-        </span>
+        {compact ? null : (
+          <span id={labelId} className="text-sm text-content-muted">
+            {label}
+          </span>
+        )}
 
         <button
           ref={triggerRef}
@@ -146,7 +157,8 @@ export function LanguagePicker({
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-controls={open ? listId : undefined}
-          aria-labelledby={labelId}
+          aria-labelledby={compact ? undefined : labelId}
+          aria-label={compact ? label : undefined}
           className={cn(
             "flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5",
             "border-border-strong bg-surface text-sm font-medium transition-colors",
@@ -173,7 +185,7 @@ export function LanguagePicker({
 
         {busy ? (
           <span className="text-sm text-content-muted">Switching…</span>
-        ) : hint ? (
+        ) : hint && !compact ? (
           <span className="text-xs text-content-muted">{hint}</span>
         ) : null}
       </div>
@@ -184,7 +196,8 @@ export function LanguagePicker({
           id={listId}
           role="listbox"
           tabIndex={-1}
-          aria-labelledby={labelId}
+          aria-labelledby={compact ? undefined : labelId}
+          aria-label={compact ? label : undefined}
           aria-activedescendant={`${listId}-${activeIndex}`}
           onKeyDown={onListKeyDown}
           className={cn(

@@ -74,7 +74,9 @@ export function CandidateCard({
             muted
             playsInline
             preload="metadata"
-            className="h-full w-full object-cover"
+            // Mirrored, like the report player and the live self-view —
+            // see the note there.
+            className="h-full w-full -scale-x-100 object-cover"
           />
         ) : (
           <div className="flex h-full items-center justify-center bg-linear-to-br from-surface-muted to-content/10">

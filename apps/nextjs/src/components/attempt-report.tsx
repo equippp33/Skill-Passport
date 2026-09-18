@@ -106,6 +106,38 @@ export function AttemptReport({
         </Card>
       ) : null}
 
+      {/* What this interview cost to run.
+          Admin only, and shown in the units each provider actually bills in
+          rather than converted to money: rates differ per account and change,
+          so the arithmetic belongs in whatever sheet is doing the costing. */}
+      {showCandidate ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Provider usage</CardTitle>
+            <p className="mt-1 text-sm text-content-muted">
+              Counted as the interview ran. Speech is billed per request and per
+              character; the model per token.
+            </p>
+          </CardHeader>
+          <CardContent className="grid gap-x-6 gap-y-2 sm:grid-cols-3">
+            <Detail
+              label="Speech to text"
+              value={`${attempt.sttRequests} requests · ${Math.round(
+                attempt.sttAudioBytes / 1024,
+              ).toLocaleString()} KB audio`}
+            />
+            <Detail
+              label="Text to speech"
+              value={`${attempt.ttsCharacters.toLocaleString()} characters`}
+            />
+            <Detail
+              label="Model"
+              value={`${attempt.llmRequests} requests · ${attempt.llmInputTokens.toLocaleString()} in / ${attempt.llmOutputTokens.toLocaleString()} out`}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card className="border-accent/20 bg-linear-to-br from-surface to-accent-soft">
         <CardContent className="flex flex-wrap items-center justify-between gap-6 pt-6 sm:p-8">
           <div>
@@ -270,7 +302,13 @@ export function AttemptReport({
                           showCandidate ? "" : `?attempt=${attempt.id}`
                         }`}
                         aria-label={m.result.yourAnswer}
-                        className="aspect-video max-h-[400px] w-full rounded-lg border border-border-subtle bg-content/90 object-contain"
+                        // Mirrored to match the self-view the candidate was
+                        // looking at while they recorded. A webcam file is not
+                        // mirrored, so playing it straight shows everyone the
+                        // reverse of the face they watched themselves make —
+                        // which reads as wrong to the person in it and to
+                        // anyone who met them.
+                        className="aspect-video max-h-[400px] w-full -scale-x-100 rounded-lg border border-border-subtle bg-content/90 object-contain"
                       />
                       {/* Says which answer this clip is, so a recording can
                         never be read as belonging to the wrong question. */}

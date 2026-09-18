@@ -69,12 +69,26 @@ export async function beginAttemptAction(
 
 export async function startAttemptAction(
   attemptId: string,
+  /** The language the candidate picked on the step before this one. */
+  languageKey: string,
+  /**
+   * What they typed about themselves on the same screen.
+   *
+   * Capped rather than trusted: free text from an unauthenticated candidate
+   * that ends up in a model prompt, so a runaway paste is cut here rather
+   * than becoming the bulk of every request. The client caps it too, but a
+   * client cap is a courtesy, not a control.
+   */
+  about: { course: string | null; experience: string | null },
 ): Promise<{ ok: boolean; error?: string }> {
   const found = await getAttemptForCandidate(attemptId);
   if (!found) return { ok: false, error: "Your session has expired." };
 
   try {
-    await startAttempt(found.attempt.id);
+    await startAttempt(found.attempt.id, languageKey, {
+      course: about.course?.slice(0, 200) ?? null,
+      experience: about.experience?.slice(0, 400) ?? null,
+    });
     revalidatePath(`/attempt/${attemptId}`);
     return { ok: true };
   } catch (error) {

@@ -13,14 +13,12 @@ import {
   PROBE_SPOKEN_TEXT,
 } from "~/config/greeting";
 import { MESSAGES, t } from "~/config/messages";
-import { isRepeatRequest } from "~/config/repeat-requests";
+import { isRepeatRequest, phraseIntent } from "~/config/repeat-requests";
 import { en } from "~/config/messages/en";
 import {
   WORK_SKILLS,
   WORK_SKILL_COUNT,
   WORK_SKILL_IDS,
-  isFollowUpTurn,
-  skillForTurn,
 } from "~/config/work-skills";
 import { DEFAULT_QUESTION_COUNT } from "~/server/interview/validation";
 
@@ -131,8 +129,15 @@ describe("language probe opener", () => {
     expect(PROBE_SPOKEN_TEXT.toLowerCase()).not.toMatch(/language/);
   });
 
-  it("still asks for a spoken introduction", () => {
-    expect(PROBE_SPOKEN_TEXT.toLowerCase()).toMatch(/name/);
+  // The opener used to ask for their name and their work. Both are now
+  // collected before the interview starts — the details step and the
+  // background box — so asking again made the first thing the candidate heard
+  // a repeat of the form they had just filled in. It is a warm-up now: one
+  // easy, open question that gets them talking.
+  it("is one short, easy, open question", () => {
+    expect(PROBE_SPOKEN_TEXT.toLowerCase()).not.toMatch(/name/);
+    expect(PROBE_SPOKEN_TEXT.split("?")).toHaveLength(2);
+    expect(PROBE_SPOKEN_TEXT.split(/\s+/).length).toBeLessThan(35);
   });
 });
 
@@ -175,6 +180,42 @@ describe("repeat requests", () => {
       expect(isRepeatRequest(text)).toBe(false);
     },
   );
+});
+
+/**
+ * The three asks route to three different responses — the same clip again, the
+ * same clip slower, or a simpler wording — so telling them apart is the whole
+ * point of splitting the list.
+ */
+describe("utterance intent", () => {
+  it.each([
+    ["Repeat", "repeat"],
+    ["Can you say that again?", "repeat"],
+    ["फिर से बोलिए", "repeat"],
+    ["Please speak slowly", "slower"],
+    ["थोड़ा धीरे बोलिए", "slower"],
+    ["I did not understand", "not_understood"],
+    ["samajh nahi aaya", "not_understood"],
+    ["What do you mean?", "not_understood"],
+  ] as const)("reads %s as %s", (text, intent) => {
+    expect(phraseIntent(text)).toBe(intent);
+  });
+
+  /**
+   * Order matters, and this is the case that proves it. "Say it again,
+   * slowly" contains the repeat needle too; checking repeat first would
+   * swallow it and the candidate would get the same speed back.
+   */
+  it("prefers the slow request when the phrasing also says 'again'", () => {
+    expect(phraseIntent("फिर से धीरे बोलिए")).toBe("slower");
+  });
+
+  it.each([
+    "I always arrive on time",
+    "My manager asked me to repeat the order back to the customer every time.",
+  ])("reads a real answer as an answer: %s", (text) => {
+    expect(phraseIntent(text)).toBeNull();
+  });
 });
 
 describe("message dictionaries", () => {
@@ -226,39 +267,6 @@ describe("work skill framework", () => {
       expect(skill.definition.length).toBeGreaterThan(20);
       expect(skill.scenarioFocus.length).toBeGreaterThan(10);
     }
-  });
-
-  it("covers all ten skills across a 10-question interview", () => {
-    const covered = Array.from(
-      { length: 10 },
-      (_, i) => skillForTurn(i + 1, 10).id,
-    );
-    expect(new Set(covered).size).toBe(10);
-    expect(covered[0]).toBe("reliability");
-    expect(covered[9]).toBe("customer_orientation");
-  });
-
-  it("pairs consecutive turns per skill in a 20-question interview", () => {
-    expect(skillForTurn(1, 20).id).toBe(skillForTurn(2, 20).id);
-    expect(skillForTurn(3, 20).id).not.toBe(skillForTurn(2, 20).id);
-
-    const covered = Array.from(
-      { length: 20 },
-      (_, i) => skillForTurn(i + 1, 20).id,
-    );
-    expect(new Set(covered).size).toBe(10);
-  });
-
-  it("marks the second question on a skill as a follow-up", () => {
-    expect(isFollowUpTurn(1, 20)).toBe(false);
-    expect(isFollowUpTurn(2, 20)).toBe(true);
-    expect(isFollowUpTurn(3, 20)).toBe(false);
-    // With one question per skill nothing is a follow-up.
-    expect(isFollowUpTurn(2, 10)).toBe(false);
-  });
-
-  it("never runs past the last skill", () => {
-    expect(skillForTurn(99, 10).id).toBe("customer_orientation");
   });
 
   it("defaults to exactly one question per skill", () => {

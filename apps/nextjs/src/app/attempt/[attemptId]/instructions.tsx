@@ -16,9 +16,9 @@ import { CandidateSplit } from "~/components/candidate-split";
 import { CameraPreview } from "~/components/camera-preview";
 import { t } from "~/config/messages";
 import type { Messages } from "~/config/messages";
-import { PROBE_PROMPTS } from "~/config/greeting";
 import { useAnswerRecorder } from "~/hooks/use-answer-recorder";
 import { startAttemptAction } from "~/server/attempt/actions";
+import type { PickableLanguage } from "./language-picker";
 import { MAX_ANSWER_SECONDS } from "./constants";
 
 /**
@@ -36,6 +36,8 @@ export function Instructions({
   aiReady,
   m,
   languageName,
+  languages,
+  defaultLanguage,
   interviewTitle,
   interviewDescription,
 }: {
@@ -45,12 +47,34 @@ export function Instructions({
   aiReady: boolean;
   m: Messages;
   languageName: string;
+  /** Every language the interview can be conducted in. */
+  languages: PickableLanguage[];
+  /** Pre-selected from INTERVIEW_LANGUAGE, so there is always a sane default. */
+  defaultLanguage: string;
   /** Named here too, so the candidate knows which interview they are in. */
   interviewTitle: string;
   interviewDescription: string | null;
 }) {
   const router = useRouter();
   const [consented, setConsented] = useState(false);
+  /**
+   * The language the whole interview runs in.
+   *
+   * Chosen here rather than inferred from the first answer: the candidate now
+   * hears the very first question in the language they picked, and detection
+   * is left to notice drift rather than to decide.
+   */
+  const [language, setLanguage] = useState(defaultLanguage);
+  /**
+   * What the candidate does, in their own words.
+   *
+   * Typed here rather than drawn out of the first spoken answer, so the FIRST
+   * question can already be about their actual life instead of being asked
+   * into a vacuum. Optional: a blank one costs a slightly more generic
+   * interview, not a blocked one.
+   */
+  const [course, setCourse] = useState("");
+  const [experience, setExperience] = useState("");
   const [micTested, setMicTested] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -82,7 +106,10 @@ export function Instructions({
   function handleStart() {
     setStartError(null);
     startTransition(async () => {
-      const result = await startAttemptAction(attemptId);
+      const result = await startAttemptAction(attemptId, language, {
+        course: course.trim() || null,
+        experience: experience.trim() || null,
+      });
       if (result.ok) {
         router.refresh();
       } else {
@@ -91,7 +118,8 @@ export function Instructions({
     });
   }
 
-  const canStart = consented && micTested && aiReady && !isStarting;
+  const canStart =
+    consented && micTested && aiReady && Boolean(language) && !isStarting;
 
   return (
     <CandidateSplit
@@ -131,24 +159,106 @@ export function Instructions({
         </p>
       ) : null}
 
-      {/* Offered in several scripts rather than assuming the candidate
-          reads English. */}
+      {/* The language choice, which used to be inferred from the candidate's
+          first answer. A grid rather than the dropdown used mid-interview:
+          here it is a decision to make, so every option should be visible at
+          once instead of behind a click, and each is written in its own
+          script so a candidate who does not read English can still find
+          theirs. */}
       <Card className="border-accent/15 bg-accent-soft">
         <CardContent className="pt-5">
           <p className="text-xs font-medium tracking-widest text-content-muted uppercase">
-            {m.instructions.ownLanguageTitle}
+            {m.instructions.backgroundTitle}
           </p>
-          <ul className="mt-3 grid gap-2.5 sm:grid-cols-2">
-            {PROBE_PROMPTS.slice(0, 4).map((prompt) => (
-              <li
-                key={prompt.code}
-                lang={prompt.code}
-                className="text-sm leading-relaxed text-pretty"
-              >
-                {prompt.text}
-              </li>
-            ))}
-          </ul>
+          <p className="mt-1.5 max-w-prose text-sm text-content-muted text-pretty">
+            {m.instructions.backgroundBody}
+          </p>
+
+          {/* Two questions rather than one open box. They answer different
+              things — the course says what world to set a scenario in, the
+              experience says whether this person has ever had a manager, a
+              shift or a customer — and one box reliably got whichever the
+              candidate happened to think of. */}
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label htmlFor="candidate-course" className="block">
+              <span className="text-sm font-medium">
+                {m.instructions.courseLabel}
+              </span>
+              <input
+                id="candidate-course"
+                value={course}
+                onChange={(e) => setCourse(e.target.value)}
+                maxLength={200}
+                placeholder={m.instructions.coursePlaceholder}
+                className="mt-1.5 w-full rounded-lg border border-border-subtle bg-surface px-3 py-2.5 text-sm outline-none placeholder:text-content-muted/70 focus:border-accent focus:ring-1 focus:ring-accent"
+              />
+            </label>
+
+            <label htmlFor="candidate-experience" className="block">
+              <span className="text-sm font-medium">
+                {m.instructions.experienceLabel}
+              </span>
+              <textarea
+                id="candidate-experience"
+                value={experience}
+                onChange={(e) => setExperience(e.target.value)}
+                rows={2}
+                maxLength={400}
+                placeholder={m.instructions.experiencePlaceholder}
+                className="mt-1.5 w-full resize-y rounded-lg border border-border-subtle bg-surface px-3 py-2.5 text-sm leading-relaxed outline-none placeholder:text-content-muted/70 focus:border-accent focus:ring-1 focus:ring-accent"
+              />
+            </label>
+          </div>
+
+          <p className="mt-6 text-xs font-medium tracking-widest text-content-muted uppercase">
+            {m.instructions.languageTitle}
+          </p>
+          <p className="mt-1.5 max-w-prose text-sm text-content-muted text-pretty">
+            {m.instructions.languageBody}
+          </p>
+
+          <div
+            role="radiogroup"
+            aria-label={m.instructions.languageTitle}
+            className="mt-4 grid grid-cols-1 gap-2.5 min-[420px]:grid-cols-2 lg:grid-cols-3"
+          >
+            {languages.map((lang) => {
+              const selected = lang.key === language;
+              return (
+                <button
+                  key={lang.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setLanguage(lang.key)}
+                  className={`flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                    selected
+                      ? "border-accent bg-surface ring-1 ring-accent"
+                      : "border-border-subtle bg-surface hover:border-border-strong hover:bg-surface-muted"
+                  }`}
+                >
+                  <span
+                    aria-hidden
+                    className={`grid size-7 shrink-0 place-items-center rounded-md text-[13px] leading-none font-semibold ${
+                      selected
+                        ? "bg-accent text-accent-contrast"
+                        : "bg-surface-muted text-content-muted"
+                    }`}
+                  >
+                    {lang.symbol}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">
+                      {lang.displayName}
+                    </span>
+                    <span className="block text-xs text-content-muted">
+                      {lang.promptName}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </CardContent>
       </Card>
 

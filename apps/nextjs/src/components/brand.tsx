@@ -59,9 +59,14 @@ export function CandidateHeader() {
     <header className="border-b border-border-subtle bg-surface px-4 py-4 sm:px-8">
       <div className="flex w-full items-center justify-between gap-3">
         <Brand />
-        {/* Filled by <HeaderProfile> once the candidate is known (from the
-            device-check step on); empty on the first page. */}
-        <div id="candidate-header-slot" className="flex items-center" />
+        <div className="flex items-center gap-3">
+          {/* Filled by the interview screen with the language switcher;
+              empty on every other candidate page. */}
+          <div id="candidate-language-slot" className="flex items-center" />
+          {/* Filled by <HeaderProfile> once the candidate is known (from the
+              device-check step on); empty on the first page. */}
+          <div id="candidate-header-slot" className="flex items-center" />
+        </div>
       </div>
     </header>
   );

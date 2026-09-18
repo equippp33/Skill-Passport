@@ -5,7 +5,10 @@ import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import type { User } from "lucia";
 
+import { after } from "next/server";
+
 import { db } from "~/server/db";
+import { sweepAbandonedAttempts } from "~/server/attempt/service";
 import {
   interviewAttemptsTable,
   interviewAudioTable,
@@ -310,6 +313,23 @@ export async function getInterviewDetails(
   if (!found) return null;
 
   const { interview, attempts } = found;
+
+  /**
+   * Tidy up interviews nobody is sitting in any more.
+   *
+   * In `after()` so it never delays the page: the sweep scores and writes a
+   * report for each abandoned attempt, which takes provider calls. The list
+   * this render returns may therefore still show one as running; the grid
+   * re-fetches while anything is in progress, so it corrects itself within
+   * seconds rather than needing a reload.
+   */
+  after(async () => {
+    await sweepAbandonedAttempts(
+      new Map([[interview.id, interview]]),
+      attempts,
+    );
+  });
+
   const attemptIds = attempts.map((a) => a.id);
   const [spokenByAttempt, thumbnailByAttempt] = await Promise.all([
     getSpokenLanguages(attemptIds),

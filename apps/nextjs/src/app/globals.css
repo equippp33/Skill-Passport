@@ -240,3 +240,93 @@ li {
     padding: 2.5rem 2rem 4rem;
   }
 }
+
+/**
+ * Voice orb.
+ *
+ * Built from layered radial gradients that drift over one another, NOT from
+ * blurred shapes: `filter: blur()` on a moving element repaints the blurred
+ * region every frame, and this thing is on screen for the whole interview. A
+ * soft gradient is painted once and then only ever transformed, so the entire
+ * animation runs on the compositor.
+ *
+ * Every keyframe below touches `transform` or `opacity` and nothing else, for
+ * the same reason. Amplitude arrives as `--orb-amp` (0-1), written straight to
+ * the element by an animation frame rather than through React state — a
+ * re-render per frame would cost far more than the paint does.
+ */
+@keyframes orb-cloud-a {
+  0% {
+    transform: translate3d(-18%, 2%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(14%, -3%, 0) scale(1.08);
+  }
+  100% {
+    transform: translate3d(-18%, 2%, 0) scale(1);
+  }
+}
+
+@keyframes orb-cloud-b {
+  0% {
+    transform: translate3d(16%, -4%, 0) scale(1.05);
+  }
+  50% {
+    transform: translate3d(-15%, 4%, 0) scale(0.96);
+  }
+  100% {
+    transform: translate3d(16%, -4%, 0) scale(1.05);
+  }
+}
+
+@keyframes orb-cloud-c {
+  0% {
+    transform: translate3d(-10%, -8%, 0) scale(0.98);
+  }
+  50% {
+    transform: translate3d(12%, 7%, 0) scale(1.12);
+  }
+  100% {
+    transform: translate3d(-10%, -8%, 0) scale(0.98);
+  }
+}
+
+/** The calm idle breath. Deliberately slow — it should read as alive, not busy. */
+@keyframes orb-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.035);
+  }
+}
+
+/** A ring leaving the orb, used while it is speaking. */
+@keyframes orb-ripple {
+  0% {
+    opacity: 0.45;
+    transform: scale(0.96);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.4);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.4);
+  }
+}
+
+/**
+ * Motion here is decoration, and a vestibular disorder does not care how nice
+ * it looks. The orb keeps its colour and its amplitude response — which is
+ * information — and stops moving on its own.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .orb-layer,
+  .orb-breathe,
+  .orb-ripple {
+    animation: none !important;
+  }
+}

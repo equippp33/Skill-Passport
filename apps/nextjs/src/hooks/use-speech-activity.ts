@@ -42,12 +42,27 @@ const SPEECH_RMS_THRESHOLD = 0.013;
 /** How often the level is sampled. Fine enough for a 1s countdown. */
 const SAMPLE_INTERVAL_MS = 200;
 
+/**
+ * One rung of the "they have not said anything yet" ladder.
+ *
+ * `at` is seconds of candidate silence, not wall clock — time spent listening
+ * to the interviewer say a previous rung does not count.
+ */
+export interface SilenceStage {
+  id: string;
+  at: number;
+  /** The rung that stops waiting and moves the interview on. Exactly one. */
+  final?: boolean;
+}
+
 export function useSpeechActivity({
   stream,
   active,
   silenceSeconds,
   minSpeechSeconds,
-  maxWaitSeconds,
+  paused,
+  noAnswerStages,
+  onStage,
   onSilence,
 }: {
   /** The live microphone stream. Null while devices are not open. */
@@ -59,12 +74,30 @@ export function useSpeechActivity({
   /** Never fire before the answer is at least this long. */
   minSpeechSeconds: number;
   /**
-   * If the candidate never says anything, give up after this long and submit
-   * anyway rather than waiting forever — the recording still goes to the
-   * transcriber, which is more sensitive than this gate, and a truly empty one
-   * is skipped server-side.
+   * Freeze the clock, and stop listening, while the interviewer is talking.
+   *
+   * The microphone stays open through a filler so the candidate can cut in,
+   * which means the interviewer's own voice reaches this analyser. Without
+   * this, saying "take your time" out loud would read as the candidate
+   * speaking, and the seconds spent saying it would eat the very patience it
+   * was offering.
    */
-  maxWaitSeconds: number;
+  paused: boolean;
+  /**
+   * What to do, and when, while the candidate has not said a word.
+   *
+   * A ladder rather than a single deadline: reassure, then offer the question
+   * more simply, then let them off the hook. Someone who has frozen is not
+   * helped by the same question again, and is not helped by silence either.
+   *
+   * Ordered by `at`, with exactly one `final` rung — that one submits, so the
+   * interview is never stuck waiting on somebody who has gone quiet. The
+   * recording still goes to the transcriber, which is more sensitive than this
+   * gate, and a truly empty one is skipped server-side.
+   */
+  noAnswerStages: SilenceStage[];
+  /** Called as each rung is reached, with its id. */
+  onStage: (id: string) => void;
   onSilence: () => void;
 }): { secondsRemaining: number | null; noAnswerIn: number | null } {
   /**
@@ -83,6 +116,24 @@ export function useSpeechActivity({
   useEffect(() => {
     onSilenceRef.current = onSilence;
   }, [onSilence]);
+
+  const onStageRef = useRef(onStage);
+  useEffect(() => {
+    onStageRef.current = onStage;
+  }, [onStage]);
+
+  const stagesRef = useRef(noAnswerStages);
+  useEffect(() => {
+    stagesRef.current = noAnswerStages;
+  }, [noAnswerStages]);
+
+  /** Rungs already announced for this answer. */
+  const doneRef = useRef<Set<string>>(new Set());
+
+  const pausedRef = useRef(paused);
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
   useEffect(() => {
     if (!active || !stream) return;
@@ -111,12 +162,29 @@ export function useSpeechActivity({
     // to the speakers would feed it straight back into the recording.
 
     const samples = new Uint8Array(analyser.fftSize);
+    // Each answer climbs the ladder from the bottom.
+    doneRef.current = new Set();
     const startedAt = Date.now();
     let lastVoiceAt = Date.now();
+    let lastTickAt = Date.now();
+    /** How long the clock has stood still while the interviewer spoke. */
+    let pausedMs = 0;
     let spoken = false;
     let fired = false;
 
     const timer = setInterval(() => {
+      const now = Date.now();
+      const sinceTick = now - lastTickAt;
+      lastTickAt = now;
+
+      // Deaf and stopped while the interviewer talks. `lastVoiceAt` moves with
+      // the clock so a candidate mid-answer does not lose their pause either.
+      if (pausedRef.current) {
+        pausedMs += sinceTick;
+        lastVoiceAt = now;
+        return;
+      }
+
       analyser.getByteTimeDomainData(samples);
 
       // Deviation from the 128 midpoint, as RMS in 0–1.
@@ -126,7 +194,6 @@ export function useSpeechActivity({
         sum += centred * centred;
       }
       const rms = Math.sqrt(sum / samples.length);
-      const now = Date.now();
 
       // One assignment per tick, so a stale countdown left over from the
       // previous answer is corrected on the first sample of this one.
@@ -153,20 +220,33 @@ export function useSpeechActivity({
         }
         remaining = left;
       } else if (!spoken) {
-        // Not a word yet — count down to giving up, and submit when it runs
-        // out so the interview is never stuck waiting on someone silent.
-        const left = Math.ceil((maxWaitSeconds * 1000 - (now - startedAt)) / 1000);
+        // Not a word yet. Climb the ladder: reassure, offer it more simply,
+        // then move on. Each rung fires once.
+        const waited = now - startedAt - pausedMs;
 
-        if (left <= 0) {
-          if (fired) return;
-          fired = true;
-          clearInterval(timer);
-          setSecondsRemaining(null);
-          setNoAnswerIn(null);
-          onSilenceRef.current();
-          return;
+        const due = stagesRef.current.find(
+          (stage) =>
+            stage.at * 1000 <= waited && !doneRef.current.has(stage.id),
+        );
+        if (due) {
+          doneRef.current.add(due.id);
+          if (due.final) {
+            if (fired) return;
+            fired = true;
+            clearInterval(timer);
+            setSecondsRemaining(null);
+            setNoAnswerIn(null);
+            onStageRef.current(due.id);
+            onSilenceRef.current();
+            return;
+          }
+          onStageRef.current(due.id);
         }
-        waiting = left;
+
+        const last = stagesRef.current[stagesRef.current.length - 1];
+        waiting = last
+          ? Math.max(0, Math.ceil((last.at * 1000 - waited) / 1000))
+          : null;
       }
 
       setSecondsRemaining(remaining);
@@ -179,7 +259,7 @@ export function useSpeechActivity({
       analyser.disconnect();
       void context.close().catch(() => undefined);
     };
-  }, [stream, active, silenceSeconds, minSpeechSeconds, maxWaitSeconds]);
+  }, [stream, active, silenceSeconds, minSpeechSeconds]);
 
   // Guarded rather than cleared: while nothing is being watched there is no
   // countdown, whatever the last sample happened to leave behind.

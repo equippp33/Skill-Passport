@@ -2,6 +2,7 @@ import "server-only";
 
 import { env } from "~/env";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
+import { recordUsage } from "~/server/interview/usage";
 import { timed } from "./timing";
 
 const kb = (bytes: number) => `${Math.round(bytes / 1024)}KB`;
@@ -30,6 +31,15 @@ const TTS_RETRY_OPTS = { attempts: 1, baseDelayMs: 300 };
 
 /** bulbul:v3 caps at 2500 chars; stay well under and never send more. */
 const TTS_MAX_CHARS = 1500;
+
+/**
+ * The interviewer's natural speaking rate.
+ *
+ * 1.0 is the model's own pace. A candidate who wants it slower asks, and that
+ * is handled on the client with `playbackRate` so it applies to clips that
+ * were voiced before they asked — re-synthesising would only fix the next one.
+ */
+const DEFAULT_TTS_PACE = 1;
 
 function authHeaders(): Record<string, string> {
   // Header name per Sarvam docs. Never logged — see `logProviderFailure`.
@@ -166,6 +176,9 @@ export async function transcribeAudio(input: {
     };
   };
 
+  // Billed per request against the audio sent, so both are recorded.
+  recordUsage({ sttRequests: 1, sttAudioBytes: input.audio.length });
+
   return timed(
     "stt.sarvam",
     () => withRetry(run, RETRY_OPTS),
@@ -202,7 +215,20 @@ export interface SpeechResult {
  */
 export async function generateSpeech(
   text: string,
-  options: { languageCode: string; speaker?: string },
+  options: {
+    languageCode: string;
+    speaker?: string;
+    /**
+     * Speaking rate, 1.0 being the model's own.
+     *
+     * Was pinned at 0.9 in the request body to make questions easier to
+     * follow. It made the interviewer sound laboured — the clip is ~19%
+     * longer at 0.9 than at 1.0 on the same sentence — so the default is
+     * back to natural and slowing down is now something a candidate asks
+     * for, applied per attempt.
+     */
+    pace?: number;
+  },
 ): Promise<SpeechResult> {
   const clipped = text.trim().slice(0, TTS_MAX_CHARS);
   if (!clipped) {
@@ -227,9 +253,7 @@ export async function generateSpeech(
           model: env.SARVAM_TTS_MODEL,
           // MP3 instead of the default WAV — ~10x smaller to store and send.
           output_audio_codec: "mp3",
-          // ponytail: slightly slower than default (1.0) so questions are
-          // easier to follow. Tune here if it needs to change.
-          pace: 0.9,
+          pace: options.pace ?? DEFAULT_TTS_PACE,
         }),
       },
       TTS_TIMEOUT_MS,
@@ -273,6 +297,10 @@ export async function generateSpeech(
 
     return { audio, mimeType: "audio/mpeg" };
   };
+
+  // `clipped`, not the caller's text: TTS is billed on what is sent, and
+  // anything past TTS_MAX_CHARS was cut before the request.
+  recordUsage({ ttsCharacters: clipped.length });
 
   let out: SpeechResult | null = null;
   return timed(

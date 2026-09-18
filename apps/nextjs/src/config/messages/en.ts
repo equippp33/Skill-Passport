@@ -81,6 +81,18 @@ export const en = {
     languageNotice:
       "The whole assessment — questions, your answers and the report — is in {language}.",
     ownLanguageTitle: "You can answer in your own language",
+    backgroundTitle: "What do you do?",
+    backgroundBody:
+      "Are you studying or working? Tell us where, and what you do — a line or two is plenty. Your questions are built around this, so the more real it is, the better they fit.",
+    courseLabel: "Course or studies",
+    coursePlaceholder: "e.g. Final year B.Com",
+    experienceLabel: "Any work before this?",
+    experiencePlaceholder:
+      "e.g. Weekends at my uncle's clothing shop. Leave blank if none.",
+    languageTitle: "Choose your language",
+    languageBody:
+      "The whole interview — the questions, your answers and your report — will be in the language you pick. You can change it at any time during the interview.",
+    needLanguage: "Choose a language to continue.",
     groupHowItWorks: "How it works",
     groupWhatYouNeed: "What you need",
     groupYourAnswers: "Your answers",
@@ -144,6 +156,19 @@ export const en = {
     tooShort: "That answer was too short. Please answer again.",
     greeting:
       "Hello, and welcome. I will ask you a few questions about how you work. Answer naturally — there are no trick questions.",
+    /**
+     * Shown one after another while the next question is prepared.
+     *
+     * A progress bar would be a lie — the wait is a provider round
+     * trip, not a measurable journey. These read as someone thinking,
+     * which is what is actually happening.
+     */
+    thinkingLines: [
+      "Thinking about that…",
+      "Putting the next question together…",
+      "One moment…",
+      "Almost there…",
+    ],
     savingRecordings: "Saving your recordings — nearly done…",
     processingHint:
       "Transcribing and evaluating your answer. This usually takes a few seconds — keep this tab open.",

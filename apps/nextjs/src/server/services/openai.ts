@@ -4,9 +4,10 @@ import OpenAI from "openai";
 import { z } from "zod";
 
 import { env } from "~/env";
-import type { WorkSkill } from "~/config/work-skills";
+import type { WorkSkill, WorkSkillId } from "~/config/work-skills";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
 import { timed } from "./timing";
+import { recordUsage } from "~/server/interview/usage";
 import { requestStructuredViaSarvam } from "./sarvam-chat";
 import type { SarvamChatKind } from "./sarvam-chat";
 import {
@@ -267,6 +268,14 @@ async function requestStructured<T>(args: {
         },
       });
       raw = response.output_text;
+      // Exact counts from the provider rather than an estimate from the
+      // prompt length: reasoning and cached tokens are billed differently and
+      // only the response knows the real figures.
+      recordUsage({
+        llmRequests: 1,
+        llmInputTokens: response.usage?.input_tokens ?? 0,
+        llmOutputTokens: response.usage?.output_tokens ?? 0,
+      });
     } catch (error) {
       wrapOpenAIError(error);
     }
@@ -366,6 +375,203 @@ export interface GeneratedQuestion {
  * question in front of them. `history` is passed so the model does not repeat
  * itself; it is allowed to be empty for the opening question.
  */
+/* -------------------------------------------------------------------------- */
+/*                          Batch preparation                                 */
+/* -------------------------------------------------------------------------- */
+
+export interface PreparedQuestion {
+  /** The skill this assesses, or null for an unscored comfort question. */
+  skillId: WorkSkillId | null;
+  question: string;
+  translation: string | null;
+  /** The same question, restated for someone who did not follow it. */
+  easier: string;
+  easierTranslation: string | null;
+  /** Follow-ups that work whatever the candidate said. Two, in a fixed order. */
+  probes: { text: string; translation: string | null }[];
+}
+
+export const preparedBatchSchema = z.object({
+  questions: z
+    .array(
+      z.object({
+        skillId: z.string(),
+        question: z.string().min(1).max(600),
+        questionTranslation: z.string().max(600),
+        easierQuestion: z.string().min(1).max(600),
+        easierQuestionTranslation: z.string().max(600),
+        probeExample: z.string().min(1).max(400),
+        probeOutcome: z.string().min(1).max(400),
+      }),
+    )
+    // Generous rather than exact. This is a guard against a runaway
+    // response, not a restatement of how many questions we asked for: the
+    // caller takes the ones it wants and ignores the rest, so a model that
+    // returns one extra should not cost the whole batch a retry.
+    .max(16),
+});
+
+const PREPARED_BATCH_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["questions"],
+  properties: {
+    questions: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "skillId",
+          "question",
+          "questionTranslation",
+          "easierQuestion",
+          "easierQuestionTranslation",
+          "probeExample",
+          "probeOutcome",
+        ],
+        properties: {
+          skillId: {
+            type: "string",
+            description:
+              'The work skill id given for this question, copied exactly. Use "comfort" for a warm-up question.',
+          },
+          question: {
+            type: "string",
+            description: "The question, in the interview language.",
+          },
+          questionTranslation: {
+            type: "string",
+            description:
+              "Plain English translation. Empty string when the interview is already English.",
+          },
+          easierQuestion: {
+            type: "string",
+            description:
+              "The SAME question, shorter and simpler, the way a person rephrases when someone did not follow. Never answers it, hints at an answer, or asks something different.",
+          },
+          easierQuestionTranslation: {
+            type: "string",
+            description: "Plain English translation of easierQuestion.",
+          },
+          probeExample: {
+            type: "string",
+            description:
+              "A follow-up asking for ONE concrete instance — when, where, what actually happened. Must work whatever they answered.",
+          },
+          probeOutcome: {
+            type: "string",
+            description:
+              "A follow-up asking what the result was, or what they would do differently. Must work whatever they answered.",
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+/**
+ * Write a batch of questions, each with a simpler restatement and two
+ * follow-up probes, before the candidate reaches them.
+ *
+ * This is what lets the interview run without a model call in it. Everything
+ * the interviewer might say for these turns is written here, once, and voiced
+ * in the background; the interview itself then only ever picks between things
+ * that already exist.
+ *
+ * A batch rather than one question at a time because the model can see its own
+ * siblings and avoid writing four variations of "tell me about a time you were
+ * late". Batches stay small — four skills — because output grows fast in a
+ * non-Latin script and the provider budgets are per call.
+ *
+ * The two probes are named and differently shaped on purpose. A `probes: []`
+ * array reliably produces two paraphrases of "tell me more"; asking separately
+ * for a concrete instance and for the outcome produces two questions worth
+ * asking.
+ */
+export async function prepareQuestions(args: {
+  ctx: InterviewContext;
+  /** The skills to write for, in order. Empty means comfort questions. */
+  skills: WorkSkill[];
+  /** How many warm-up questions to write when `skills` is empty. */
+  comfortCount?: number;
+  /** Everything already asked, so this batch does not repeat it. */
+  history: PriorTurn[];
+}): Promise<PreparedQuestion[]> {
+  const { ctx, skills, comfortCount = 0, history } = args;
+  const isComfort = skills.length === 0;
+
+  const expected = isComfort ? comfortCount : skills.length;
+
+  const brief = isComfort
+    ? [
+        `Write EXACTLY ${comfortCount} WARM-UP questions to open the interview.`,
+        `They are NOT scored. Their only job is to get a nervous person`,
+        `talking: easy, personal, impossible to get wrong. Ask about what`,
+        `they are studying, what they enjoy, a normal day. Never about a`,
+        `weakness, a failure, or anything they must justify.`,
+        `Set skillId to "comfort" for every one.`,
+      ]
+    : [
+        `Write EXACTLY ${skills.length} questions — ONE for each of the skills`,
+        `below, in this order. Do not write questions for any other skill.`,
+        `Copy the skill id into skillId exactly as given.`,
+        "",
+        skills.map((skill) => skillBlock(skill)).join("\n\n"),
+      ];
+
+  const result = await requestStructured({
+    instructions: interviewerRules(ctx),
+    input: [
+      contextBlock(ctx),
+      // The framework names all ten work skills. Sending it alongside a
+      // request for two warm-up questions had the model write one question
+      // per skill instead — so it goes only to the batches that are actually
+      // about skills.
+      ...(isComfort ? [] : ["", frameworkBlock()]),
+      ...(history.length > 0
+        ? [
+            "",
+            "## Questions already asked (never repeat these, or anything close)",
+            historyBlock(history),
+          ]
+        : []),
+      "",
+      ...brief,
+      "",
+      `For EVERY question also write easierQuestion (the same question,`,
+      `simpler) and two follow-ups: probeExample and probeOutcome. The`,
+      `follow-ups are asked AFTER an answer you cannot see, so they must make`,
+      `sense whatever the candidate said — keep them short and general.`,
+      "",
+      `Return exactly ${expected} entries in "questions".`,
+    ].join("\n"),
+    schemaName: "prepared_questions",
+    jsonSchema: PREPARED_BATCH_JSON_SCHEMA,
+    validator: preparedBatchSchema,
+    kind: "preparation",
+  });
+
+  return result.questions.map((row, index) => {
+    const translate = (value: string): string | null => {
+      if (ctx.language.promptName === "English") return null;
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    };
+    return {
+      skillId: isComfort ? null : (skills[index]?.id ?? null),
+      question: row.question.trim(),
+      translation: translate(row.questionTranslation),
+      easier: row.easierQuestion.trim(),
+      easierTranslation: translate(row.easierQuestionTranslation),
+      probes: [
+        { text: row.probeExample.trim(), translation: translate("") },
+        { text: row.probeOutcome.trim(), translation: translate("") },
+      ],
+    };
+  });
+}
+
 export async function generateQuestion(args: {
   ctx: InterviewContext;
   skill: WorkSkill;
@@ -417,105 +623,6 @@ export async function generateQuestion(args: {
     });
   }
   return { question, translation: normaliseTranslation(ctx, result) };
-}
-
-/**
- * Is this utterance an ANSWER, or a DOUBT the interviewer should respond to?
- *
- * A real interviewer never scores "sorry, can you say that again?" or "what do
- * you mean?" as the answer — they respond and re-ask. This replaces the old
- * fixed phrase list with the model's judgment, so any phrasing of a doubt, in
- * any language, is caught rather than only the ones someone thought to list.
- *
- * Deliberately tiny and on the "conversation" (fast) model: it runs on the
- * candidate's critical path, before we decide whether to score or re-ask.
- */
-export async function classifyUtterance(args: {
-  question: string;
-  transcript: string;
-  /** Interview language, so the model reads the question in context. */
-  languageName: string;
-}): Promise<"answer" | "doubt"> {
-  const result = await requestStructured({
-    instructions: [
-      "You triage ONE thing a candidate said in a spoken interview.",
-      "Decide whether it ANSWERS the interviewer's question, or is a DOUBT",
-      "raised INSTEAD of answering: a request to repeat, 'I didn't understand',",
-      "asking what to say or for the answer, asking a question back, OR mere",
-      "filler with no substance — 'okay', 'um', 'hmm', a false start, or",
-      "near-silence that says nothing about the question. All of those are a",
-      "DOUBT (the candidate needs the question again), not an answer.",
-      "A brief but GENUINE attempt to answer — even vague or partial — is an",
-      "ANSWER. When it is a real attempt, choose answer.",
-      "Return intent only.",
-    ].join(" "),
-    input: [
-      `Interviewer asked (in ${args.languageName}): ${args.question}`,
-      `Candidate said: ${untrusted("CANDIDATE", args.transcript)}`,
-    ].join("\n"),
-    schemaName: "utterance_intent",
-    jsonSchema: {
-      type: "object",
-      properties: { intent: { type: "string", enum: ["answer", "doubt"] } },
-      required: ["intent"],
-      additionalProperties: false,
-    },
-    validator: z.object({ intent: z.enum(["answer", "doubt"]) }),
-    kind: "conversation",
-  });
-  return result.intent;
-}
-
-/**
- * A short SPOKEN reply to a candidate's doubt — never written to the screen.
- *
- * The candidate asked something instead of answering ("what does this word
- * mean?", "I couldn't follow"), or said nothing usable. A real interviewer
- * answers that out loud and leaves the question standing. This produces only
- * the line to speak; the question text on screen never changes.
- */
-export async function generateDoubtResponse(args: {
-  question: string;
-  doubtTranscript: string;
-  /** Interview language — the reply is spoken in it, in its own script. */
-  languageName: string;
-}): Promise<string> {
-  const result = await requestStructured({
-    instructions: [
-      "You are a warm, patient interviewer. The candidate did NOT answer your",
-      "question — they raised a doubt about it. Reply BRIEFLY, as words spoken",
-      `aloud, in ${args.languageName} written in that language's OWN script`,
-      "(never Latin letters). If they did not understand a particular word,",
-      "explain THAT word in simple everyday terms. If they could not follow,",
-      "restate the question's meaning simply. If they said nothing meaningful,",
-      "gently encourage them. Always end by inviting them to answer. One or two",
-      "short sentences. NEVER answer the question for them or give an example",
-      "answer.",
-    ].join(" "),
-    input: [
-      `Your question was: ${args.question}`,
-      `The candidate said: ${untrusted("CANDIDATE", args.doubtTranscript)}`,
-    ].join("\n"),
-    schemaName: "doubt_reply",
-    jsonSchema: {
-      type: "object",
-      properties: { reply: { type: "string" } },
-      required: ["reply"],
-      additionalProperties: false,
-    },
-    validator: z.object({ reply: z.string() }),
-    kind: "conversation",
-  });
-  const reply = result.reply.trim();
-  if (!reply) {
-    throw new ProviderError({
-      provider: "openai",
-      message: "empty doubt reply",
-      userMessage: "We could not prepare a reply. Please try again.",
-      retryable: true,
-    });
-  }
-  return reply;
 }
 
 /**
@@ -852,61 +959,3 @@ export async function translateQuestion(
   };
 }
 
-/**
- * Re-ask a question the candidate did not catch — the SAME question, said
- * again more simply.
- *
- * For "can you repeat that?" / "I didn't understand". It must never answer the
- * question, hint at an answer, or drift to a different one — only restate what
- * was asked, in plainer words.
- */
-export async function rephraseQuestionSimpler(
-  ctx: InterviewContext,
-  question: string,
-): Promise<GeneratedQuestion> {
-  const result = await requestStructured({
-    instructions: [
-      "The candidate did not catch an interview question and asked for it",
-      `again. Say the SAME question again in ${ctx.language.promptName}, shorter`,
-      "and simpler, the way a person would rephrase when someone did not hear.",
-      "NEVER answer it, give an example answer, hint at what to say, or ask a",
-      "different question — only restate what was asked, more clearly.",
-      "Write SPOKEN language, keeping ordinary workplace words in English",
-      "(customer, team, manager, shift). One short sentence. Return only that.",
-    ].join(" "),
-    input: [
-      `Target language: ${ctx.language.promptName}.`,
-      "",
-      "Question to restate more simply:",
-      untrusted("QUESTION", question),
-      "",
-      `Put the ${ctx.language.promptName} version in "question".`,
-      ctx.language.promptName === "English"
-        ? 'Leave "questionTranslation" as an empty string.'
-        : 'Put a plain English rendering in "questionTranslation".',
-    ].join("\n"),
-    schemaName: "translated_question",
-    jsonSchema: TRANSLATED_QUESTION_JSON_SCHEMA,
-    validator: translatedQuestionSchema,
-    kind: "conversation",
-  });
-
-  const restated = result.question.trim();
-  if (!restated) {
-    throw new ProviderError({
-      provider: "openai",
-      message: "openai returned an empty re-ask",
-      userMessage: "We could not repeat the question. Please try again.",
-      retryable: true,
-    });
-  }
-
-  const english = result.questionTranslation.trim();
-  return {
-    question: restated,
-    translation:
-      ctx.language.promptName === "English" || english === restated
-        ? null
-        : english || null,
-  };
-}

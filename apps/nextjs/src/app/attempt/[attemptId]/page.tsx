@@ -63,6 +63,18 @@ export default async function AttemptPage({
           aiReady={isOpenAIConfigured()}
           m={m}
           languageName="your own language"
+          languages={SELECTABLE_INTERVIEW_LANGUAGES.map((l) => ({
+            key: l.key,
+            displayName: l.displayName,
+            promptName: l.promptName,
+            symbol: l.symbol,
+          }))}
+          // English, not INTERVIEW_LANGUAGE: that env var is the default for
+          // an instance, and pre-selecting Marathi from it meant a candidate
+          // who did not read the grid carefully started an interview in a
+          // language they had not chosen. English is the safe default to
+          // deliberately change.
+          defaultLanguage="english"
           interviewTitle={interview.title}
           interviewDescription={interview.description}
         />
