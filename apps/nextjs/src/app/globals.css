@@ -264,37 +264,44 @@ li {
  * invisible. The previous version swung each bank left and right on an
  * ease-in-out, which reads as sloshing rather than sky.
  */
-@keyframes orb-drift {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(-50%, 0, 0);
-  }
-}
-
 /**
- * A slow rise and fall, on a wrapper so it composes with the drift rather
- * than fighting it for the same `transform`. Two of them, at periods with no
- * useful common factor, so the banks never line up.
+ * Cloud rolling past.
+ *
+ * Each mass is drawn on a box half again as wide as the orb and moves along
+ * its own slow path — different distances, different directions, and periods
+ * (44/57/69s) with no useful common factor, so the three never line up and the
+ * loop is not findable by watching it.
+ *
+ * Scale as well as position: cloud that only slides looks like a texture being
+ * dragged across, while cloud that also swells reads as something turning over.
  */
-@keyframes orb-bob-a {
+@keyframes orb-roll-a {
   0%,
   100% {
-    transform: translate3d(0, 1.5%, 0);
+    transform: translate3d(-8%, 2%, 0) scale(1.04);
   }
   50% {
-    transform: translate3d(0, -3%, 0);
+    transform: translate3d(7%, -3%, 0) scale(1.14);
   }
 }
 
-@keyframes orb-bob-b {
+@keyframes orb-roll-b {
   0%,
   100% {
-    transform: translate3d(0, -2%, 0);
+    transform: translate3d(6%, -2%, 0) scale(1.1);
   }
   50% {
-    transform: translate3d(0, 2.5%, 0);
+    transform: translate3d(-9%, 3%, 0) scale(1);
+  }
+}
+
+@keyframes orb-roll-c {
+  0%,
+  100% {
+    transform: translate3d(-5%, -1%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(9%, 4%, 0) scale(1.12);
   }
 }
 
@@ -332,7 +339,6 @@ li {
  */
 @media (prefers-reduced-motion: reduce) {
   .orb-layer,
-  .orb-bob,
   .orb-breathe,
   .orb-ripple {
     animation: none !important;

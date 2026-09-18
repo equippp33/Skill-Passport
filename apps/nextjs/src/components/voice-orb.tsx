@@ -13,9 +13,9 @@ import { useEffect, useRef } from "react";
  * expected of them, moves with the voice when the interviewer speaks, moves
  * with THEIR voice while they answer, and turns over slowly while it thinks.
  *
- * Original work: a window onto sky. A blue crown falling away into pale haze,
- * with veils of vapour drifting across it one way at three different speeds —
- * soft enough to read as mist rather than as clouds with edges.
+ * Original work: a window into cloud. A blue crown at the top, everything
+ * below it lit milk-white, with three oversized masses rolling slowly past
+ * each other underneath so the light in it never sits still.
  *
  * Performance, which matters because this is on screen for the whole
  * interview: no `filter: blur()` anywhere (it repaints the blurred region
@@ -209,71 +209,43 @@ export function VoiceOrb({
         }}
       >
         {/*
-         * Vapour, in three veils.
+         * The cloud the orb is looking through.
          *
-         * Not clouds with edges — mist. Each veil is a strip twice the orb's
-         * width carrying a tile one orb wide, repeated, so drifting it
-         * exactly -50% returns the pattern to where it began and the loop
-         * cannot be seen. The drift is linear and one-way; the slow rise and
-         * fall sits on a wrapper so the two transforms compose rather than
-         * overwrite each other.
+         * Three masses, each much larger than the orb and each drifting on
+         * its own slow path. Oversized and few, on purpose: the previous
+         * version tiled a repeating strip, and a pattern that repeats at a
+         * fixed width reads as horizontal banding however soft the shapes
+         * are. Nothing here repeats, so nothing stripes.
          *
-         * The shapes are deliberately wide and shallow — ellipses several
-         * times broader than they are tall, at low alpha, fading from the
-         * middle out. Anything rounder or more opaque starts to read as a
-         * cartoon cloud, which is what this replaced.
-         *
-         * The top veil is the one that matters: it lies across the line where
-         * the blue gives way, and its drift keeps that boundary feathered and
-         * moving instead of a painted horizon.
+         * They are also mostly opaque rather than wispy. This is not sky with
+         * clouds in it — it is the inside of a cloud, lit from above, which
+         * is why the blue survives only as a crown at the top and everything
+         * below it is milk.
          *
          * Still pure gradients — no `filter: blur()`, so the whole thing
          * stays on the compositor for the length of an interview.
          */}
         <div
-          className="orb-bob absolute inset-x-0 top-[14%] h-[30%]"
-          style={{ animation: "orb-bob-b 23s ease-in-out infinite" }}
-        >
-          <div
-            className="orb-layer absolute inset-y-0 left-0 w-[200%]"
-            style={{
-              backgroundImage: VEIL_CROWN,
-              backgroundSize: "50% 100%",
-              backgroundRepeat: "repeat-x",
-              animation: `orb-drift ${speaking ? "34s" : "58s"} linear infinite`,
-            }}
-          />
-        </div>
-
+          className="orb-layer absolute inset-[-45%]"
+          style={{
+            background: MASS_LOW,
+            animation: `orb-roll-a ${speaking ? "26s" : "44s"} ease-in-out infinite`,
+          }}
+        />
         <div
-          className="orb-bob absolute inset-x-0 top-[32%] h-[36%]"
-          style={{ animation: "orb-bob-a 19s ease-in-out infinite" }}
-        >
-          <div
-            className="orb-layer absolute inset-y-0 left-0 w-[200%]"
-            style={{
-              backgroundImage: VEIL_MID,
-              backgroundSize: "50% 100%",
-              backgroundRepeat: "repeat-x",
-              animation: `orb-drift ${speaking ? "26s" : "44s"} linear infinite`,
-            }}
-          />
-        </div>
-
+          className="orb-layer absolute inset-[-45%]"
+          style={{
+            background: MASS_MID,
+            animation: `orb-roll-b ${speaking ? "34s" : "57s"} ease-in-out infinite`,
+          }}
+        />
         <div
-          className="orb-bob absolute inset-x-0 top-[54%] h-[44%]"
-          style={{ animation: "orb-bob-a 29s ease-in-out infinite" }}
-        >
-          <div
-            className="orb-layer absolute inset-y-0 left-0 w-[200%]"
-            style={{
-              backgroundImage: VEIL_BASE,
-              backgroundSize: "50% 100%",
-              backgroundRepeat: "repeat-x",
-              animation: `orb-drift ${speaking ? "19s" : "32s"} linear infinite`,
-            }}
-          />
-        </div>
+          className="orb-layer absolute inset-[-45%]"
+          style={{
+            background: MASS_EDGE,
+            animation: `orb-roll-c ${speaking ? "41s" : "69s"} ease-in-out infinite`,
+          }}
+        />
 
         {/* The curve of the glass. Keeps it reading as a sphere now that the
             inside is flat sky rather than a lit ball. */}
@@ -290,36 +262,38 @@ export function VoiceOrb({
 }
 
 /**
- * One tile of vapour, as a stack of gradients.
+ * A mass of cloud, as a stack of gradients.
  *
- * Read each line as a wisp: `radial-gradient(<width> <height> at <x> <y>, ...)`.
- * They are wide and shallow — 40-70% across against 7-14% tall — and start
- * well under full opacity, so they haze the sky rather than sit on top of it.
+ * Each is drawn on a box half again as wide as the orb and then drifts across
+ * it, so only part of any mass is ever visible and the shapes that reach the
+ * edge are cut by the sphere rather than fading out inside it — which is what
+ * stops them reading as blobs floating in a circle.
  *
- * Nothing sits within about a tenth of either edge, so no wisp is cut in half
- * at the seam where the tile repeats.
+ * The alpha stays high a long way out before falling, so the body is solid and
+ * only the last third is soft. Low-alpha gradients look like fog; this should
+ * look like cloud with light coming through it.
  */
 
-/** Across the blue boundary: the brightest, and the one that shapes it. */
-const VEIL_CROWN = [
-  "radial-gradient(52% 13% at 22% 62%, rgba(255,255,255,0.62) 0%, rgba(255,255,255,0.3) 42%, rgba(255,255,255,0) 76%)",
-  "radial-gradient(38% 8% at 44% 44%, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.16) 46%, rgba(255,255,255,0) 80%)",
-  "radial-gradient(60% 11% at 72% 70%, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.24) 44%, rgba(255,255,255,0) 78%)",
-  // A little shade, so the haze has depth instead of reading as flat fog.
-  "radial-gradient(44% 7% at 56% 30%, rgba(120,150,220,0.18) 0%, rgba(120,150,220,0) 72%)",
+/** The bulk of it, filling the lower two-thirds. */
+const MASS_LOW = [
+  "radial-gradient(62% 44% at 32% 76%, rgba(255,255,255,0.99) 0%, rgba(255,255,255,0.95) 46%, rgba(255,255,255,0.55) 70%, rgba(255,255,255,0) 88%)",
+  "radial-gradient(54% 38% at 72% 84%, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.9) 48%, rgba(255,255,255,0.4) 72%, rgba(255,255,255,0) 90%)",
+  "radial-gradient(46% 30% at 50% 60%, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.7) 50%, rgba(255,255,255,0) 82%)",
 ].join(", ");
 
-/** The body of the haze. Softest of the three. */
-const VEIL_MID = [
-  "radial-gradient(64% 12% at 30% 40%, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.2) 45%, rgba(255,255,255,0) 80%)",
-  "radial-gradient(46% 9% at 66% 60%, rgba(255,255,255,0.45) 0%, rgba(255,255,255,0.17) 46%, rgba(255,255,255,0) 80%)",
-  "radial-gradient(34% 14% at 48% 74%, rgba(255,255,255,0.38) 0%, rgba(255,255,255,0.13) 48%, rgba(255,255,255,0) 82%)",
+/** The bank that makes the crown boundary uneven as it passes under it. */
+const MASS_MID = [
+  "radial-gradient(52% 26% at 26% 50%, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.78) 46%, rgba(255,255,255,0.3) 70%, rgba(255,255,255,0) 88%)",
+  "radial-gradient(44% 20% at 68% 44%, rgba(255,255,255,0.88) 0%, rgba(255,255,255,0.68) 48%, rgba(255,255,255,0) 84%)",
+  // A cooler hollow, so the white has some shape in it rather than reading flat.
+  "radial-gradient(34% 18% at 48% 62%, rgba(150,175,235,0.22) 0%, rgba(150,175,235,0) 76%)",
 ].join(", ");
 
-/** Nearly lost in the pale bottom — just enough to keep it from going flat. */
-const VEIL_BASE = [
-  "radial-gradient(70% 14% at 36% 44%, rgba(255,255,255,0.42) 0%, rgba(255,255,255,0.15) 48%, rgba(255,255,255,0) 82%)",
-  "radial-gradient(50% 10% at 74% 66%, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.11) 50%, rgba(255,255,255,0) 84%)",
+/** Thin stuff riding up into the blue, keeping the crown from being a band. */
+const MASS_EDGE = [
+  "radial-gradient(40% 14% at 34% 36%, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.42) 50%, rgba(255,255,255,0) 82%)",
+  "radial-gradient(30% 10% at 64% 30%, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0.3) 52%, rgba(255,255,255,0) 84%)",
+  "radial-gradient(48% 12% at 52% 44%, rgba(255,255,255,0.66) 0%, rgba(255,255,255,0.36) 50%, rgba(255,255,255,0) 84%)",
 ].join(", ");
 
 /** Announced to screen readers, which cannot see any of the above. */

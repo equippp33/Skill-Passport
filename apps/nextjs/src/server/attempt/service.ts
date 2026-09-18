@@ -22,7 +22,10 @@ import {
   languageFromCode,
   resolveInterviewLanguage,
 } from "~/config/languages";
-import type { InterviewLanguageKey } from "~/config/languages";
+import type {
+  InterviewLanguage,
+  InterviewLanguageKey,
+} from "~/config/languages";
 import {
   openerFor,
   PROBE_SPOKEN_LANGUAGE_CODE,
@@ -1150,6 +1153,23 @@ async function chooseLanguageInner(
     language,
   );
 
+  /**
+   * The fixed lines follow the language too.
+   *
+   * In the background: re-voicing eight short clips takes about a second, and
+   * none of them is needed until the candidate goes quiet — whereas the
+   * question they are looking at is needed now.
+   */
+  scheduleBackground(`re-voice fillers for ${attempt.id}`, () =>
+    withUsageScope(attempt.id, () =>
+      refreshFillersForLanguage(
+        attempt.id,
+        language,
+        firstNameOf(attempt.candidateName),
+      ),
+    ),
+  );
+
   const turns = await getTurns(attempt.id);
   const next = LANGUAGE_PROBE_TURN + 1;
 
@@ -1569,6 +1589,53 @@ async function storeFillers(
     .insert(interviewTurnVariantsTable)
     .values(rows)
     .onConflictDoNothing();
+}
+
+/**
+ * Say all the fixed lines again, in the language just chosen.
+ *
+ * They are written once, at the start, in whatever language the interview
+ * opened in — so without this a candidate who switches to Hindi keeps being
+ * asked "is everything alright?" and "did you not follow the question?" in
+ * English. Those lines exist to reassure somebody who is struggling, and
+ * arriving in the language they just told us they cannot follow is the worst
+ * possible moment to get it wrong.
+ *
+ * The old rows go, along with their clips: they are attempt-scoped and nothing
+ * will ever point at them again, so leaving them behind is storage paid for
+ * and never read. Discarding runs in the background because the candidate is
+ * waiting on the switch and a bucket delete is not their problem.
+ */
+async function refreshFillersForLanguage(
+  attemptId: string,
+  language: InterviewLanguage & { key: InterviewLanguageKey },
+  name: string | null,
+): Promise<void> {
+  const stale = await db.query.interviewTurnVariantsTable.findMany({
+    where: and(
+      eq(interviewTurnVariantsTable.attemptId, attemptId),
+      eq(interviewTurnVariantsTable.role, "filler"),
+    ),
+    columns: { audioId: true },
+  });
+
+  await db
+    .delete(interviewTurnVariantsTable)
+    .where(
+      and(
+        eq(interviewTurnVariantsTable.attemptId, attemptId),
+        eq(interviewTurnVariantsTable.role, "filler"),
+      ),
+    );
+
+  await storeFillers(attemptId, language.key, name);
+  await voicePendingVariants(attemptId, language.code);
+
+  scheduleBackground(`discard old fillers for ${attemptId}`, async () => {
+    for (const row of stale) {
+      if (row.audioId) await discardAudioClip(row.audioId);
+    }
+  });
 }
 
 /**
@@ -2148,13 +2215,20 @@ async function handleAnsweredTurn(args: {
   const words = transcript.trim().split(/\s+/).filter(Boolean);
 
   /**
-   * Did they actually say something, or just make a noise at us?
+   * Was that the whole answer, or the start of one?
    *
-   * Two words or twenty-five characters, whichever they cross first. Counting
-   * words alone under-reads scripts that write a whole clause without spaces;
-   * counting characters alone over-reads a short but complete English answer.
+   * A sentence or less counts as short — twelve words, or sixty characters,
+   * whichever they cross first. Counting words alone under-reads scripts that
+   * run a whole clause together without spaces; counting characters alone
+   * over-reads a terse but complete English answer.
+   *
+   * The old bar was two words, which only caught a grunt. Someone who answers
+   * "I checked the stock and told my manager" has given a real answer and a
+   * thin one, and asking whether they want to add anything is exactly what an
+   * interviewer would do there — it is the difference between a candidate who
+   * has finished and one who has not got going.
    */
-  const isThinAnswer = words.length <= 2 || transcript.trim().length < 25;
+  const isThinAnswer = words.length <= 12 || transcript.trim().length < 60;
 
   /**
    * "Would you like to add anything?" — once, and only for a thin answer.
