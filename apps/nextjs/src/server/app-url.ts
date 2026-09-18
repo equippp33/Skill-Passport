@@ -5,15 +5,26 @@ import { headers } from "next/headers";
 import { env } from "~/env";
 
 /**
- * Where this app lives in production.
+ * Every domain this app answers on.
  *
  * Hardcoded so a deployment needs no configuration to produce correct
- * candidate links — there is one public domain, and it is not a secret.
- * `APP_URL` still overrides it, which is the thing to reach for if the
- * domain ever changes or a second environment appears; changing it here
- * means a rebuild, changing the variable does not.
+ * candidate links. None of these is a secret, and the alternative — an
+ * environment variable per box — is a setting that is silently wrong until
+ * somebody notices their links point at the wrong database.
+ *
+ * Production first: it is the answer whenever the request does not identify
+ * itself as one of the others.
+ *
+ * `APP_URL` still overrides the lot, which is the thing to reach for if a
+ * domain changes and you would rather not rebuild, or for a host that has no
+ * business being listed here.
  */
-const PRODUCTION_ORIGIN = "https://skillpassport.threepointolabs.com";
+const KNOWN_ORIGINS = [
+  "https://skillpassport.threepointolabs.com",
+  "https://test-skillpassport.threepointolabs.com",
+] as const;
+
+const PRODUCTION_ORIGIN = KNOWN_ORIGINS[0];
 
 /**
  * The origin this app is reachable at, from the server's point of view.
@@ -31,10 +42,12 @@ const PRODUCTION_ORIGIN = "https://skillpassport.threepointolabs.com";
  *  2. `VERCEL_PROJECT_PRODUCTION_URL`, then `VERCEL_URL` — the platform's
  *     own answer, correct for preview deployments where the host changes
  *     per build.
- *  3. `PRODUCTION_ORIGIN`, once `NODE_ENV` says this is production. Taken
- *     before the request headers deliberately: `Host` is supplied by the
- *     client, so trusting it in production would let a forged request mint
- *     a candidate link pointing at someone else's site.
+ *  3. In production, whichever of `KNOWN_ORIGINS` the request arrived on,
+ *     falling back to `PRODUCTION_ORIGIN`. The host is supplied by the
+ *     client, so it is used to SELECT from the compiled list and never
+ *     believed on its own — a forged `Host` matches nothing and gets
+ *     production, rather than minting a candidate link that points at
+ *     someone else's site.
  *  4. The forwarded headers on the current request — how development gets
  *     `localhost`, and how any other host answers for itself.
  *  5. `http://localhost:<PORT>`, when there is no request at all, such as
@@ -47,9 +60,14 @@ export async function appUrl(): Promise<string> {
     process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
   if (fromPlatform) return `https://${stripSlash(fromPlatform)}`;
 
-  if (env.NODE_ENV === "production") return PRODUCTION_ORIGIN;
-
   const fromRequest = await originFromRequest();
+
+  if (env.NODE_ENV === "production") {
+    // Selected from the list, not taken on trust. One build serves both hosts
+    // and each mints its own links; anything unrecognised is production.
+    return isKnown(fromRequest) ? fromRequest : PRODUCTION_ORIGIN;
+  }
+
   if (fromRequest) return fromRequest;
 
   return `http://localhost:${process.env.PORT ?? "3000"}`;
@@ -90,6 +108,13 @@ async function originFromRequest(): Promise<string | null> {
     (isLocal(host) ? "http" : "https");
 
   return `${protocol}://${stripSlash(host)}`;
+}
+
+/** Whether an origin is one we compiled in, and so may be served back. */
+function isKnown(
+  origin: string | null,
+): origin is (typeof KNOWN_ORIGINS)[number] {
+  return (KNOWN_ORIGINS as readonly string[]).includes(origin ?? "");
 }
 
 function isLocal(host: string): boolean {

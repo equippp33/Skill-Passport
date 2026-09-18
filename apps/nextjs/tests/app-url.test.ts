@@ -18,6 +18,7 @@ vi.mock("next/headers", () => ({
 }));
 
 const DOMAIN = "https://skillpassport.threepointolabs.com";
+const TEST_DOMAIN = "https://test-skillpassport.threepointolabs.com";
 
 /** `~/env` snapshots process.env when it loads, so re-import after stubbing. */
 async function load() {
@@ -64,6 +65,35 @@ describe("origin used in candidate links", () => {
     requestHeaders = {
       host: "evil.example",
       "x-forwarded-host": "evil.example",
+      "x-forwarded-proto": "https",
+    };
+
+    const { appUrl } = await load();
+    expect(await appUrl()).toBe(DOMAIN);
+  });
+
+  /**
+   * Two domains, one build. The test environment has to mint links to itself
+   * or every candidate it hands out lands on production — working, but against
+   * the wrong database, which is worse than a broken link.
+   */
+  it("serves a compiled-in second environment its own origin", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    requestHeaders = {
+      "x-forwarded-host": "test-skillpassport.threepointolabs.com",
+      "x-forwarded-proto": "https",
+    };
+
+    const { appUrl } = await load();
+    expect(await appUrl()).toBe(TEST_DOMAIN);
+  });
+
+  // The host selects from the compiled list; it is never believed on its own.
+  // A near-miss is still a miss.
+  it("falls back to production for a host that only looks like ours", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    requestHeaders = {
+      "x-forwarded-host": "test-skillpassport.threepointolabs.com.evil.example",
       "x-forwarded-proto": "https",
     };
 
