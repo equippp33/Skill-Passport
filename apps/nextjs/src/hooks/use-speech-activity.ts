@@ -37,21 +37,38 @@ import { useEffect, useRef, useState } from "react";
 // Too low and room static counts as talking and the answer never ends. 0.013
 // sits above a quiet room's floor (~0.005) while catching soft speech. Raise
 // toward 0.02 only if static is holding answers open on real mics.
-const SPEECH_RMS_THRESHOLD = 0.013;
+/**
+ * The FLOOR for the speech threshold — it never drops below this even in a
+ * silent room, so faint hiss is never mistaken for a voice.
+ */
+const SPEECH_RMS_FLOOR = 0.012;
+
+/**
+ * The CEILING for it — even a loud room never demands more than this, so the
+ * candidate is not forced to shout to be heard.
+ */
+const SPEECH_RMS_CEILING = 0.06;
+
+/**
+ * Speech must beat the measured room noise by this factor. A fan or background
+ * chatter sits at the noise floor; a real voice is several times louder, so
+ * requiring 2.5× the ambient level is what separates the two — and it adapts
+ * per room instead of guessing one number that works nowhere.
+ */
+const NOISE_MULTIPLIER = 2.5;
 
 /** How often the level is sampled. Fine enough for a 1s countdown. */
 const SAMPLE_INTERVAL_MS = 200;
 
 /**
- * How many consecutive samples above the threshold before we believe it is
- * really the candidate answering, not a cough, a knock or a burst of static.
+ * Net voiced time before we believe the candidate is actually answering.
  *
- * 3 × 200ms = ~0.6s of sustained voice. Without this, one noisy sample flips
- * "they spoke" true, which both suppresses the "take your time" nudge (it only
- * fires while nothing has been said) and starts the silence countdown — so the
- * opening question auto-submitted an empty answer and skipped itself.
+ * Built up while a real voice is present and decayed twice as fast during
+ * silence, so a cough, a knock, or an intermittent bit of noise can never
+ * accumulate to this — only genuine, sustained speech does. Until it is
+ * reached, nothing auto-submits and the "take your time" nudge still fires.
  */
-const VOICE_CONFIRM_TICKS = 3;
+const VOICE_ARM_MS = 1000;
 
 export function useSpeechActivity({
   stream,
@@ -147,7 +164,13 @@ export function useSpeechActivity({
     const samples = new Uint8Array(analyser.fftSize);
     const startedAt = Date.now();
     let lastVoiceAt = Date.now();
-    let voicedTicks = 0;
+    // What this room's own noise is measuring right now. Learned from the quiet
+    // moments and used to set the bar speech has to clear, so a noisy room and
+    // a silent one both work without a hand-tuned number.
+    let noiseFloor = 0.02;
+    // Net voiced time: ramps up on real speech, decays faster on silence, so a
+    // blip of noise never accumulates into "they answered".
+    let voicedMs = 0;
     let spoken = false;
     let fired = false;
     const firedStages = new Set<number>();
@@ -170,23 +193,32 @@ export function useSpeechActivity({
       const rms = Math.sqrt(sum / samples.length);
       const now = Date.now();
 
+      // The bar speech has to clear: well above the measured room noise, but
+      // clamped so a quiet room is not deaf and a loud one needs no shouting.
+      const threshold = Math.min(
+        SPEECH_RMS_CEILING,
+        Math.max(SPEECH_RMS_FLOOR, noiseFloor * NOISE_MULTIPLIER),
+      );
+
       // One assignment per tick, so a stale countdown left over from the
       // previous answer is corrected on the first sample of this one.
       // React bails out when the value has not actually changed.
       let remaining: number | null = null;
       let waiting: number | null = null;
 
-      if (rms >= SPEECH_RMS_THRESHOLD) {
-        // Only SUSTAINED voice counts. A single loud sample (cough, knock,
-        // static) must not flip `spoken`, or it both silences the nudge and
-        // arms the silence countdown against someone who has said nothing.
-        voicedTicks += 1;
-        if (voicedTicks >= VOICE_CONFIRM_TICKS) {
-          spoken = true;
-          lastVoiceAt = now;
-        }
+      if (rms >= threshold) {
+        voicedMs = Math.min(VOICE_ARM_MS, voicedMs + SAMPLE_INTERVAL_MS);
+        lastVoiceAt = now;
+        // Latches once enough real voice has accumulated; a single loud sample
+        // (cough, knock, static) never gets there.
+        if (voicedMs >= VOICE_ARM_MS) spoken = true;
       } else {
-        voicedTicks = 0;
+        // Learn the ambient level from the quiet stretches only.
+        noiseFloor = noiseFloor * 0.9 + rms * 0.1;
+        // Decay twice as fast as it builds, so intermittent noise cannot creep
+        // up to the arm threshold between gaps.
+        voicedMs = Math.max(0, voicedMs - SAMPLE_INTERVAL_MS * 2);
+
         if (spoken && now - startedAt >= minSpeechSeconds * 1000) {
           // They spoke and have now gone quiet — the normal end of an answer.
           const silentMs = now - lastVoiceAt;

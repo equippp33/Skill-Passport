@@ -191,9 +191,38 @@ const SKIP_PHRASES: string[] = [
   " முந்தைய",
 ];
 
+/**
+ * Unambiguous "I want to skip / I can't answer" phrases.
+ *
+ * Unlike the short list above, these are checked WITHOUT the word limit: they
+ * are specific enough that they mean skip even buried in a longer sentence —
+ * "I don't have an answer for it, can we skip this question?" is a skip, not an
+ * answer, and the 8-word guard was throwing it into the doubt loop instead.
+ */
+const STRONG_SKIP_PHRASES: string[] = [
+  "skip this question",
+  "skip the question",
+  "skip this one",
+  "skip this",
+  "can we skip",
+  "can i skip",
+  "i want to skip",
+  "lets skip",
+  "i dont want to answer",
+  "dont want to answer",
+  "i cant answer this",
+  "i cannot answer this",
+  "i have no answer",
+  "i dont have an answer",
+  "i dont have any answer",
+];
+
 export function isSkipRequest(transcript: string): boolean {
   const text = normalise(transcript);
   if (!text) return false;
+
+  // Strong phrases mean skip at any length.
+  if (STRONG_SKIP_PHRASES.some((p) => text.includes(normalise(p)))) return true;
 
   const words = text.split(" ");
   if (words.length > MAX_WORDS) return false;

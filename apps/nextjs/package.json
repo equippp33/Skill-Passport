@@ -8,6 +8,7 @@
     "dev": "pnpm with-env node scripts/dev.mjs",
     "build": "pnpm with-env next build",
     "start": "pnpm with-env next start",
+    "stt-relay": "pnpm with-env node scripts/stt-relay.mjs",
     "clean": "git clean -xdf .cache .next .turbo node_modules",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

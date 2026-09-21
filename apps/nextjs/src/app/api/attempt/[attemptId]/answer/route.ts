@@ -65,14 +65,57 @@ export async function POST(
       ? Math.round(declaredDuration)
       : null;
 
+  if (!Number.isInteger(turnNumber) || turnNumber < 1) {
+    return NextResponse.json({ error: "Invalid question." }, { status: 400 });
+  }
+
+  // Streaming path: the transcript already came from realtime STT, so there is
+  // no audio to accept or transcribe here. Claim the turn and route the
+  // transcript through the same pipeline. The video track archives the answer
+  // separately, so nothing is lost by not receiving audio bytes.
+  const streamedTranscript = formData.get("transcript");
+  if (typeof streamedTranscript === "string" && streamedTranscript.trim()) {
+    try {
+      const result = await submitAnswer({
+        attempt: found.attempt,
+        turnNumber,
+        mimeType: "text/plain",
+      });
+      if (result.status === "processing") {
+        after(async () => {
+          await processTurn(
+            found.attempt.id,
+            result.turnId,
+            found.interview,
+            undefined,
+            streamedTranscript,
+          );
+        });
+      }
+      return NextResponse.json({ status: "processing" }, { status: 202 });
+    } catch (error) {
+      if (error instanceof AttemptError) {
+        const status =
+          error.code === "not_found"
+            ? 404
+            : error.code === "invalid_state"
+              ? 409
+              : 400;
+        return NextResponse.json({ error: error.userMessage }, { status });
+      }
+      console.error("[attempt] streamed answer failed", error);
+      return NextResponse.json(
+        { error: "We could not accept that answer. Please try again." },
+        { status: 500 },
+      );
+    }
+  }
+
   if (!file) {
     return NextResponse.json(
       { error: "No recording was attached." },
       { status: 400 },
     );
-  }
-  if (!Number.isInteger(turnNumber) || turnNumber < 1) {
-    return NextResponse.json({ error: "Invalid question." }, { status: 400 });
   }
   // Check declared sizes before buffering anything into memory.
   const declaredTotal = files.reduce((sum, f) => sum + f.size, 0);

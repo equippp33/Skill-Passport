@@ -18,6 +18,8 @@ import { useTypewriter } from "~/hooks/use-typewriter";
 import { uploadAnswerVideo } from "./upload-video";
 import { preventCapture, useCaptureDeterrent } from "./capture-guard";
 import { retryQuestionAudioAction } from "~/server/attempt/actions";
+import { env } from "~/env";
+import { useStreamingStt } from "~/hooks/use-streaming-stt";
 import {
   MAX_ANSWER_SECONDS,
   MIN_ANSWER_BLOB_BYTES,
@@ -178,6 +180,17 @@ export function ActiveInterview({
   });
 
   const isBusy = phase === "submitting" || phase === "processing";
+
+  /* ------------------------------ streaming STT ------------------------------ */
+
+  // Realtime STT (mic → relay → Sarvam) replaces local mic-VAD and batch
+  // transcription when enabled. If the relay connection fails, we fall back to
+  // the record-then-transcribe path for the rest of the interview so a bad
+  // relay never strands the candidate.
+  const relayUrl = env.NEXT_PUBLIC_STT_RELAY_URL ?? "";
+  const [streamFailed, setStreamFailed] = useState(false);
+  const streamingOn =
+    env.NEXT_PUBLIC_STT_STREAMING === "1" && !!relayUrl && !streamFailed;
 
   /* --------------------------- devices + auto-start -------------------------- */
 
@@ -568,11 +581,17 @@ export function ActiveInterview({
 
   /* -------------------------------- submitting ------------------------------- */
 
-  const submitAnswer = useCallback(
-    async (segments: Blob[], video: Blob | null, durationMs: number) => {
+  // Send a prepared answer form (audio segments OR a streamed transcript) and
+  // handle the response identically for both. Queues the video for background
+  // upload and moves the UI into polling.
+  const sendAnswerForm = useCallback(
+    async (
+      form: FormData,
+      video: Blob | null,
+      durationMs: number,
+      turnNumber: number,
+    ) => {
       if (submittingRef.current) return;
-      if (!turn) return;
-
       submittingRef.current = true;
       setPhase("submitting");
       setError(null);
@@ -581,17 +600,6 @@ export function ActiveInterview({
       playFiller();
 
       try {
-        // One part per segment, in order. A long answer arrives as several
-        // files because the transcriber will not take more than 30 seconds
-        // in one go — see AUDIO_SEGMENT_SECONDS.
-        const form = new FormData();
-        segments.forEach((segment, index) => {
-          const extension = segment.type.includes("mp4") ? "m4a" : "webm";
-          form.append("audio", segment, `answer-${index}.${extension}`);
-        });
-        form.append("turnNumber", String(turn.turnNumber));
-        form.append("durationMs", String(durationMs));
-
         const response = await fetch(`/api/attempt/${attemptId}/answer`, {
           method: "POST",
           body: form,
@@ -624,11 +632,7 @@ export function ActiveInterview({
         // candidate reads and answers the next question — so nothing is left
         // to upload at the end and no one waits on "saving your recordings".
         if (video && video.size > 0) {
-          pendingVideosRef.current.push({
-            turnNumber: turn.turnNumber,
-            video,
-            durationMs,
-          });
+          pendingVideosRef.current.push({ turnNumber, video, durationMs });
           void flushRecordings(false);
         }
 
@@ -642,7 +646,38 @@ export function ActiveInterview({
         submittingRef.current = false;
       }
     },
-    [turn, attemptId, router, genericError, flushRecordings, playFiller],
+    [attemptId, router, genericError, flushRecordings, playFiller],
+  );
+
+  const submitAnswer = useCallback(
+    async (segments: Blob[], video: Blob | null, durationMs: number) => {
+      if (!turn) return;
+      // One part per segment, in order. A long answer arrives as several files
+      // because the transcriber will not take more than 30 seconds in one go.
+      const form = new FormData();
+      segments.forEach((segment, index) => {
+        const extension = segment.type.includes("mp4") ? "m4a" : "webm";
+        form.append("audio", segment, `answer-${index}.${extension}`);
+      });
+      form.append("turnNumber", String(turn.turnNumber));
+      form.append("durationMs", String(durationMs));
+      await sendAnswerForm(form, video, durationMs, turn.turnNumber);
+    },
+    [turn, sendAnswerForm],
+  );
+
+  // Streaming path: the transcript already came from realtime STT, so no audio
+  // is uploaded here — the video still archives the answer separately.
+  const submitTranscript = useCallback(
+    async (transcript: string, video: Blob | null, durationMs: number) => {
+      if (!turn) return;
+      const form = new FormData();
+      form.append("transcript", transcript);
+      form.append("turnNumber", String(turn.turnNumber));
+      form.append("durationMs", String(durationMs));
+      await sendAnswerForm(form, video, durationMs, turn.turnNumber);
+    },
+    [turn, sendAnswerForm],
   );
 
   /**
@@ -677,6 +712,26 @@ export function ActiveInterview({
   useEffect(() => {
     submitCurrentAnswerRef.current = () => void handleNext();
   }, [handleNext]);
+
+  /**
+   * Streaming path: Sarvam signalled end-of-turn with the whole transcript.
+   * Stop the video (kept for the archive) and submit the transcript — no local
+   * VAD, no batch STT, no silent-tail hallucination. Empty means we only heard
+   * noise, so keep waiting rather than submitting nothing.
+   */
+  const handleStreamedTurn = useCallback(
+    async (transcript: string) => {
+      const active = turnRef.current;
+      if (!active) return;
+      if (submittedTurnRef.current === active.turnNumber) return;
+      if (!transcript.trim()) return;
+      submittedTurnRef.current = active.turnNumber;
+      answerEndedAtRef.current = performance.now();
+      const { video, durationMs } = await recorder.stopRecording();
+      await submitTranscript(transcript, video, durationMs);
+    },
+    [recorder, submitTranscript],
+  );
 
   /* ------------------------------ tap / voice controls ----------------------- */
 
@@ -732,7 +787,9 @@ export function ActiveInterview({
    */
   const speech = useSpeechActivity({
     stream: recorder.stream,
-    active: recorder.isRecording && !isBusy,
+    // Off entirely when streaming — Sarvam does the endpointing then. Only the
+    // record-then-transcribe path uses this local detector.
+    active: !streamingOn && recorder.isRecording && !isBusy,
     // Stop listening while the interviewer's own voice is playing (question,
     // filler, "take your time") so it is never mistaken for the answer.
     speaking,
@@ -743,6 +800,19 @@ export function ActiveInterview({
     // They have said nothing — coax through the ladder rather than sit silent.
     noAnswerStages: NO_ANSWER_STAGES,
     onNoAnswerStage: (i) => void handleNoAnswerStage(i),
+  });
+
+  // Realtime STT: stream the mic to the relay and let Sarvam decide when the
+  // answer is finished. Replaces the local detector above when enabled; a relay
+  // failure flips `streamFailed`, which re-enables the local path for the rest
+  // of the interview so a bad connection never dead-ends the candidate.
+  useStreamingStt({
+    stream: recorder.stream,
+    active: streamingOn && recorder.isRecording && !isBusy,
+    languageCode,
+    relayUrl,
+    onFinalTurn: (transcript) => void handleStreamedTurn(transcript),
+    onFailed: () => setStreamFailed(true),
   });
 
   /* ------------------------------ question audio ----------------------------- */

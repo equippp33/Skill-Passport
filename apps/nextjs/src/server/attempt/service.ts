@@ -855,7 +855,7 @@ async function transcribeSegments(
  * only if it ever needs to survive across instances.
  */
 const doubtCounts = new Map<string, number>();
-const MAX_DOUBTS_BEFORE_SKIP = 2;
+const MAX_DOUBTS_BEFORE_SKIP = 1;
 
 export async function processTurn(
   attemptId: string,
@@ -864,9 +864,15 @@ export async function processTurn(
   /**
    * The recording, when `processTurn` is called straight after the upload.
    * Absent when recovering a turn later, in which case it is read back from
-   * storage instead.
+   * storage instead — or when the transcript arrived from streaming STT.
    */
   answer?: AnswerAudio,
+  /**
+   * Transcript already produced by realtime streaming STT. When present, the
+   * batch transcribe (and its silent-tail hallucination) is skipped entirely;
+   * the video track still archives the answer separately.
+   */
+  providedTranscript?: string,
 ): Promise<void> {
   const attempt = await reload(attemptId).catch(() => null);
   const turn = await db.query.interviewTurnsTable.findFirst({
@@ -881,34 +887,7 @@ export async function processTurn(
   }
 
   try {
-    // Fresh submission: use the bytes we were handed. Recovery: read the
-    // archived copy back — only the first segment survives that route, so
-    // a recovered long answer is transcribed from its opening 25 seconds.
-    const recovered = turn.answerAudioId
-      ? await loadAudioBytes({ audioId: turn.answerAudioId, attemptId })
-      : null;
-
-    const audioRow: AnswerAudio | null =
-      answer ??
-      (recovered
-        ? { segments: [recovered.data], mimeType: recovered.mimeType }
-        : null);
-
-    if (!audioRow) {
-      await failTurn(
-        attemptId,
-        turnId,
-        "Your recording could not be read. Please record the answer again.",
-      );
-      return;
-    }
-
-    // --- 1. Transcribe in the FIXED interview language ---------------------
-    // The candidate chose it up front, so there is nothing to detect or switch;
-    // transcribing in it also stops Sarvam hallucinating on silent tails.
-    //
-    // Archiving runs alongside rather than before it: the two are independent,
-    // and overlapping them keeps the turn as short as the slower of the two.
+    // Language is fixed (chosen up front) and needed by both paths below.
     if (!attempt.language) {
       await failTurn(
         attemptId,
@@ -918,12 +897,46 @@ export async function processTurn(
       return;
     }
     const language = resolveInterviewLanguage(attempt.language);
-    const [, transcript] = await Promise.all([
-      answer
-        ? archiveAnswerAudio(attemptId, turnId, answer)
-        : Promise.resolve(),
-      transcribeSegments(audioRow, language.code),
-    ]);
+
+    // --- 1. Get the transcript --------------------------------------------
+    // Streaming path: Sarvam already returned it live, so there is nothing to
+    // transcribe here. Audio path: transcribe in the FIXED interview language
+    // (which also stops Sarvam hallucinating on silent tails), archiving the
+    // audio alongside so the turn is only as long as the slower of the two.
+    let transcript: string;
+    if (providedTranscript != null) {
+      transcript = providedTranscript.trim();
+    } else {
+      // Fresh submission: use the bytes we were handed. Recovery: read the
+      // archived copy back — only the first segment survives that route, so
+      // a recovered long answer is transcribed from its opening 25 seconds.
+      const recovered = turn.answerAudioId
+        ? await loadAudioBytes({ audioId: turn.answerAudioId, attemptId })
+        : null;
+
+      const audioRow: AnswerAudio | null =
+        answer ??
+        (recovered
+          ? { segments: [recovered.data], mimeType: recovered.mimeType }
+          : null);
+
+      if (!audioRow) {
+        await failTurn(
+          attemptId,
+          turnId,
+          "Your recording could not be read. Please record the answer again.",
+        );
+        return;
+      }
+
+      const [, heard] = await Promise.all([
+        answer
+          ? archiveAnswerAudio(attemptId, turnId, answer)
+          : Promise.resolve(),
+        transcribeSegments(audioRow, language.code),
+      ]);
+      transcript = heard;
+    }
 
     console.log(
       `[attempt] heard turn=${turn.turnNumber} lang=${language.key} repeat=${isRepeatRequest(
@@ -932,13 +945,6 @@ export async function processTurn(
     );
 
     const isProbe = turn.kind === "language_probe";
-
-    // "Skip / next question" — a command, not an answer. Only on real questions;
-    // the opening turn cannot be skipped (it captures the introduction).
-    if (!isProbe && isSkipRequest(transcript)) {
-      await skipTurn(attempt, interview, turn.turnNumber);
-      return;
-    }
 
     // "Say it slower" — re-voice the same question at a lower pace.
     if (!isProbe && isSlowerRequest(transcript)) {
@@ -971,8 +977,10 @@ export async function processTurn(
     // interviewer instead of scoring it as the answer. The opening turn is
     // never classified: its only job is to capture the introduction.
     const looksLikeRepeat = isRepeatRequest(transcript);
+    const wantsSkip = !isProbe && isSkipRequest(transcript);
     const isDoubt =
       looksLikeRepeat ||
+      wantsSkip ||
       (!isProbe &&
         (await classifyUtterance({
           question: turn.question,
@@ -986,17 +994,15 @@ export async function processTurn(
       // The question text NEVER changes — the one first shown stays until it is
       // actually answered. What differs is the interviewer's spoken response:
       //   - an explicit "repeat" (or the probe) just replays the exact question;
-      //   - any other doubt ("what does this word mean?", or nothing usable)
-      //     gets a short SPOKEN reply — the interviewer answers the doubt out
-      //     loud while the question on screen stays put.
+      //   - a skip, "I don't know", or any other doubt gets ONE spoken nudge to
+      //     try, and if they still don't answer, we move on. No endless loop.
       if (looksLikeRepeat || isProbe || !attempt.language) {
         // A plain "say it again" (or the probe, which cannot be skipped) just
         // replays. These do not count as giving up.
         await repeatTurn(attemptId, turnId);
       } else {
-        // "I don't know / I have no idea / explain this" — encourage them, but
-        // do NOT loop forever. After a couple of tries, move on to the next
-        // question rather than asking the same one a sixth time.
+        // Skip / "I don't know" / "I can't answer": encourage them to try ONCE,
+        // then move on. The candidate asked not to be badgered 3+ times.
         const key = `${attemptId}:${turn.turnNumber}`;
         const seen = (doubtCounts.get(key) ?? 0) + 1;
         doubtCounts.set(key, seen);
