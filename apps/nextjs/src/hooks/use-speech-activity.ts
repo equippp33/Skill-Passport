@@ -42,9 +42,21 @@ const SPEECH_RMS_THRESHOLD = 0.013;
 /** How often the level is sampled. Fine enough for a 1s countdown. */
 const SAMPLE_INTERVAL_MS = 200;
 
+/**
+ * How many consecutive samples above the threshold before we believe it is
+ * really the candidate answering, not a cough, a knock or a burst of static.
+ *
+ * 3 × 200ms = ~0.6s of sustained voice. Without this, one noisy sample flips
+ * "they spoke" true, which both suppresses the "take your time" nudge (it only
+ * fires while nothing has been said) and starts the silence countdown — so the
+ * opening question auto-submitted an empty answer and skipped itself.
+ */
+const VOICE_CONFIRM_TICKS = 3;
+
 export function useSpeechActivity({
   stream,
   active,
+  speaking = false,
   silenceSeconds,
   minSpeechSeconds,
   noAnswerStages,
@@ -55,6 +67,11 @@ export function useSpeechActivity({
   stream: MediaStream | null;
   /** Only watch while an answer is actually being recorded. */
   active: boolean;
+  /**
+   * True while the INTERVIEWER is speaking (question, filler, nudge). Detection
+   * pauses so the clip bleeding into the mic is never mistaken for an answer.
+   */
+  speaking?: boolean;
   /** Silence this long after speech ends triggers `onSilence`. */
   silenceSeconds: number;
   /** Never fire before the answer is at least this long. */
@@ -89,6 +106,12 @@ export function useSpeechActivity({
   useEffect(() => {
     onNoAnswerStageRef.current = onNoAnswerStage;
   }, [onNoAnswerStage]);
+  // Read inside the sampling loop rather than being an effect dependency, so
+  // the interviewer starting to speak does not tear down and rebuild the graph.
+  const speakingRef = useRef(speaking);
+  useEffect(() => {
+    speakingRef.current = speaking;
+  }, [speaking]);
 
   useEffect(() => {
     if (!active || !stream) return;
@@ -124,11 +147,18 @@ export function useSpeechActivity({
     const samples = new Uint8Array(analyser.fftSize);
     const startedAt = Date.now();
     let lastVoiceAt = Date.now();
+    let voicedTicks = 0;
     let spoken = false;
     let fired = false;
     const firedStages = new Set<number>();
 
     const timer = setInterval(() => {
+      // The interviewer is talking (question replay, filler, "take your time"):
+      // do not listen. The clip leaks into the mic, and counting it as the
+      // candidate answering was auto-submitting empty answers. Pause in place —
+      // the timers and `spoken` survive so nothing resets underneath them.
+      if (speakingRef.current) return;
+
       analyser.getByteTimeDomainData(samples);
 
       // Deviation from the 128 midpoint, as RMS in 0–1.
@@ -147,34 +177,43 @@ export function useSpeechActivity({
       let waiting: number | null = null;
 
       if (rms >= SPEECH_RMS_THRESHOLD) {
-        lastVoiceAt = now;
-        spoken = true;
-      } else if (spoken && now - startedAt >= minSpeechSeconds * 1000) {
-        // They spoke and have now gone quiet — the normal end of an answer.
-        const silentMs = now - lastVoiceAt;
-        const left = Math.ceil((silenceSeconds * 1000 - silentMs) / 1000);
-
-        if (left <= 0) {
-          if (fired) return;
-          fired = true;
-          clearInterval(timer);
-          setSecondsRemaining(null);
-          setNoAnswerIn(null);
-          onSilenceRef.current();
-          return;
+        // Only SUSTAINED voice counts. A single loud sample (cough, knock,
+        // static) must not flip `spoken`, or it both silences the nudge and
+        // arms the silence countdown against someone who has said nothing.
+        voicedTicks += 1;
+        if (voicedTicks >= VOICE_CONFIRM_TICKS) {
+          spoken = true;
+          lastVoiceAt = now;
         }
-        remaining = left;
-      } else if (!spoken) {
-        // Not a word yet — escalate through the nudge stages. Each fires once;
-        // the caller nudges, then repeats, then moves on. No auto-submit here.
-        const elapsedMs = now - startedAt;
-        for (let i = 0; i < noAnswerStages.length; i += 1) {
-          if (elapsedMs >= noAnswerStages[i]! * 1000 && !firedStages.has(i)) {
-            firedStages.add(i);
-            onNoAnswerStageRef.current(i);
+      } else {
+        voicedTicks = 0;
+        if (spoken && now - startedAt >= minSpeechSeconds * 1000) {
+          // They spoke and have now gone quiet — the normal end of an answer.
+          const silentMs = now - lastVoiceAt;
+          const left = Math.ceil((silenceSeconds * 1000 - silentMs) / 1000);
+          if (left <= 0) {
+            if (fired) return;
+            fired = true;
+            clearInterval(timer);
+            setSecondsRemaining(null);
+            setNoAnswerIn(null);
+            onSilenceRef.current();
+            return;
           }
+          remaining = left;
+        } else if (!spoken) {
+          // Not a word yet — escalate through the nudge stages. Each fires
+          // once; the caller nudges, then repeats. There is NO auto-submit and
+          // NO auto-skip here: a silent candidate is coaxed, never moved on.
+          const elapsedMs = now - startedAt;
+          for (let i = 0; i < noAnswerStages.length; i += 1) {
+            if (elapsedMs >= noAnswerStages[i]! * 1000 && !firedStages.has(i)) {
+              firedStages.add(i);
+              onNoAnswerStageRef.current(i);
+            }
+          }
+          waiting = Math.round(elapsedMs / 1000);
         }
-        waiting = Math.round(elapsedMs / 1000);
       }
 
       setSecondsRemaining(remaining);

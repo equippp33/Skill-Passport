@@ -53,4 +53,4 @@ export const SILENCE_ADVANCE_SECONDS = 8;
  * stopped, or asks to skip out loud. First stage is deliberately unhurried:
  * 7s cut people off while they were still thinking about how to begin.
  */
-export const NO_ANSWER_STAGES = [15, 30];
+export const NO_ANSWER_STAGES = [10, 30];

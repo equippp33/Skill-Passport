@@ -733,6 +733,9 @@ export function ActiveInterview({
   const speech = useSpeechActivity({
     stream: recorder.stream,
     active: recorder.isRecording && !isBusy,
+    // Stop listening while the interviewer's own voice is playing (question,
+    // filler, "take your time") so it is never mistaken for the answer.
+    speaking,
     silenceSeconds: SILENCE_ADVANCE_SECONDS,
     minSpeechSeconds: MIN_ANSWER_SECONDS,
     // They spoke, then went quiet — send the answer.
