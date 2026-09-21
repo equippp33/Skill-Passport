@@ -9,9 +9,14 @@
  * Deliberately its OWN process, not folded into Next: Next 16 route handlers
  * cannot do a WebSocket upgrade, and keeping it separate means the interview
  * app is untouched and this can be restarted on its own. Runs in the same
- * container as Next; a reverse-proxy rule routes `/stt-stream` here.
+ * container-set as Next; a reverse-proxy rule routes its subdomain here.
  *
  *   node --env-file=../../.env scripts/stt-relay.mjs
+ *
+ * The HTTP server answers any non-upgrade request with "stt-relay ok" so the
+ * subdomain doubles as a health check, and the upgrade is accepted on ANY path
+ * (behind a proxy the path can be rewritten; a strict path filter silently
+ * dropped upgrades). Every upgrade is logged so a failing connection is visible.
  *
  * Verified protocol (2026-09-21, saaras:v3-realtime):
  *   upstream : wss://api.sarvam.ai/speech-to-text-realtime/ws
@@ -20,6 +25,7 @@
  *   →client  : session.begin | vad.speech_start | transcript.partial |
  *              vad.speech_end | transcript.final | session.end | error
  */
+import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 
 const KEY = process.env.SARVAM_API_KEY;
@@ -28,7 +34,7 @@ if (!KEY) {
   process.exit(1);
 }
 
-const PORT = Number(process.env.STT_RELAY_PORT) || 3001;
+const PORT = Number(process.env.STT_RELAY_PORT) || 3100;
 const MODEL = process.env.SARVAM_STT_REALTIME_MODEL || "saaras:v3-realtime";
 const UPSTREAM = "wss://api.sarvam.ai/speech-to-text-realtime/ws";
 
@@ -42,12 +48,25 @@ function languageOf(reqUrl) {
   }
 }
 
-const server = new WebSocketServer({ port: PORT, path: "/stt-stream" });
-server.on("listening", () =>
-  console.log(`[relay] listening on :${PORT}/stt-stream (model ${MODEL})`),
-);
+// Plain HTTP server: anything that is not a WebSocket upgrade gets a 200, so
+// hitting the subdomain in a browser confirms the relay is reachable.
+const server = http.createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/plain" });
+  res.end("stt-relay ok\n");
+});
 
-server.on("connection", (client, req) => {
+// noServer + manual upgrade: accept on any path and log it, rather than letting
+// `ws`'s path filter drop mismatched upgrades silently behind the proxy.
+const wss = new WebSocketServer({ noServer: true });
+
+server.on("upgrade", (req, socket, head) => {
+  console.log(`[relay] upgrade url=${req.url}`);
+  wss.handleUpgrade(req, socket, head, (client) => {
+    wss.emit("connection", client, req);
+  });
+});
+
+wss.on("connection", (client, req) => {
   const languageCode = languageOf(req.url);
   const upstreamUrl =
     `${UPSTREAM}?language_code=${encodeURIComponent(languageCode)}` +
@@ -68,12 +87,13 @@ server.on("connection", (client, req) => {
     for (const msg of pending) upstream.send(msg);
     pending.length = 0;
   });
-  // Sarvam → browser: forward every event verbatim.
   upstream.on("message", (data) => {
     if (client.readyState === WebSocket.OPEN) client.send(data.toString());
   });
   upstream.on("close", (code, reason) => {
-    console.log(`[relay] upstream closed code=${code} ${reason?.toString()?.slice(0, 120)}`);
+    console.log(
+      `[relay] upstream closed code=${code} ${reason?.toString()?.slice(0, 120)}`,
+    );
     if (client.readyState === WebSocket.OPEN) client.close();
   });
   upstream.on("error", (err) => {
@@ -84,7 +104,6 @@ server.on("connection", (client, req) => {
     }
   });
 
-  // Browser → Sarvam: audio frames pass straight through.
   client.on("message", (data) => {
     const msg = data.toString();
     if (upstreamOpen) upstream.send(msg);
@@ -104,3 +123,7 @@ server.on("error", (err) => {
   console.error("[relay] server error", err.message);
   process.exit(1);
 });
+
+server.listen(PORT, () =>
+  console.log(`[relay] listening on :${PORT} (model ${MODEL})`),
+);
