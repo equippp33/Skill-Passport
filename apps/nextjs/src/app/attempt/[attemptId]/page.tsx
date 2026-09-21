@@ -99,7 +99,7 @@ export default async function AttemptPage({
         initialQuestionNumber={attempt.currentQuestionNumber}
         initialAttemptStatus={attempt.status}
         fillerUrls={fillerUrls}
-        nudgeUrl={`/api/nudge/${languageKey}`}
+        checkUrl={`/api/check/${languageKey}`}
         initialTurn={
           current
             ? {

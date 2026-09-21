@@ -131,6 +131,7 @@ export const en = {
     finish: "Finish assessment",
     keepSpeaking: "Keep speaking — this moves on by itself when you stop.",
     waitingForAnswer: "Listening — start speaking whenever you're ready.",
+    skippingIn: "Skipping this question in {seconds}s — start speaking to continue.",
     advancingIn: "Moving on in {seconds}…",
     introduction: "Introduction",
     chooseLanguageTitle: "Which language would you like to continue in?",

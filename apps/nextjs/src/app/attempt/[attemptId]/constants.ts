@@ -46,11 +46,19 @@ export const SILENCE_ADVANCE_SECONDS = 8;
  * Silence ladder: what to do, and when, while a candidate has said NOTHING at
  * all (not while they are mid-answer — that is `SILENCE_ADVANCE_SECONDS`).
  *
- * A real interviewer coaxes rather than sitting in dead air, but it never
- * talks over someone gathering their thoughts and never yanks the question
- * away. So: a gentle "take your time", then a single re-ask — and that is all.
- * The interview only moves on when the candidate has actually spoken and then
- * stopped, or asks to skip out loud. First stage is deliberately unhurried:
- * 7s cut people off while they were still thinking about how to begin.
+ * A real interviewer coaxes rather than sitting in dead air, but it never talks
+ * over someone gathering their thoughts. The stages, in order:
+ *  - 15s → a spoken check-in ("did you understand the question, or should I
+ *    repeat it?"); their reply routes through the normal doubt/repeat/skip path.
+ *  - 30s → a VISIBLE countdown starts ("skipping in Ns"), to prompt them.
+ *  - 60s → auto-skip the question, unscored, and move on.
+ * Any speech at all resets the ladder — it can never cut off someone talking.
  */
-export const NO_ANSWER_STAGES = [10, 30];
+export const SILENCE_CHECK_IN_SECONDS = 15;
+export const SILENCE_WARN_SECONDS = 30;
+export const SILENCE_SKIP_SECONDS = 60;
+export const NO_ANSWER_STAGES = [
+  SILENCE_CHECK_IN_SECONDS,
+  SILENCE_WARN_SECONDS,
+  SILENCE_SKIP_SECONDS,
+];

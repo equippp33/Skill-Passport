@@ -55,8 +55,11 @@ export function useStreamingStt({
   active,
   languageCode,
   relayUrl,
+  speaking = false,
   turnSilenceMs = 2500,
+  noAnswerStages = [],
   onSpeechStart,
+  onSilenceStage,
   onFinalTurn,
   onFailed,
 }: {
@@ -67,25 +70,43 @@ export function useStreamingStt({
   languageCode: string;
   /** WebSocket origin of the relay (no trailing slash, no path). */
   relayUrl: string;
+  /**
+   * True while the INTERVIEWER is speaking (question, filler, nudge, check-in).
+   * Audio is not sent upstream then, so the clip is never transcribed as the
+   * candidate's answer.
+   */
+  speaking?: boolean;
   /** Silence after the last speech before the turn is called finished. */
   turnSilenceMs?: number;
+  /**
+   * Seconds of total silence (candidate has said nothing yet) at which to
+   * escalate. `onSilenceStage(i)` fires once as each is crossed — the caller
+   * checks understanding, warns, then skips. Reset the moment they speak.
+   */
+  noAnswerStages?: number[];
   onSpeechStart?: () => void;
+  onSilenceStage?: (index: number) => void;
   /** The whole answer, once the candidate has finished the turn. */
   onFinalTurn: (transcript: string) => void;
   /** The relay/upstream failed — caller should fall back to the batch path. */
   onFailed?: () => void;
-}): { partial: string; connected: boolean } {
+}): { partial: string; connected: boolean; silentSeconds: number | null } {
   const [partial, setPartial] = useState("");
   const [connected, setConnected] = useState(false);
+  const [silentSeconds, setSilentSeconds] = useState<number | null>(null);
 
   const onFinalTurnRef = useRef(onFinalTurn);
   const onSpeechStartRef = useRef(onSpeechStart);
+  const onSilenceStageRef = useRef(onSilenceStage);
   const onFailedRef = useRef(onFailed);
+  const speakingRef = useRef(speaking);
   useEffect(() => {
     onFinalTurnRef.current = onFinalTurn;
     onSpeechStartRef.current = onSpeechStart;
+    onSilenceStageRef.current = onSilenceStage;
     onFailedRef.current = onFailed;
-  }, [onFinalTurn, onSpeechStart, onFailed]);
+    speakingRef.current = speaking;
+  }, [onFinalTurn, onSpeechStart, onSilenceStage, onFailed, speaking]);
 
   useEffect(() => {
     if (!active || !stream || !relayUrl) return;
@@ -98,12 +119,19 @@ export function useStreamingStt({
     let source: MediaStreamAudioSourceNode | null = null;
     let flushTimer: ReturnType<typeof setInterval> | null = null;
     let turnEndTimer: ReturnType<typeof setTimeout> | null = null;
+    let silenceTimer: ReturnType<typeof setInterval> | null = null;
 
     // Accumulated mic samples awaiting the next flush, and the stitched answer.
     let pending: Float32Array[] = [];
     let pendingLen = 0;
     const finals: string[] = [];
     let firedTurn = false;
+
+    // The no-answer ladder: runs until the candidate first speaks. Elapsed time
+    // since recording started; each stage fires once. Reset on speech_start.
+    const startedAt = Date.now();
+    let spoke = false;
+    const firedSilenceStages = new Set<number>();
 
     const fireTurn = () => {
       if (firedTurn) return;
@@ -153,6 +181,10 @@ export function useStreamingStt({
           }
           switch (msg.event) {
             case "vad.speech_start":
+              // They spoke — end the no-answer ladder for good and clear any
+              // pending turn-end from an earlier pause.
+              spoke = true;
+              setSilentSeconds(null);
               if (turnEndTimer) {
                 clearTimeout(turnEndTimer);
                 turnEndTimer = null;
@@ -182,6 +214,13 @@ export function useStreamingStt({
 
         // Flush accumulated audio at a steady cadence, ~100ms per message.
         flushTimer = setInterval(() => {
+          // Do not stream while the interviewer's own clip is playing, or it
+          // would be transcribed as the candidate's answer.
+          if (speakingRef.current) {
+            pending = [];
+            pendingLen = 0;
+            return;
+          }
           if (!ws || ws.readyState !== WebSocket.OPEN || pendingLen === 0)
             return;
           const merged = new Float32Array(pendingLen);
@@ -199,6 +238,19 @@ export function useStreamingStt({
             }),
           );
         }, FLUSH_MS);
+
+        // No-answer ladder: escalate while the candidate has said nothing.
+        silenceTimer = setInterval(() => {
+          if (spoke) return;
+          const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+          setSilentSeconds(elapsed);
+          for (let i = 0; i < noAnswerStages.length; i += 1) {
+            if (elapsed >= noAnswerStages[i]! && !firedSilenceStages.has(i)) {
+              firedSilenceStages.add(i);
+              onSilenceStageRef.current?.(i);
+            }
+          }
+        }, 500);
       } catch {
         if (!cancelled) onFailedRef.current?.();
       }
@@ -210,6 +262,7 @@ export function useStreamingStt({
       cancelled = true;
       if (flushTimer) clearInterval(flushTimer);
       if (turnEndTimer) clearTimeout(turnEndTimer);
+      if (silenceTimer) clearInterval(silenceTimer);
       if (node) node.port.onmessage = null;
       try {
         source?.disconnect();
@@ -221,8 +274,9 @@ export function useStreamingStt({
       void context?.close().catch(() => undefined);
       setConnected(false);
       setPartial("");
+      setSilentSeconds(null);
     };
-  }, [stream, active, languageCode, relayUrl, turnSilenceMs]);
+  }, [stream, active, languageCode, relayUrl, turnSilenceMs, noAnswerStages]);
 
-  return { partial, connected };
+  return { partial, connected, silentSeconds };
 }

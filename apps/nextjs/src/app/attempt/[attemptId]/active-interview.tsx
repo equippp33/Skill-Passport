@@ -17,7 +17,10 @@ import { useFullscreen } from "~/hooks/use-fullscreen";
 import { useTypewriter } from "~/hooks/use-typewriter";
 import { uploadAnswerVideo } from "./upload-video";
 import { preventCapture, useCaptureDeterrent } from "./capture-guard";
-import { retryQuestionAudioAction } from "~/server/attempt/actions";
+import {
+  retryQuestionAudioAction,
+  skipTurnAction,
+} from "~/server/attempt/actions";
 import { env } from "~/env";
 import { useStreamingStt } from "~/hooks/use-streaming-stt";
 import {
@@ -29,6 +32,8 @@ import {
   POLL_INTERVAL_MS,
   POLL_TIMEOUT_MS,
   SILENCE_ADVANCE_SECONDS,
+  SILENCE_WARN_SECONDS,
+  SILENCE_SKIP_SECONDS,
 } from "./constants";
 
 interface TurnView {
@@ -62,7 +67,7 @@ export function ActiveInterview({
   initialQuestionNumber,
   initialAttemptStatus,
   fillerUrls,
-  nudgeUrl,
+  checkUrl,
   m,
   languageCode,
 }: {
@@ -76,8 +81,8 @@ export function ActiveInterview({
   initialAttemptStatus: string;
   /** Rotating filler clips, one played the instant an answer is sent. */
   fillerUrls: string[];
-  /** "Take your time" nudge, played when the candidate goes quiet. */
-  nudgeUrl: string;
+  /** "Did you understand the question?" check-in, played after a long silence. */
+  checkUrl: string;
   m: Messages;
   /** BCP-47 code of the session language, for correct text rendering. */
   languageCode: string;
@@ -735,10 +740,10 @@ export function ActiveInterview({
 
   /* ------------------------------ tap / voice controls ----------------------- */
 
-  /** Play the "take your time" nudge (own element; drives the blob). */
-  const nudgeRef = useRef<HTMLAudioElement | null>(null);
-  const playNudge = useCallback(() => {
-    const el = nudgeRef.current;
+  /** Play the "did you understand the question?" check-in (own element). */
+  const checkRef = useRef<HTMLAudioElement | null>(null);
+  const playCheckIn = useCallback(() => {
+    const el = checkRef.current;
     if (!el) return;
     try {
       el.currentTime = 0;
@@ -748,31 +753,43 @@ export function ActiveInterview({
     }
   }, []);
 
-  /** Replay the current question audio from the start. No server call. */
-  const handleRepeat = useCallback(() => {
+  /** Move past the current question, unscored, and poll for the next. */
+  const skipRef = useRef(false);
+  const autoSkip = useCallback(async () => {
+    const active = turnRef.current;
+    if (skipRef.current || !active) return;
+    skipRef.current = true;
+    // Block any pending auto-submit for this turn and quiet everything.
+    submittedTurnRef.current = active.turnNumber;
+    stopFiller();
     const el = audioRef.current;
-    if (!el || !turnRef.current?.questionAudioId) return;
-    try {
-      el.currentTime = 0;
-      void el.play().catch(() => undefined);
-    } catch {
-      // Best-effort; the question is still on screen.
+    if (el && !el.paused) el.pause();
+    resetRecorder();
+    setError(null);
+    setPhase("processing");
+    const result = await skipTurnAction(attemptId, active.turnNumber);
+    skipRef.current = false;
+    if (!result.ok) {
+      setError(genericError);
+      setPhase("error");
     }
-  }, []);
+    // Success: the phase-driven poll picks up the next question.
+  }, [attemptId, genericError, stopFiller, resetRecorder]);
 
   /**
-   * The silence ladder: coax a quiet candidate rather than sit in dead air —
-   * but NEVER move on for them. 0 → gentle "take your time"; 1 → repeat the
-   * question. There is deliberately no auto-skip: the interview advances only
-   * when they finish speaking or ask to skip out loud, so it can never cut
-   * someone off who was still deciding what to say.
+   * The silence ladder, while the candidate has said NOTHING. Stages come from
+   * NO_ANSWER_STAGES = [15, 30, 60]:
+   *   0 (15s) → spoken "did you understand the question?" check-in;
+   *   1 (30s) → nothing here — the visible countdown is derived in the render;
+   *   2 (60s) → auto-skip and move on.
+   * Any speech resets the ladder before these fire.
    */
-  const handleNoAnswerStage = useCallback(
+  const handleSilenceStage = useCallback(
     (i: number) => {
-      if (i === 0) playNudge();
-      else handleRepeat();
+      if (i === 0) playCheckIn();
+      else if (i === 2) void autoSkip();
     },
-    [playNudge, handleRepeat],
+    [playCheckIn, autoSkip],
   );
 
   /* ---------------------------- finished speaking ---------------------------- */
@@ -797,23 +814,38 @@ export function ActiveInterview({
     minSpeechSeconds: MIN_ANSWER_SECONDS,
     // They spoke, then went quiet — send the answer.
     onSilence: () => void handleNext(),
-    // They have said nothing — coax through the ladder rather than sit silent.
+    // They have said nothing — check in, then countdown, then skip.
     noAnswerStages: NO_ANSWER_STAGES,
-    onNoAnswerStage: (i) => void handleNoAnswerStage(i),
+    onNoAnswerStage: (i) => handleSilenceStage(i),
   });
 
   // Realtime STT: stream the mic to the relay and let Sarvam decide when the
   // answer is finished. Replaces the local detector above when enabled; a relay
   // failure flips `streamFailed`, which re-enables the local path for the rest
   // of the interview so a bad connection never dead-ends the candidate.
-  useStreamingStt({
+  const streaming = useStreamingStt({
     stream: recorder.stream,
     active: streamingOn && recorder.isRecording && !isBusy,
     languageCode,
     relayUrl,
+    // Mute the mic upstream while the interviewer's own clip plays.
+    speaking,
     onFinalTurn: (transcript) => void handleStreamedTurn(transcript),
     onFailed: () => setStreamFailed(true),
+    // Same silence ladder as the batch path — check in, countdown, skip.
+    noAnswerStages: NO_ANSWER_STAGES,
+    onSilenceStage: (i) => handleSilenceStage(i),
   });
+
+  // Elapsed silence (candidate has said nothing yet), from whichever detector
+  // is live. Drives the visible "skipping in Ns" countdown.
+  const silentElapsed = streamingOn ? streaming.silentSeconds : speech.noAnswerIn;
+  const skipInSeconds =
+    silentElapsed !== null &&
+    silentElapsed >= SILENCE_WARN_SECONDS &&
+    silentElapsed < SILENCE_SKIP_SECONDS
+      ? SILENCE_SKIP_SECONDS - silentElapsed
+      : null;
 
   /* ------------------------------ question audio ----------------------------- */
 
@@ -970,10 +1002,10 @@ export function ActiveInterview({
         onEnded={() => setSpeaking(false)}
         onPause={() => setSpeaking(false)}
       />
-      {/* "Take your time" nudge for the silence ladder. */}
+      {/* "Did you understand the question?" check-in for the silence ladder. */}
       <audio
-        ref={nudgeRef}
-        src={nudgeUrl}
+        ref={checkRef}
+        src={checkUrl}
         preload="auto"
         className="hidden"
         onPlay={() => setSpeaking(true)}
@@ -1122,15 +1154,21 @@ export function ActiveInterview({
             <div className="flex flex-col items-center gap-1">
               {/* You're being heard — live bars of the candidate's own voice. */}
               <Waveform stream={recorder.stream} active={recorder.isRecording} />
-              <p className="flex items-center gap-2 text-sm text-content-muted">
-                <span
-                  aria-hidden
-                  className="size-2.5 shrink-0 animate-pulse rounded-full bg-danger"
-                />
-                {speech.noAnswerIn !== null
-                  ? m.interview.waitingForAnswer
-                  : m.interview.keepSpeaking}
-              </p>
+              {skipInSeconds !== null ? (
+                <p className="text-sm font-medium text-warning">
+                  {t(m.interview.skippingIn, { seconds: skipInSeconds })}
+                </p>
+              ) : (
+                <p className="flex items-center gap-2 text-sm text-content-muted">
+                  <span
+                    aria-hidden
+                    className="size-2.5 shrink-0 animate-pulse rounded-full bg-danger"
+                  />
+                  {silentElapsed !== null
+                    ? m.interview.waitingForAnswer
+                    : m.interview.keepSpeaking}
+                </p>
+              )}
             </div>
           ) : null}
         </div>

@@ -113,6 +113,26 @@ export const TAKE_YOUR_TIME_BY_KEY: Record<InterviewLanguageKey, string> = {
 };
 
 /**
+ * The understanding check, played after a longer silence — before the visible
+ * skip countdown. Phrased to invite ACTION ("…or should I repeat it?") rather
+ * than a yes/no, so a bare "yes" is not mistaken for the answer. One per
+ * language, cached exactly like the nudge.
+ */
+export const UNDERSTANDING_CHECK_BY_KEY: Record<InterviewLanguageKey, string> = {
+  english: "Did you understand the question, or should I repeat it?",
+  hindi: "क्या आपको सवाल समझ आया, या मैं दोबारा बोलूँ?",
+  marathi: "तुम्हाला प्रश्न समजला का, की मी पुन्हा सांगू?",
+  bengali: "আপনি কি প্রশ্নটা বুঝেছেন, নাকি আমি আবার বলব?",
+  gujarati: "તમને પ્રશ્ન સમજાયો, કે હું ફરી કહું?",
+  kannada: "ನಿಮಗೆ ಪ್ರಶ್ನೆ ಅರ್ಥವಾಯಿತಾ, ಅಥವಾ ನಾನು ಪುನಃ ಹೇಳಲಾ?",
+  malayalam: "നിങ്ങൾക്ക് ചോദ്യം മനസ്സിലായോ, അതോ ഞാൻ വീണ്ടും പറയണോ?",
+  odia: "ଆପଣ ପ୍ରଶ୍ନ ବୁଝିଲେ କି, ନା ମୁଁ ପୁଣି କହିବି?",
+  punjabi: "ਕੀ ਤੁਹਾਨੂੰ ਸਵਾਲ ਸਮਝ ਆਇਆ, ਜਾਂ ਮੈਂ ਦੁਬਾਰਾ ਦੱਸਾਂ?",
+  tamil: "உங்களுக்கு கேள்வி புரிந்ததா, அல்லது நான் மீண்டும் சொல்லட்டுமா?",
+  telugu: "మీకు ప్రశ్న అర్థమైందా, లేక నేను మళ్లీ చెప్పాలా?",
+};
+
+/**
  * The opening question, per language.
  *
  * The candidate now picks their language before the interview, so the opener is

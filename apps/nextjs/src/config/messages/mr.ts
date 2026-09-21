@@ -134,6 +134,7 @@ export const mr: Messages = {
     finish: "मूल्यांकन पूर्ण करा",
     keepSpeaking: "बोलत राहा — तुम्ही थांबताच हे आपोआप पुढे जाईल.",
     waitingForAnswer: "ऐकत आहोत — तयार असाल तेव्हा बोलायला सुरुवात करा.",
+    skippingIn: "हा प्रश्न {seconds} सेकंदांत वगळला जाईल — सुरू ठेवण्यासाठी बोलायला सुरुवात करा.",
     advancingIn: "{seconds} मध्ये पुढे जात आहोत…",
     introduction: "ओळख",
     chooseLanguageTitle: "तुम्हाला कोणत्या भाषेत पुढे जायचे आहे?",

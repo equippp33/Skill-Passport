@@ -857,6 +857,13 @@ async function transcribeSegments(
 const doubtCounts = new Map<string, number>();
 const MAX_DOUBTS_BEFORE_SKIP = 1;
 
+/**
+ * Lowest score that earns a follow-up. 5 is "an acceptable answer" on the
+ * scoring rubric, so anything below it — skipped, "I don't know", evasive,
+ * empty — never gets a "would you like to add anything?" dug into it.
+ */
+const FOLLOWUP_MIN_SCORE = 5;
+
 export async function processTurn(
   attemptId: string,
   turnId: string,
@@ -1563,8 +1570,13 @@ async function handleAnsweredTurn(args: {
 
       await writeScoredTurn(turn.id, transcript, languageCode, evaluation);
 
+      // Only dig deeper into a REAL answer. A skip, "I don't know", an evasive
+      // reply, or silence-noise that slipped past the earlier checks all score
+      // low — and following those up with "anything to add?" is exactly the
+      // behaviour candidates hated. Gate the follow-up on a scorable answer, no
+      // matter what the model put in nextQuestion.
       const followUp = evaluation.nextQuestion?.trim();
-      if (followUp) {
+      if (followUp && evaluation.score >= FOLLOWUP_MIN_SCORE) {
         await deliverFollowUp(
           attempt,
           interview,
@@ -1575,7 +1587,7 @@ async function handleAnsweredTurn(args: {
         return;
       }
 
-      // A thin answer, no follow-up: move on. Already scored above.
+      // Thin answer / non-answer, or no follow-up offered: move on. Scored above.
       await advanceOrFinish(attempt, interview, turn);
       return;
     } catch (error) {
