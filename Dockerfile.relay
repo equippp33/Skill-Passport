@@ -1,0 +1,60 @@
+# Skill Passport — realtime STT relay image.
+#
+# A small sibling to the main Dockerfile. It ships NO Next build: the relay only
+# runs apps/nextjs/scripts/stt-relay.mjs, which sits between the browser and
+# Sarvam's streaming STT so the API key never reaches the client. Deployed as
+# its own Coolify app, pointed at this file.
+#
+#   docker build -f Dockerfile.relay -t skill-passport-relay .
+#   docker run --rm -p 3100:3100 -e SARVAM_API_KEY=... skill-passport-relay
+#
+# Env it reads at runtime (injected by Coolify, not baked in):
+#   SARVAM_API_KEY              (required)
+#   STT_RELAY_PORT              (default 3100)
+#   SARVAM_STT_REALTIME_MODEL   (default saaras:v3-realtime)
+
+FROM node:22.14.0-alpine AS base
+RUN apk add --no-cache libc6-compat
+RUN corepack enable pnpm
+WORKDIR /repo
+
+# ---------------------------------------------------------------------------
+# Dependencies — identical manifest copy to the main image, so the pnpm store
+# cache is shared and this layer is essentially free after the first build.
+# ---------------------------------------------------------------------------
+FROM base AS deps
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml .npmrc package.json ./
+COPY apps/nextjs/package.json        apps/nextjs/package.json
+COPY packages/shared/package.json    packages/shared/package.json
+COPY tooling/eslint/package.json     tooling/eslint/package.json
+COPY tooling/typescript/package.json tooling/typescript/package.json
+
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store \
+    pnpm config set store-dir /pnpm-store && \
+    pnpm install --frozen-lockfile
+
+# ---------------------------------------------------------------------------
+# Runtime — the installed node_modules (for `ws`) plus the single script.
+# No source tree, no build output, no pnpm needed to run it.
+# ---------------------------------------------------------------------------
+FROM base AS runner
+
+ENV NODE_ENV=production
+ENV STT_RELAY_PORT=3100
+
+RUN addgroup --system --gid 1001 nodejs \
+ && adduser  --system --uid 1001 --ingroup nodejs relay
+
+WORKDIR /repo
+# The workspace symlinks in apps/nextjs/node_modules point back into the root
+# store, so both trees are copied to keep `ws` resolvable.
+COPY --from=deps /repo/node_modules ./node_modules
+COPY --from=deps /repo/apps/nextjs/node_modules ./apps/nextjs/node_modules
+COPY apps/nextjs/scripts/stt-relay.mjs ./apps/nextjs/scripts/stt-relay.mjs
+
+USER relay
+EXPOSE 3100
+
+# node is PID 1 so it gets SIGTERM directly and stops promptly.
+CMD ["node", "apps/nextjs/scripts/stt-relay.mjs"]
