@@ -126,7 +126,7 @@ export function AttemptReport({
       {/* Skills on one side, the written verdict on the other, so the width
           carries two columns of report instead of one tall stack. */}
       <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
-        {/* All ten skills, always — unassessed ones are shown, not hidden. */}
+        {/* All skills, always — unassessed ones are shown, not hidden. */}
         <Card>
           <CardHeader>
             <CardTitle>{m.result.skillBreakdown}</CardTitle>

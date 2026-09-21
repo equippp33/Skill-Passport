@@ -17,7 +17,7 @@ export interface SkillScore {
   turnNumbers: number[];
 }
 
-/** All ten skills, in framework order, so nothing is silently omitted. */
+/** All skills, in framework order, so nothing is silently omitted. */
 export function aggregateSkillScores(turns: InterviewTurn[]): SkillScore[] {
   return WORK_SKILLS.map((skill) => {
     const forSkill = turns.filter((t) => t.skillId === skill.id);

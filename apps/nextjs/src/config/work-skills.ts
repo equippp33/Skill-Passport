@@ -1,5 +1,5 @@
 /**
- * The interview framework: ten general employability / workplace skills.
+ * The interview framework: the general employability / workplace skills.
  *
  * This is a WORKPLACE-SKILLS assessment, not a technical screen. The prompts
  * built from this file explicitly forbid software-development and other
@@ -10,6 +10,7 @@
  */
 
 export const WORK_SKILL_IDS = [
+  "work_readiness",
   "reliability",
   "responsibility",
   "following_instructions",
@@ -35,6 +36,14 @@ export interface WorkSkill {
 }
 
 export const WORK_SKILLS: readonly WorkSkill[] = [
+  {
+    id: "work_readiness",
+    label: "Work Readiness & Aspirations",
+    definition:
+      "A realistic picture of working life and clear goals — understanding what a job expects and what they want to get out of it.",
+    scenarioFocus:
+      "what they want from work and what being ready for a job means to them",
+  },
   {
     id: "reliability",
     label: "Reliability",
@@ -79,14 +88,14 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
   },
   {
     id: "problem_solving",
-    label: "Thinking and Problem Solving",
+    label: "Problem Solving",
     definition:
       "Working out the cause of a practical problem and choosing a sensible way to fix it.",
     scenarioFocus: "solving an unexpected problem at work",
   },
   {
     id: "learning_adaptability",
-    label: "Learning and Adaptability",
+    label: "Adaptability",
     definition:
       "Learning new tasks quickly, accepting feedback, and adjusting when things change.",
     scenarioFocus: "learning from feedback or adapting to a change at work",
@@ -126,7 +135,7 @@ export function isWorkSkillId(value: string): value is WorkSkillId {
  * Which skill a given turn assesses.
  *
  * Turns are grouped so that consecutive turns on the same skill act as genuine
- * follow-ups. With `questionCount = 10` each skill gets one question; with
+ * follow-ups. With `questionCount` equal to the skill count each skill gets one; with
  * `20`, turns 1-2 cover skill 1, turns 3-4 cover skill 2, and so on.
  *
  * The mapping is computed server-side from the turn number, so the model can

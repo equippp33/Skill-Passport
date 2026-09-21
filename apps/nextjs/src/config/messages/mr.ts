@@ -53,7 +53,7 @@ export const mr: Messages = {
     newInterview: "नवीन मूल्यांकन सुरू करा",
     emptyTitle: "अजून एकही मूल्यांकन नाही",
     emptyBody:
-      "तुमचे पहिले मूल्यांकन सुरू करा. यात दहा कामाची कौशल्ये तपासली जातात, एका वेळी एक प्रश्न.",
+      "तुमचे पहिले मूल्यांकन सुरू करा. यात कामाची कौशल्ये तपासली जातात, एका वेळी एक प्रश्न.",
     statusLabel: "स्थिती",
     scoreLabel: "गुण",
     questions: "प्रश्न",
@@ -72,7 +72,7 @@ export const mr: Messages = {
       "एका वेळी एक प्रश्न. ऐका, मोठ्याने उत्तर द्या आणि मग पुढील बटण दाबा.",
     duration: "साधारण {minutes} मिनिटे",
     skillsCovered:
-      "यात विश्वासार्हता, सांघिक काम आणि संवाद अशी दहा कामाची कौशल्ये तपासली जातात.",
+      "यात विश्वासार्हता, सांघिक काम आणि संवाद अशी कामाची कौशल्ये तपासली जातात.",
     answerLimit:
       "प्रत्येक उत्तर जास्तीत जास्त {seconds} सेकंदांचे असू शकते. प्रश्न वाचून झाल्यावर रेकॉर्डिंग आपोआप सुरू होते.",
     microphone:
@@ -170,7 +170,7 @@ export const mr: Messages = {
     noStrengths: "कोणतीही विशिष्ट बलस्थाने आढळली नाहीत.",
     noImprovements: "कोणत्याही विशिष्ट सुधारणा सुचवल्या गेल्या नाहीत.",
     skillBreakdown: "कौशल्यनिहाय गुण",
-    skillBreakdownHint: "दहाही कामाची कौशल्ये, प्रत्येकी १० पैकी गुण.",
+    skillBreakdownHint: "सर्व कामाची कौशल्ये, प्रत्येकी १० पैकी गुण.",
     notAssessed: "तपासले नाही",
     questionBreakdown: "प्रश्ननिहाय तपशील",
     yourAnswer: "तुमचे उत्तर",
@@ -189,14 +189,15 @@ export const mr: Messages = {
   },
 
   skills: {
+    work_readiness: "कामाची तयारी व आकांक्षा",
     reliability: "विश्वासार्हता",
     responsibility: "जबाबदारी",
     following_instructions: "सूचनांचे पालन",
     attention_to_detail: "बारकाव्यांकडे लक्ष",
     communication: "संवाद",
     teamwork: "सांघिक काम",
-    problem_solving: "विचार व समस्या सोडवणे",
-    learning_adaptability: "शिकणे व जुळवून घेणे",
+    problem_solving: "समस्या सोडवणे",
+    learning_adaptability: "जुळवून घेणे",
     initiative: "पुढाकार",
     customer_orientation: "ग्राहकाभिमुखता",
   },

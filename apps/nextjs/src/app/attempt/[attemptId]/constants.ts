@@ -43,10 +43,14 @@ export const AUTO_START_BACKSTOP_MS = 60_000;
 export const SILENCE_ADVANCE_SECONDS = 8;
 
 /**
- * Silence ladder: what to do, and when, while a candidate has said nothing.
+ * Silence ladder: what to do, and when, while a candidate has said NOTHING at
+ * all (not while they are mid-answer — that is `SILENCE_ADVANCE_SECONDS`).
  *
- * A real interviewer does not sit in dead air — they coax. Each threshold (in
- * seconds) escalates and the client wires one action to each index: a gentle
- * "take your time", then repeat the question, then move on.
+ * A real interviewer coaxes rather than sitting in dead air, but it never
+ * talks over someone gathering their thoughts and never yanks the question
+ * away. So: a gentle "take your time", then a single re-ask — and that is all.
+ * The interview only moves on when the candidate has actually spoken and then
+ * stopped, or asks to skip out loud. First stage is deliberately unhurried:
+ * 7s cut people off while they were still thinking about how to begin.
  */
-export const NO_ANSWER_STAGES = [7, 15, 30];
+export const NO_ANSWER_STAGES = [15, 30];

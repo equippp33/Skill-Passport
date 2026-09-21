@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, ne, or, sql } from "drizzle-orm";
 
 import { db } from "~/server/db";
 import {
@@ -161,6 +161,7 @@ function contextFor(
   attempt: InterviewAttempt,
   interview: Interview,
   introduction?: string | null,
+  priorAttempts?: string | null,
 ): InterviewContext {
   if (!attempt.language) {
     throw new AttemptError(
@@ -174,7 +175,83 @@ function contextFor(
     candidateName: attempt.candidateName,
     candidateCourse: attempt.candidateCourse,
     candidateIntroduction: introduction ?? null,
+    priorAttempts: priorAttempts ?? null,
   };
+}
+
+/**
+ * Build the model context for an attempt, pulling the introduction and any
+ * earlier-attempt digest in parallel. Prefer this over calling `contextFor`
+ * directly so returning candidates always get their prior context.
+ */
+async function buildContext(
+  attempt: InterviewAttempt,
+  interview: Interview,
+): Promise<InterviewContext> {
+  const [introduction, priorAttempts] = await Promise.all([
+    introductionFor(attempt.id),
+    priorAttemptsContext(attempt),
+  ]);
+  return contextFor(attempt, interview, introduction, priorAttempts);
+}
+
+/** How much of each prior answer to carry over — enough for gist, not the lot. */
+const PRIOR_ANSWER_CHARS = 300;
+
+/**
+ * A compact digest of this candidate's most recent EARLIER completed attempt at
+ * the SAME interview, matched by email. Null for first-timers. Best-effort:
+ * any failure just means no prior context, never a broken interview.
+ */
+async function priorAttemptsContext(
+  attempt: InterviewAttempt,
+): Promise<string | null> {
+  const email = attempt.candidateEmail?.trim();
+  if (!email) return null;
+
+  try {
+    const prior = await db.query.interviewAttemptsTable.findFirst({
+      where: and(
+        eq(interviewAttemptsTable.candidateEmail, email),
+        eq(interviewAttemptsTable.interviewId, attempt.interviewId),
+        ne(interviewAttemptsTable.id, attempt.id),
+        eq(interviewAttemptsTable.status, "completed"),
+      ),
+      orderBy: desc(interviewAttemptsTable.completedAt),
+    });
+    if (!prior) return null;
+
+    const turns = await db.query.interviewTurnsTable.findMany({
+      where: and(
+        eq(interviewTurnsTable.attemptId, prior.id),
+        eq(interviewTurnsTable.kind, "skill"),
+      ),
+      orderBy: asc(interviewTurnsTable.turnNumber),
+    });
+
+    const lines = turns
+      .filter((t) => t.answerTranscript?.trim())
+      .map(
+        (t) =>
+          `Q: ${t.question}\nA: ${t
+            .answerTranscript!.trim()
+            .slice(0, PRIOR_ANSWER_CHARS)}`,
+      );
+    if (lines.length === 0) return null;
+
+    const header =
+      prior.overallScore !== null
+        ? `Previous overall score: ${prior.overallScore}/100.`
+        : `Took this assessment before (not scored).`;
+    return [header, ...lines].join("\n\n");
+  } catch (error) {
+    console.error(
+      `[attempt] prior-attempts lookup failed: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+    return null;
+  }
 }
 
 /**
@@ -768,6 +845,18 @@ async function transcribeSegments(
   return parts.join(" ");
 }
 
+/**
+ * Non-repeat doubts raised per turn ("I don't know", "explain this"), so a
+ * candidate who keeps saying they cannot answer is coaxed a couple of times
+ * and then moved on, instead of being asked the same question forever.
+ *
+ * ponytail: in-process Map — per-instance and reset on restart, which is fine
+ * (worst case is one extra re-ask after a redeploy). Promote to a turn column
+ * only if it ever needs to survive across instances.
+ */
+const doubtCounts = new Map<string, number>();
+const MAX_DOUBTS_BEFORE_SKIP = 2;
+
 export async function processTurn(
   attemptId: string,
   turnId: string,
@@ -901,9 +990,22 @@ export async function processTurn(
       //     gets a short SPOKEN reply — the interviewer answers the doubt out
       //     loud while the question on screen stays put.
       if (looksLikeRepeat || isProbe || !attempt.language) {
+        // A plain "say it again" (or the probe, which cannot be skipped) just
+        // replays. These do not count as giving up.
         await repeatTurn(attemptId, turnId);
       } else {
-        await speakDoubtResponse(attempt, turn, transcript);
+        // "I don't know / I have no idea / explain this" — encourage them, but
+        // do NOT loop forever. After a couple of tries, move on to the next
+        // question rather than asking the same one a sixth time.
+        const key = `${attemptId}:${turn.turnNumber}`;
+        const seen = (doubtCounts.get(key) ?? 0) + 1;
+        doubtCounts.set(key, seen);
+        if (seen > MAX_DOUBTS_BEFORE_SKIP) {
+          doubtCounts.delete(key);
+          await skipTurn(attempt, interview, turn.turnNumber);
+        } else {
+          await speakDoubtResponse(attempt, turn, transcript);
+        }
       }
       return;
     }
@@ -1047,7 +1149,7 @@ async function generateAndInsertQuestion(
   const skill = nextPrimarySkill(priorTurns);
   if (!skill) return;
 
-  const ctx = contextFor(attempt, interview, await introductionFor(attemptId));
+  const ctx = await buildContext(attempt, interview);
   const generated = await generateQuestion({
     ctx,
     skill,
@@ -1266,7 +1368,7 @@ async function scoreTurn(args: {
   languageCode: string | null;
 }): Promise<void> {
   const { attempt, interview, turn, transcript, languageCode } = args;
-  const ctx = contextFor(attempt, interview, await introductionFor(attempt.id));
+  const ctx = await buildContext(attempt, interview);
 
   const priorTurns = await db.query.interviewTurnsTable.findMany({
     where: and(
@@ -1435,11 +1537,7 @@ async function handleAnsweredTurn(args: {
   // one skipped follow-up, never a stuck interview.
   if (eligible && skillId) {
     try {
-      const ctx = contextFor(
-        attempt,
-        interview,
-        await introductionFor(attempt.id),
-      );
+      const ctx = await buildContext(attempt, interview);
       const priorTurns = await db.query.interviewTurnsTable.findMany({
         where: and(
           eq(interviewTurnsTable.attemptId, attempt.id),
@@ -1561,7 +1659,7 @@ async function finaliseAttempt(
 
   try {
     const report = await generateInterviewSummary({
-      ctx: contextFor(attempt, interview, await introductionFor(attemptId)),
+      ctx: await buildContext(attempt, interview),
       history: toHistory(answered),
       skillScores: skillScores.map((s) => ({
         skillLabel: getWorkSkill(s.skillId).label,

@@ -90,6 +90,7 @@ export const turnKindEnum = pgEnum("turn_kind", ["language_probe", "skill"]);
 
 /** Mirrors WORK_SKILL_IDS in `~/config/work-skills`. */
 export const workSkillEnum = pgEnum("work_skill", [
+  "work_readiness",
   "reliability",
   "responsibility",
   "following_instructions",

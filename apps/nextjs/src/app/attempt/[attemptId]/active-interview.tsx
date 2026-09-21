@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 
 import { Alert, Button, Progress } from "~/components/ui";
 import { CameraPreview } from "~/components/camera-preview";
-import { AiBlob } from "./ai-blob";
+import { VoiceOrb } from "~/components/voice-orb";
+import type { OrbState } from "~/components/voice-orb";
 import { Waveform } from "./waveform";
 import { t } from "~/config/messages";
 import type { Messages } from "~/config/messages";
@@ -16,10 +17,7 @@ import { useFullscreen } from "~/hooks/use-fullscreen";
 import { useTypewriter } from "~/hooks/use-typewriter";
 import { uploadAnswerVideo } from "./upload-video";
 import { preventCapture, useCaptureDeterrent } from "./capture-guard";
-import {
-  retryQuestionAudioAction,
-  skipTurnAction,
-} from "~/server/attempt/actions";
+import { retryQuestionAudioAction } from "~/server/attempt/actions";
 import {
   MAX_ANSWER_SECONDS,
   MIN_ANSWER_BLOB_BYTES,
@@ -123,7 +121,7 @@ export function ActiveInterview({
     lastFillerRef.current = idx;
     try {
       el.src = fillerUrls[idx]!;
-      el.currentTime = 0;
+      el.currentTime = 0;
       void el.play().catch(() => undefined);
     } catch {
       // Best-effort — a blocked filler just means the old silent gap.
@@ -688,7 +686,7 @@ export function ActiveInterview({
     const el = nudgeRef.current;
     if (!el) return;
     try {
-      el.currentTime = 0;
+      el.currentTime = 0;
       void el.play().catch(() => undefined);
     } catch {
       // Best-effort.
@@ -700,47 +698,26 @@ export function ActiveInterview({
     const el = audioRef.current;
     if (!el || !turnRef.current?.questionAudioId) return;
     try {
-      el.currentTime = 0;
+      el.currentTime = 0;
       void el.play().catch(() => undefined);
     } catch {
       // Best-effort; the question is still on screen.
     }
   }, []);
 
-  /** Move past the current question, unscored, and poll for the next. */
-  const skipRef = useRef(false);
-  const handleSkip = useCallback(async () => {
-    const active = turnRef.current;
-    if (skipRef.current || !active) return;
-    skipRef.current = true;
-    // Block any pending auto-submit for this turn, and quiet everything.
-    submittedTurnRef.current = active.turnNumber;
-    stopFiller();
-    const el = audioRef.current;
-    if (el && !el.paused) el.pause();
-    resetRecorder();
-    setError(null);
-    setPhase("processing");
-    const result = await skipTurnAction(attemptId, active.turnNumber);
-    skipRef.current = false;
-    if (!result.ok) {
-      setError(genericError);
-      setPhase("error");
-    }
-    // Success: the phase-driven poll picks up the next question.
-  }, [attemptId, genericError, stopFiller, resetRecorder]);
-
   /**
-   * The silence ladder: coax a quiet candidate rather than sit in dead air.
-   * 0 → gentle "take your time"; 1 → repeat the question; 2 → move on.
+   * The silence ladder: coax a quiet candidate rather than sit in dead air —
+   * but NEVER move on for them. 0 → gentle "take your time"; 1 → repeat the
+   * question. There is deliberately no auto-skip: the interview advances only
+   * when they finish speaking or ask to skip out loud, so it can never cut
+   * someone off who was still deciding what to say.
    */
   const handleNoAnswerStage = useCallback(
     (i: number) => {
       if (i === 0) playNudge();
-      else if (i === 1) handleRepeat();
-      else void handleSkip();
+      else handleRepeat();
     },
-    [playNudge, handleRepeat, handleSkip],
+    [playNudge, handleRepeat],
   );
 
   /* ---------------------------- finished speaking ---------------------------- */
@@ -821,7 +798,7 @@ export function ActiveInterview({
     startQuestionCapture();
 
     if (el && turnRef.current?.questionAudioId) {
-      el.currentTime = 0;
+      el.currentTime = 0;
       void el.play().catch(() => {
         timer = setTimeout(beginAnswer, 400);
       });
@@ -893,6 +870,17 @@ export function ActiveInterview({
     total: totalSkills,
   });
 
+  // What the orb is doing. Speaking wins (the interviewer is talking over
+  // everything else); then their own voice while recording; then the quiet
+  // "thinking" turnover between questions; otherwise it rests.
+  const orbState: OrbState = speaking
+    ? "speaking"
+    : recorder.isRecording
+      ? "listening"
+      : isBusy
+        ? "processing"
+        : "idle";
+
   return (
     <div
       ref={stageRef}
@@ -937,7 +925,11 @@ export function ActiveInterview({
 
       {/* Centre stage: the interviewer orb and the question it is asking. */}
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 px-6">
-        <AiBlob speaking={speaking} className="shrink-0" />
+        <VoiceOrb
+          state={orbState}
+          stream={recorder.stream}
+          className="w-56 shrink-0 sm:w-64"
+        />
 
         {/* Selection, copy and context menu are blocked so the question cannot
             be trivially pasted elsewhere — a deterrent only. */}

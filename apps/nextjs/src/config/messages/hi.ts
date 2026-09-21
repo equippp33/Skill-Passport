@@ -50,7 +50,7 @@ export const hi: Messages = {
     newInterview: "नया मूल्यांकन शुरू करें",
     emptyTitle: "अभी तक कोई मूल्यांकन नहीं",
     emptyBody:
-      "अपना पहला मूल्यांकन शुरू करें। इसमें दस कार्य कौशल्य जाँचे जाते हैं, एक बार में एक सवाल।",
+      "अपना पहला मूल्यांकन शुरू करें। इसमें कार्य कौशल्य जाँचे जाते हैं, एक बार में एक सवाल।",
     statusLabel: "स्थिति",
     scoreLabel: "अंक",
     questions: "सवाल",
@@ -69,7 +69,7 @@ export const hi: Messages = {
       "एक बार में एक सवाल। सुनें, बोलकर जवाब दें, फिर अगला दबाएँ।",
     duration: "लगभग {minutes} मिनट",
     skillsCovered:
-      "इसमें भरोसेमंदी, टीम वर्क और संवाद जैसे दस कार्य कौशल्य जाँचे जाते हैं।",
+      "इसमें भरोसेमंदी, टीम वर्क और संवाद जैसे कार्य कौशल्य जाँचे जाते हैं।",
     answerLimit:
       "हर जवाब ज़्यादा से ज़्यादा {seconds} सेकंड का हो सकता है। सवाल पढ़े जाने के बाद रिकॉर्डिंग अपने आप शुरू हो जाती है।",
     microphone:
@@ -167,7 +167,7 @@ export const hi: Messages = {
     noStrengths: "कोई खास मज़बूत पक्ष नहीं मिला।",
     noImprovements: "कोई खास सुधार नहीं सुझाया गया।",
     skillBreakdown: "कौशल्यवार अंक",
-    skillBreakdownHint: "सभी दस कार्य कौशल्य, हर एक १० में से।",
+    skillBreakdownHint: "सभी कार्य कौशल्य, हर एक १० में से।",
     notAssessed: "जाँचा नहीं गया",
     questionBreakdown: "सवालवार विवरण",
     yourAnswer: "आपका जवाब",
@@ -186,14 +186,15 @@ export const hi: Messages = {
   },
 
   skills: {
+    work_readiness: "काम के लिए तैयारी और आकांक्षाएँ",
     reliability: "भरोसेमंदी",
     responsibility: "ज़िम्मेदारी",
     following_instructions: "निर्देशों का पालन",
     attention_to_detail: "बारीकियों पर ध्यान",
     communication: "संवाद",
     teamwork: "टीम वर्क",
-    problem_solving: "सोच और समस्या समाधान",
-    learning_adaptability: "सीखना और ढलना",
+    problem_solving: "समस्या समाधान",
+    learning_adaptability: "ढलना",
     initiative: "पहल",
     customer_orientation: "ग्राहक के प्रति रवैया",
   },

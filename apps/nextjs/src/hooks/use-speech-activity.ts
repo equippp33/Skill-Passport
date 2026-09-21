@@ -107,6 +107,11 @@ export function useSpeechActivity({
       // Analysis is an enhancement; the Next button still works without it.
       return;
     }
+    // Autoplay policy can hand back a SUSPENDED context. A suspended analyser
+    // returns pure silence, so `spoken` never becomes true and the no-answer
+    // ladder fires on a timer while the candidate is actually talking — the
+    // "why is it nudging me mid-answer" bug. Resuming makes detection real.
+    void context.resume().catch(() => undefined);
 
     const source = context.createMediaStreamSource(stream);
     const analyser = context.createAnalyser();

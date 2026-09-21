@@ -122,7 +122,7 @@ export interface InterviewWithCounts extends Interview {
 /**
  * Create an interview with nothing to fill in.
  *
- * Every interview is the same ten workplace skills, and the language comes
+ * Every interview is the same workplace skills, and the language comes
  * from how the candidate answers, so there is no configuration to collect.
  * The title exists only so an admin can tell two links apart and is numbered
  * from how many they already have. Two simultaneous creates can land on the

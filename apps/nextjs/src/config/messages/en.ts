@@ -68,7 +68,7 @@ export const en = {
       "One question at a time. Listen, answer out loud, then press Next.",
     duration: "about {minutes} minutes",
     skillsCovered:
-      "It assesses ten workplace skills, such as reliability, teamwork and communication.",
+      "It assesses core workplace skills, such as reliability, teamwork and communication.",
     answerLimit:
       "Each answer can be up to {seconds} seconds. Recording starts on its own once the question has been read out.",
     microphone:
@@ -167,7 +167,7 @@ export const en = {
     noStrengths: "No specific strengths were identified.",
     noImprovements: "No specific improvements were identified.",
     skillBreakdown: "Skill scores",
-    skillBreakdownHint: "All ten workplace skills, scored out of 10.",
+    skillBreakdownHint: "Every workplace skill, scored out of 10.",
     notAssessed: "Not assessed",
     questionBreakdown: "Question breakdown",
     yourAnswer: "Your answer",
@@ -186,14 +186,15 @@ export const en = {
   },
 
   skills: {
+    work_readiness: "Work Readiness & Aspirations",
     reliability: "Reliability",
     responsibility: "Responsibility",
     following_instructions: "Following Instructions",
     attention_to_detail: "Attention to Detail",
     communication: "Communication",
     teamwork: "Teamwork",
-    problem_solving: "Thinking and Problem Solving",
-    learning_adaptability: "Learning and Adaptability",
+    problem_solving: "Problem Solving",
+    learning_adaptability: "Adaptability",
     initiative: "Initiative",
     customer_orientation: "Customer Orientation",
   } satisfies Record<WorkSkillId, string>,
