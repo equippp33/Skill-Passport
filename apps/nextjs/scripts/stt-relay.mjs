@@ -88,7 +88,12 @@ wss.on("connection", (client, req) => {
     pending.length = 0;
   });
   upstream.on("message", (data) => {
-    if (client.readyState === WebSocket.OPEN) client.send(data.toString());
+    const text = data.toString();
+    // Surface Sarvam-side errors in the relay log for diagnosis.
+    if (text.includes('"error"')) {
+      console.log("[relay] upstream ERROR msg:", text.slice(0, 400));
+    }
+    if (client.readyState === WebSocket.OPEN) client.send(text);
   });
   upstream.on("close", (code, reason) => {
     console.log(

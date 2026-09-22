@@ -32,18 +32,35 @@ function findChromium(): string | null {
   const configured = process.env.CHROMIUM_PATH;
   if (configured) return existsSync(configured) ? configured : null;
 
+  // Per-user installs (Chrome/Edge/Brave often live under %LOCALAPPDATA%).
+  const local = process.env.LOCALAPPDATA;
+
   const candidates = [
     // Linux / Alpine, as installed by the Dockerfile.
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
     "/usr/bin/google-chrome",
+    "/usr/bin/microsoft-edge",
+    "/usr/bin/brave-browser",
     // macOS
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    // Windows
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    // Windows — system installs
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+    "C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+    // Windows — per-user installs
+    ...(local
+      ? [
+          `${local}\\Google\\Chrome\\Application\\chrome.exe`,
+          `${local}\\Microsoft\\Edge\\Application\\msedge.exe`,
+          `${local}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`,
+        ]
+      : []),
   ];
 
   return candidates.find((path) => existsSync(path)) ?? null;

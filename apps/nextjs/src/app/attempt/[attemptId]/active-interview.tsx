@@ -484,6 +484,9 @@ export function ActiveInterview({
         stopPolling();
         setTurn(data.turn);
         setError(null);
+        // Give streaming a fresh chance on this turn — a transient failure on
+        // the previous turn should not force batch for the rest of the interview.
+        setStreamFailed(false);
         resetRecorder();
         allowReplay();
         setPhase("answering");
@@ -506,6 +509,9 @@ export function ActiveInterview({
         if (data.skillNumber > 0) setSkillNumber(data.skillNumber);
         setAudioError(false);
         setError(null);
+        // Retry streaming on the new turn even if it fell back to batch on the
+        // previous one — the failure may have been a transient Sarvam blip.
+        setStreamFailed(false);
         resetRecorder();
         allowReplay();
         setPhase("answering");
