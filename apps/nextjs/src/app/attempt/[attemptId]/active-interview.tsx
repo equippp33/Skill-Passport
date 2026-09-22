@@ -764,6 +764,11 @@ export function ActiveInterview({
     stopFiller();
     const el = audioRef.current;
     if (el && !el.paused) el.pause();
+    // Stop the live recording CLEANLY before resetting. reset() alone leaves the
+    // underlying MediaRecorder in "recording", which then trips startRecording's
+    // re-entry guard on the NEXT question — so recording (and the voice meter)
+    // never starts after a skip. stopRecording flips it to inactive properly.
+    await recorder.stopRecording();
     resetRecorder();
     setError(null);
     setPhase("processing");
@@ -774,7 +779,7 @@ export function ActiveInterview({
       setPhase("error");
     }
     // Success: the phase-driven poll picks up the next question.
-  }, [attemptId, genericError, stopFiller, resetRecorder]);
+  }, [attemptId, genericError, stopFiller, resetRecorder, recorder]);
 
   /**
    * The silence ladder, while the candidate has said NOTHING. Stages come from

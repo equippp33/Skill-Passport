@@ -41,7 +41,7 @@ import { useEffect, useRef, useState } from "react";
  * The FLOOR for the speech threshold — it never drops below this even in a
  * silent room, so faint hiss is never mistaken for a voice.
  */
-const SPEECH_RMS_FLOOR = 0.012;
+const SPEECH_RMS_FLOOR = 0.008;
 
 /**
  * The CEILING for it — even a loud room never demands more than this, so the
