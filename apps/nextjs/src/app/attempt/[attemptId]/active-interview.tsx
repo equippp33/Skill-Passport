@@ -858,8 +858,12 @@ export function ActiveInterview({
    */
   const turnNumber = turn?.turnNumber ?? null;
 
-  // The question is typed out as it is spoken, rather than snapping in whole.
-  const typedQuestion = useTypewriter(turn?.question ?? "");
+  // The question is typed out as it is spoken, rather than snapping in whole —
+  // and NOT before they are in fullscreen, so the whole question (text and
+  // voice together) only begins once they have entered the interview.
+  const typedQuestion = useTypewriter(
+    isFullscreen ? (turn?.question ?? "") : "",
+  );
 
   useEffect(() => {
     if (phase !== "answering" || turnNumber === null) return;
