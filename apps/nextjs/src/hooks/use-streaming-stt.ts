@@ -30,6 +30,13 @@ const FLUSH_MS = 100;
  * `chunk_too_large`, which used to tear the whole stream down.
  */
 const MAX_FRAME_SAMPLES = 1600;
+/**
+ * How long to keep muting the stream AFTER the interviewer's clip ends, to let
+ * the speaker→mic echo die out before we start listening. Short enough that a
+ * quick candidate is not clipped, long enough that the AI's own tail is not
+ * transcribed as their answer.
+ */
+const POST_SPEAK_MUTE_MS = 700;
 
 /** Float32 at `inRate` → linear16 PCM resampled to 16kHz. */
 function resampleToPcm16(float32: Float32Array, inRate: number): Int16Array {
@@ -139,6 +146,11 @@ export function useStreamingStt({
     let pendingLen = 0;
     const finals: string[] = [];
     let firedTurn = false;
+    // The last moment the interviewer was speaking. We keep muting the stream
+    // for a short window AFTER their clip ends, so the echo/tail bleeding from
+    // the speakers into the mic is never transcribed as the candidate's answer
+    // (which was making short follow-ups auto-submit on the AI's own voice).
+    let lastSpeakingAt = Date.now();
 
     // The no-answer ladder: runs until the candidate first speaks. Elapsed time
     // since recording started; each stage fires once. Reset on speech_start.
@@ -235,9 +247,16 @@ export function useStreamingStt({
 
         // Flush accumulated audio at a steady cadence, ~100ms per message.
         flushTimer = setInterval(() => {
-          // Do not stream while the interviewer's own clip is playing, or it
-          // would be transcribed as the candidate's answer.
+          // Do not stream while the interviewer's own clip is playing — nor for
+          // a short settle window after it ends, so the speaker→mic echo is not
+          // transcribed as the candidate's answer.
           if (speakingRef.current) {
+            lastSpeakingAt = Date.now();
+            pending = [];
+            pendingLen = 0;
+            return;
+          }
+          if (Date.now() - lastSpeakingAt < POST_SPEAK_MUTE_MS) {
             pending = [];
             pendingLen = 0;
             return;

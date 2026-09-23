@@ -108,9 +108,11 @@ export function AttemptReport({
               {m.result.overallScore}
             </p>
             <p className="mt-2 text-5xl font-semibold tracking-tight text-accent tabular-nums">
-              {attempt.overallScore ?? "—"}
+              {attempt.overallScore !== null
+                ? (attempt.overallScore / 10).toFixed(1)
+                : "—"}
               {attempt.overallScore !== null ? (
-                <span className="text-lg text-content-muted">/100</span>
+                <span className="text-lg text-content-muted">/10</span>
               ) : null}
             </p>
           </div>

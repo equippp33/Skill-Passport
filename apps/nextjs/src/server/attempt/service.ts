@@ -1671,7 +1671,20 @@ async function finaliseAttempt(
   );
   const skillScores = aggregateSkillScores(turns);
 
-  let overallScore: number | null = null;
+  // Overall = the AVERAGE of the skills the candidate actually ANSWERED, on a
+  // 0-10 scale (stored ×10 so a decimal survives; the report divides it back).
+  // Skipped / unanswered skills are EXCLUDED — not answering one question must
+  // never drag the whole score down; the candidate is judged on what they did
+  // answer. Deterministic, not the model's number.
+  const scored = skillScores.filter((s) => s.score !== null);
+  const overallScore =
+    scored.length > 0
+      ? Math.round(
+          (scored.reduce((sum, s) => sum + (s.score ?? 0), 0) / scored.length) *
+            10,
+        )
+      : null;
+
   let summary: string | null = null;
   let strengths: string[] = [];
   let improvements: string[] = [];
@@ -1685,7 +1698,8 @@ async function finaliseAttempt(
         score: s.score,
       })),
     });
-    overallScore = report.overallScore;
+    // Keep only the written summary — the number is the deterministic average
+    // above, so the model's overallScore is ignored.
     summary = report.summary;
     strengths = report.strengths;
     improvements = report.improvements;
@@ -1696,11 +1710,6 @@ async function finaliseAttempt(
         error instanceof Error ? error.message : "unknown"
       }`,
     );
-    const scored = skillScores.filter((s) => s.score !== null);
-    if (scored.length > 0) {
-      const total = scored.reduce((sum, s) => sum + (s.score ?? 0), 0);
-      overallScore = Math.round((total / (scored.length * 10)) * 100);
-    }
     summary =
       "The detailed summary could not be generated, but the per-question feedback below is complete.";
   }

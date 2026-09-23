@@ -46,7 +46,7 @@ export default async function AdminReportsPage() {
         <p className="mt-1 text-sm text-content-muted">
           {reports.length} candidate{reports.length === 1 ? "" : "s"}
           {scored.length > 0 ? ` · ${scored.length} scored` : ""}
-          {average !== null ? ` · ${average}/100 average` : ""}
+          {average !== null ? ` · ${(average / 10).toFixed(1)}/10 average` : ""}
         </p>
       </div>
 
@@ -97,8 +97,8 @@ export default async function AdminReportsPage() {
                   <div className="flex shrink-0 items-center gap-4">
                     {report.overallScore !== null ? (
                       <p className="text-lg font-semibold tabular-nums">
-                        {report.overallScore}
-                        <span className="text-sm text-content-muted">/100</span>
+                        {(report.overallScore / 10).toFixed(1)}
+                        <span className="text-sm text-content-muted">/10</span>
                       </p>
                     ) : null}
                     <Link

@@ -104,8 +104,8 @@ export function CandidateCard({
         {/* Score, always overlapped on the thumbnail when it exists. */}
         {score !== null ? (
           <span className="absolute top-2 right-2 rounded-md bg-black/70 px-2 py-1 text-sm font-semibold text-white tabular-nums backdrop-blur-sm">
-            {score}
-            <span className="text-white/60">/100</span>
+            {(score / 10).toFixed(1)}
+            <span className="text-white/60">/10</span>
           </span>
         ) : null}
 

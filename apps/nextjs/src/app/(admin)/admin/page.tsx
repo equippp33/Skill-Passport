@@ -81,7 +81,9 @@ export default async function AdminOverviewPage() {
           icon="report"
           label="Average score"
           value={
-            stats.averageScore === null ? "—" : `${stats.averageScore}/100`
+            stats.averageScore === null
+              ? "—"
+              : `${(stats.averageScore / 10).toFixed(1)}/10`
           }
         />
       </div>
