@@ -110,7 +110,7 @@ export const env = createEnv({
       .min(1)
       .default("saaras:v3-realtime"),
     SARVAM_TTS_MODEL: z.string().min(1).default("bulbul:v3"),
-    SARVAM_TTS_SPEAKER: z.string().min(1).default("shubh"),
+    SARVAM_TTS_SPEAKER: z.string().min(1).default("suhani"),
     /**
      * Live conversational turns: questions, follow-ups and re-asks. Chosen
      * for latency over depth — it sits on the candidate's critical path.

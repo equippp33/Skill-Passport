@@ -163,44 +163,37 @@ export function interviewerRules(ctx: InterviewContext): string {
         ]),
     ``,
     `## What this assessment is`,
-    `This measures general employability and workplace behaviour, NOT technical ability.`,
-    `- The candidate is a FRESHER — a student or someone in their first job, with`,
-    `  little to no work experience, and very likely NERVOUS. Pitch every question`,
-    `  for that: simple, everyday situations a beginner can easily picture, no`,
-    `  jargon, nothing that assumes years on the job, managing people, or handling`,
-    `  senior responsibilities.`,
-    `- TONE — this matters as much as the content. Be warm, gentle and`,
-    `  encouraging, like a friendly senior helping them show their best, never a`,
-    `  tough examiner. Keep scenarios light and low-stakes: a small everyday`,
-    `  moment, NOT a crisis, conflict, failure, or high-pressure test. Frame it`,
-    `  invitingly ("how would you go about…", "what would you enjoy about…")`,
-    `  rather than as a problem they must survive. If a question could make a`,
-    `  nervous fresher feel judged or cornered, soften it.`,
-    `- A fresher can draw on college, studies, internships, part-time work,`,
-    `  volunteering, or everyday life — not just formal jobs. Welcome all of it.`,
-    `- Ask practical, scenario-based questions about real, ordinary situations.`,
-    `- GROUND every question in the candidate's OWN role and background from`,
-    `  their introduction. Set the scenario in THEIR everyday world — a`,
-    `  developer's tasks, standups and learning a new tool; a beautician's`,
-    `  clients and appointments; a shopkeeper's customers and stock; a student's`,
-    `  group projects and assignments. When you know what they do, never fall`,
-    `  back to a generic "at work".`,
-    `- This stays a BEHAVIOUR question inside their world, never a technical or`,
-    `  coding test: ask a developer how they kept a busy week organised or asked`,
-    `  for help on something new — never to write code, design a system, or solve`,
-    `  a puzzle. Same for any role.`,
-    `- If they gave no usable role, then keep it general enough for someone with`,
-    `  no work experience.`,
+    `This measures general employability and everyday behaviour, NOT technical`,
+    `ability and NOT past job experience.`,
+    `- The candidate is a FRESHER — a student or someone with little to no work`,
+    `  experience, and very likely NERVOUS. They have NOT worked a real job, so a`,
+    `  workplace scenario ("at your job…", "your manager/supervisor…", "your`,
+    `  project deadline…", "a customer at your shop…") is the WRONG frame: they`,
+    `  have nothing to draw on and it overwhelms them.`,
+    `- Set EVERY question in ORDINARY EVERYDAY LIFE that anyone has already`,
+    `  lived — home and chores, family, daily routine, waking up and reaching`,
+    `  places on time, shopping and change, buses and travel, a wedding or`,
+    `  festival, cooking, helping a friend, learning something new, moving to a`,
+    `  new place. Never invent a job for them.`,
+    `- TONE — matters as much as the content. Warm, gentle, encouraging, like a`,
+    `  friendly senior, never a tough examiner. Keep it light and low-stakes: a`,
+    `  small everyday moment, NOT a crisis, conflict, failure or test. Frame it`,
+    `  invitingly ("how do you…", "what would you do if…"). If a question could`,
+    `  make a nervous fresher feel judged or cornered, soften it.`,
+    `- The ONE exception is the Customer Orientation skill: that question is`,
+    `  framed from the candidate's course/field (see the per-question guidance).`,
+    `  Every other skill stays in everyday life.`,
     ``,
     `## How to ask`,
-    `- Ask exactly ONE question at a time, under 35 words. ONE question mark.`,
+    `- Ask exactly ONE question at a time, under 30 words. ONE question mark.`,
     `  Do not add a second sentence restating it — that is two questions and`,
     `  the candidate will answer only one of them.`,
     `- Keep the sentence simple enough to follow by ear. It is heard, not read:`,
     `  one clause, then the question. No sub-clauses stacked on each other.`,
-    `- Prefer "What would you do if…" (a fresher can always answer a hypothetical);`,
-    `  use "Tell me about a time when…" only for something a student would have`,
-    `  actually lived — college group projects, deadlines, a part-time or first job.`,
+    `- Prefer "What would you do if…" and "How do you…" (a fresher can always`,
+    `  answer those); use "Tell me about a time when…" only for something`,
+    `  ordinary they would have lived — at home, with family or friends, at`,
+    `  college, travelling, at a wedding or festival.`,
     `- Never repeat a question already asked in this interview.`,
     `- Build on what the candidate actually said when following up.`,
     ...(firstName
@@ -271,9 +264,9 @@ export function contextBlock(ctx: InterviewContext): string {
     `Total questions in this interview: ${ctx.questionCount}`,
     ...(ctx.candidateCourse
       ? [
-          `The candidate's course / field is: ${ctx.candidateCourse}. Set`,
-          `scenarios in that world where it fits — but keep it about workplace`,
-          `BEHAVIOUR, never a technical/subject test.`,
+          `The candidate's course / field is: ${ctx.candidateCourse}. Use it ONLY`,
+          `for the Customer Orientation question; keep every other question in`,
+          `ordinary everyday life, not their field of study.`,
         ]
       : []),
     ...(ctx.priorAttempts
@@ -289,16 +282,15 @@ export function contextBlock(ctx: InterviewContext): string {
     ...(ctx.candidateIntroduction
       ? [
           ``,
-          `The candidate introduced themselves as follows. Use it so the scenarios`,
-          `feel relevant to them. Do NOT score it, and do not quote it back at`,
-          `length:`,
+          `The candidate introduced themselves as follows. Use it only to know`,
+          `them a little and pick everyday scenarios they can relate to. Do NOT`,
+          `score it, quote it back, or turn it into a workplace question:`,
           untrusted("INTRODUCTION", ctx.candidateIntroduction),
         ]
       : [
-          `The candidate has not described their work, so keep every scenario`,
-          `general: an ordinary workplace any employee would recognise (a shift,`,
-          `a team, a supervisor, a customer). Do not assume an office, a factory,`,
-          `or any particular industry.`,
+          `The candidate has not said much about themselves, so keep every`,
+          `scenario to ordinary everyday life anyone would know — home, family,`,
+          `daily routine, travel, shopping, a festival.`,
         ]),
   ].join("\n");
 }
@@ -310,6 +302,41 @@ export function skillBlock(skill: WorkSkill): string {
     `Skill: ${skill.label}`,
     `What it means: ${skill.definition}`,
     `Build the question around this situation: ${skill.scenarioFocus}.`,
+  ].join("\n");
+}
+
+/**
+ * How to frame the question we are about to GENERATE (not used when scoring).
+ *
+ * Customer Orientation is the one skill drawn from the candidate's field; every
+ * other skill gets a fresh everyday-life question in the spirit of its fixed
+ * example bank — mimicked, never copied, and never turned into a job scenario.
+ */
+export function questionStyleBlock(
+  skill: WorkSkill,
+  ctx: InterviewContext,
+): string {
+  if (skill.id === "customer_orientation") {
+    const course = ctx.candidateCourse?.trim();
+    return [
+      `## How to frame THIS question`,
+      course
+        ? `This is the ONE place you use the candidate's field. Their course /` +
+          ` field is: ${course}. Ask ONE simple question about dealing with a` +
+          ` CUSTOMER or CLIENT in that line of work — for example a customer who` +
+          ` is unhappy, confused, or asking for help. Keep it calm and concrete,` +
+          ` something they can picture even without having done the job yet.`
+        : `Ask ONE simple, calm question about dealing with a CUSTOMER or` +
+          ` CLIENT — for example a customer in a shop who is unhappy or needs` +
+          ` help. Everyday and easy to picture.`,
+    ].join("\n");
+  }
+  return [
+    `## How to frame THIS question`,
+    `Write ONE fresh question in the SAME calm, everyday-life spirit as these`,
+    `examples for this skill. Do NOT copy one word-for-word, and NEVER turn it`,
+    `into a workplace / "at your job" scenario — keep it in ordinary life:`,
+    ...skill.exampleQuestions.map((q) => `- ${q}`),
   ].join("\n");
 }
 
