@@ -22,9 +22,17 @@ import { useEffect, useRef, useState } from "react";
 const TARGET_SAMPLE_RATE = 16000;
 /** ~100ms of 16k audio per relay message, matching the probe that verified it. */
 const FLUSH_MS = 100;
+/**
+ * Max samples per `audio_input` message. Sarvam's `fast` stream caps each frame
+ * at 16000 BYTES (8000 linear16 samples); 1600 samples = 3200 bytes keeps every
+ * frame comfortably under that, whatever the flush accumulated (a throttled
+ * timer can hand us a full second at once). Larger frames get rejected with
+ * `chunk_too_large`, which used to tear the whole stream down.
+ */
+const MAX_FRAME_SAMPLES = 1600;
 
-/** Float32 → resampled linear16 → base64, ready for one `audio_input` message. */
-function encodeChunk(float32: Float32Array, inRate: number): string {
+/** Float32 at `inRate` → linear16 PCM resampled to 16kHz. */
+function resampleToPcm16(float32: Float32Array, inRate: number): Int16Array {
   let data = float32;
   if (inRate !== TARGET_SAMPLE_RATE) {
     const ratio = inRate / TARGET_SAMPLE_RATE;
@@ -43,7 +51,12 @@ function encodeChunk(float32: Float32Array, inRate: number): string {
     const s = Math.max(-1, Math.min(1, data[i]!));
     pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
   }
-  const bytes = new Uint8Array(pcm.buffer);
+  return pcm;
+}
+
+/** Base64 of one (already-small) linear16 frame. */
+function pcm16ToBase64(pcm: Int16Array): string {
+  const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
   let binary = "";
   for (let i = 0; i < bytes.length; i += 1)
     binary += String.fromCharCode(bytes[i]!);
@@ -173,7 +186,7 @@ export function useStreamingStt({
         };
         ws.onclose = () => !cancelled && setConnected(false);
         ws.onmessage = (event: MessageEvent<string>) => {
-          let msg: { event?: string; text?: string };
+          let msg: { event?: string; text?: string; is_fatal?: boolean };
           try {
             msg = JSON.parse(event.data) as typeof msg;
           } catch {
@@ -205,7 +218,15 @@ export function useStreamingStt({
               turnEndTimer = setTimeout(fireTurn, turnSilenceMs);
               break;
             case "error":
-              if (!cancelled) onFailedRef.current?.();
+              // Sarvam flags recoverable errors with is_fatal:false (e.g. a
+              // single oversized frame). Only a FATAL error should drop us to
+              // the batch fallback — a non-fatal one is logged and ignored so a
+              // transient hiccup does not kill the whole turn's streaming.
+              if (msg.is_fatal === false) {
+                console.warn("[stt] non-fatal Sarvam error, continuing");
+              } else if (!cancelled) {
+                onFailedRef.current?.();
+              }
               break;
             default:
               break;
@@ -231,12 +252,16 @@ export function useStreamingStt({
           }
           pending = [];
           pendingLen = 0;
-          ws.send(
-            JSON.stringify({
-              event: "audio_input",
-              audio: encodeChunk(merged, inRate),
-            }),
-          );
+          // Resample once, then send in frames small enough that even a full
+          // second handed over by a throttled timer never trips Sarvam's
+          // per-frame cap.
+          const pcm = resampleToPcm16(merged, inRate);
+          for (let i = 0; i < pcm.length; i += MAX_FRAME_SAMPLES) {
+            const frame = pcm.subarray(i, i + MAX_FRAME_SAMPLES);
+            ws.send(
+              JSON.stringify({ event: "audio_input", audio: pcm16ToBase64(frame) }),
+            );
+          }
         }, FLUSH_MS);
 
         // No-answer ladder: escalate while the candidate has said nothing.
