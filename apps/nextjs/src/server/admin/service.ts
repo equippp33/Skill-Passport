@@ -15,8 +15,6 @@ import {
 } from "~/server/db/schema";
 import type { Interview, InterviewAttempt } from "~/server/db/schema";
 import type { InterviewDetails } from "./dto";
-import { isWorkSkillId } from "~/config/work-skills";
-import type { WorkSkillId } from "~/config/work-skills";
 import { labelForCode } from "~/lib/spoken-languages";
 import type { SpokenLanguage } from "~/lib/spoken-languages";
 import { getAuth } from "~/server/auth/session";
@@ -92,12 +90,8 @@ export async function createInterview(
     title: string;
     description: string | null;
     questionCount?: number;
-    followUpSkills?: WorkSkillId[];
   },
 ): Promise<Interview> {
-  // Only real skill ids reach the column, whatever the caller passed.
-  const followUpSkills = (input.followUpSkills ?? []).filter(isWorkSkillId);
-
   const [row] = await db
     .insert(interviewsTable)
     .values({
@@ -105,7 +99,8 @@ export async function createInterview(
       title: input.title,
       description: input.description,
       questionCount: input.questionCount ?? DEFAULT_QUESTION_COUNT,
-      followUpSkills,
+      // followUpSkills column is unused now (follow-ups are answer-driven on
+      // every skill); the DB default [] fills it.
       publicToken: generateToken(),
     })
     .returning();
@@ -131,7 +126,6 @@ export interface InterviewWithCounts extends Interview {
  */
 export async function createGeneralInterview(
   adminId: string,
-  followUpSkills: WorkSkillId[] = [],
 ): Promise<Interview> {
   const [counted] = await db
     .select({ total: sql<number>`count(*)::int` })
@@ -141,7 +135,6 @@ export async function createGeneralInterview(
   return createInterview(adminId, {
     title: `General interview ${(counted?.total ?? 0) + 1}`,
     description: null,
-    followUpSkills,
   });
 }
 

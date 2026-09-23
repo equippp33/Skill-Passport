@@ -7,6 +7,7 @@ import {
   interviewAttemptsTable,
   interviewAudioTable,
   interviewTurnsTable,
+  interviewsTable,
 } from "~/server/db/schema";
 import type {
   Interview,
@@ -858,11 +859,15 @@ const doubtCounts = new Map<string, number>();
 const MAX_DOUBTS_BEFORE_SKIP = 1;
 
 /**
- * Lowest score that earns a follow-up. 5 is "an acceptable answer" on the
- * scoring rubric, so anything below it — skipped, "I don't know", evasive,
- * empty — never gets a "would you like to add anything?" dug into it.
+ * Lowest score that may earn a follow-up. Deliberately 1, not higher: the whole
+ * point of a probe is to give a THIN, LOW-scoring but genuine answer a fair
+ * chance before that low score is settled (client ask — a fresher who says
+ * "I've never spotted an error" must be PROBED, not handed a 1/10). Only a
+ * literal 0 (nothing to work with) skips it; refusals / "I don't know" are
+ * already filtered to the doubt path before scoring, and the model is told to
+ * return no follow-up for empty/off-topic/refusal answers.
  */
-const FOLLOWUP_MIN_SCORE = 5;
+const FOLLOWUP_MIN_SCORE = 1;
 
 export async function processTurn(
   attemptId: string,
@@ -1247,16 +1252,12 @@ async function prefetchNextQuestion(
   const turns = await getTurns(attemptId);
   const current = turns.find((t) => t.turnNumber === currentTurnNumber);
 
-  // Don't prepare across a possible follow-up: an eligible primary may spawn a
-  // follow-up as the very next turn, and that is decided from the answer, not
-  // ahead of time. Preparing the next primary now would take the turn number
-  // the follow-up needs.
-  if (
-    current &&
-    !current.isFollowUp &&
-    current.skillId &&
-    interview.followUpSkills.includes(current.skillId as WorkSkillId)
-  ) {
+  // Don't prepare across a possible follow-up: ANY primary may spawn a
+  // follow-up as the very next turn, decided from the answer, not ahead of
+  // time. Preparing the next primary now would take the turn number the
+  // follow-up needs. (Follow-ups are answer-driven on every skill now, so we
+  // only prefetch after a follow-up turn, which never spawns another.)
+  if (current && !current.isFollowUp && current.skillId) {
     return;
   }
 
@@ -1536,11 +1537,11 @@ async function handleAnsweredTurn(args: {
 }): Promise<void> {
   const { attempt, interview, turn, transcript, languageCode } = args;
 
+  // Every primary skill turn now scores AND decides a follow-up from the
+  // answer — there is no per-interview opt-in any more. Follow-up turns
+  // themselves are never followed up (they ARE the follow-up).
   const skillId = turn.skillId as WorkSkillId | null;
-  const eligible =
-    !turn.isFollowUp &&
-    !!skillId &&
-    interview.followUpSkills.includes(skillId);
+  const eligible = !turn.isFollowUp && !!skillId;
 
   // --- Eligible primary: score AND decide the follow-up in one call. --------
   // This is the one path with a provider call on the critical path (the
@@ -1716,6 +1717,43 @@ async function finaliseAttempt(
       updatedAt: new Date(),
     })
     .where(eq(interviewAttemptsTable.id, attemptId));
+}
+
+/**
+ * Re-grade a finished attempt from its STORED transcripts — no re-recording,
+ * no STT, no TTS (so it never touches the speech rate limits). Used after a
+ * scoring-rubric change to bring old reports in line with the new one.
+ *
+ * Re-scores every answered skill turn and regenerates the summary + overall
+ * score. Skipped / unscored turns keep their null score, and it CANNOT add a
+ * follow-up that never happened — it only re-grades what was actually said.
+ */
+export async function rescoreAttempt(attemptId: string): Promise<void> {
+  const attempt = await reload(attemptId);
+  const interview = await db.query.interviewsTable.findFirst({
+    where: eq(interviewsTable.id, attempt.interviewId),
+  });
+  if (!interview) {
+    throw new AttemptError("not_found", "That interview could not be found.");
+  }
+
+  const languageCode = attempt.language
+    ? resolveInterviewLanguage(attempt.language).code
+    : null;
+  const turns = await getTurns(attemptId);
+
+  for (const turn of turns) {
+    // Only answered, previously-scored skill turns (probes/follow-ups included).
+    // Skipped turns keep their null score; empty transcripts are left alone.
+    if (turn.kind !== "skill" || turn.status !== "completed") continue;
+    if (turn.score === null) continue;
+    const transcript = turn.answerTranscript?.trim();
+    if (!transcript) continue;
+
+    await scoreTurn({ attempt, interview, turn, transcript, languageCode });
+  }
+
+  await finaliseAttempt(attemptId, interview);
 }
 
 /* -------------------------------------------------------------------------- */

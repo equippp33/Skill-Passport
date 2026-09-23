@@ -16,6 +16,7 @@ import { formatDate } from "~/lib/utils";
 import { safeReturnTo } from "~/lib/return-to";
 import { appUrl } from "~/server/app-url";
 import { DownloadReport } from "./download-report";
+import { RescoreReport } from "./rescore-report";
 
 export const metadata: Metadata = { title: "Candidate" };
 export const dynamic = "force-dynamic";
@@ -71,7 +72,10 @@ export default async function AdminAttemptPage({
             Back to {interview.title}
           </Link>
 
-          <div data-print-hide>
+          <div data-print-hide className="flex items-center gap-2">
+            {attempt.status === "completed" ? (
+              <RescoreReport attemptId={attempt.id} />
+            ) : null}
             <DownloadReport attemptId={attempt.id} />
           </div>
         </div>
