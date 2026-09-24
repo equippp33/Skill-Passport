@@ -219,6 +219,28 @@ export const interviewAttemptsTable = pgTable(
     /** Times the candidate left the tab, as a light proctoring signal. */
     awayCount: smallint("away_count").notNull().default(0),
 
+    /**
+     * What this interview cost to run, accumulated as it runs.
+     *
+     * Each provider bills on a different unit, so each is stored in the unit it
+     * is actually billed in rather than normalised into one number here: TTS
+     * per character and the models per token. Prices change and differ per
+     * account, so the arithmetic belongs wherever someone is doing the costing
+     * — see `~/config/pricing` — and not baked into a column.
+     *
+     * Speech-to-text is absent on purpose. Sarvam bills it per second of audio,
+     * and the streaming path holds a socket rather than making requests, so
+     * there is nothing to count here; minutes come from the recorded answer
+     * clips instead.
+     *
+     * Incremented in SQL (`x = x + n`) rather than read-modify-written, so the
+     * concurrent legs of one turn cannot lose each other's counts.
+     */
+    ttsCharacters: integer("tts_characters").notNull().default(0),
+    llmRequests: integer("llm_requests").notNull().default(0),
+    llmInputTokens: integer("llm_input_tokens").notNull().default(0),
+    llmOutputTokens: integer("llm_output_tokens").notNull().default(0),
+
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })

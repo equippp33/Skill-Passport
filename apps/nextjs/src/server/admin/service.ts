@@ -15,6 +15,8 @@ import {
 } from "~/server/db/schema";
 import type { Interview, InterviewAttempt } from "~/server/db/schema";
 import type { InterviewDetails } from "./dto";
+import { formatInr, interviewCost, wasMetered } from "~/config/pricing";
+import { env } from "~/env";
 import { labelForCode } from "~/lib/spoken-languages";
 import type { SpokenLanguage } from "~/lib/spoken-languages";
 import { getAuth } from "~/server/auth/session";
@@ -304,10 +306,60 @@ export async function getInterviewDetails(
 
   const { interview, attempts } = found;
   const attemptIds = attempts.map((a) => a.id);
-  const [spokenByAttempt, thumbnailByAttempt] = await Promise.all([
-    getSpokenLanguages(attemptIds),
-    getThumbnailVideos(attemptIds),
-  ]);
+  const isDev = env.NODE_ENV === "development";
+  const [spokenByAttempt, thumbnailByAttempt, sttMinutesByAttempt] =
+    await Promise.all([
+      getSpokenLanguages(attemptIds),
+      getThumbnailVideos(attemptIds),
+      // Only in development, and only because the cost badge needs it — this
+      // is an extra aggregate over every clip in the interview.
+      isDev ? getSttMinutes(attemptIds) : Promise.resolve(new Map()),
+    ]);
+
+  /**
+   * The running total for this link, split by provider. Development only.
+   *
+   * Summed over the attempts the meter actually covered; the rest are counted
+   * separately rather than folded in as zero, because a total over four runs
+   * out of seven is a different claim from a total over all seven.
+   */
+  /** One place both the per-card badge and the header total cost from. */
+  const costOf = (a: (typeof attempts)[number]) =>
+    interviewCost(
+      {
+        sttMinutes: sttMinutesByAttempt.get(a.id) ?? 0,
+        ttsCharacters: a.ttsCharacters,
+        llmInputTokens: a.llmInputTokens,
+        llmOutputTokens: a.llmOutputTokens,
+      },
+      env.AI_PROVIDER,
+    );
+
+  const metered = isDev ? attempts.filter((a) => wasMetered(a)) : [];
+  const devCosts = isDev
+    ? (() => {
+        const sum = metered.reduce(
+          (acc, a) => {
+            const c = costOf(a);
+            return {
+              llm: acc.llm + c.llm,
+              tts: acc.tts + c.tts,
+              stt: acc.stt + c.stt,
+              total: acc.total + c.total,
+            };
+          },
+          { llm: 0, tts: 0, stt: 0, total: 0 },
+        );
+        return {
+          openai: formatInr(sum.llm),
+          tts: formatInr(sum.tts),
+          stt: formatInr(sum.stt),
+          total: formatInr(sum.total),
+          metered: metered.length,
+          unmetered: attempts.length - metered.length,
+        };
+      })()
+    : undefined;
 
   return {
     id: interview.id,
@@ -317,6 +369,7 @@ export async function getInterviewDetails(
     publicToken: interview.publicToken,
     isOpen: interview.isOpen,
     createdAt: interview.createdAt,
+    devCosts,
     attempts: attempts.map((attempt) => ({
       id: attempt.id,
       candidateName: attempt.candidateName,
@@ -328,9 +381,58 @@ export async function getInterviewDetails(
       spokenLanguages: spokenByAttempt.get(attempt.id) ?? [],
       overallScore: attempt.overallScore,
       awayCount: attempt.awayCount,
+      // Null in production, and null when the meter did not cover this
+      // interview — see `wasMetered`. A zero would be a claim that it was free.
+      devCostParts: !isDev
+        ? undefined
+        : wasMetered(attempt)
+          ? (() => {
+              const c = costOf(attempt);
+              return `OpenAI ${formatInr(c.llm)} · TTS ${formatInr(
+                c.tts,
+              )} · STT ${formatInr(c.stt)}`;
+            })()
+          : null,
+      devCost: !isDev
+        ? undefined
+        : wasMetered(attempt)
+          ? formatInr(costOf(attempt).total)
+          : null,
       createdAt: attempt.createdAt,
     })),
   };
+}
+
+/**
+ * Minutes of candidate audio per attempt, for the development cost badge.
+ *
+ * Read from the recorded answer clips rather than from a counter, because
+ * Sarvam bills speech-to-text per second of audio and the streaming path never
+ * makes a countable request — it holds a socket open. The clips are stored
+ * whichever transcription path ran, so this stays correct either way.
+ */
+async function getSttMinutes(
+  attemptIds: string[],
+): Promise<Map<string, number>> {
+  const byAttempt = new Map<string, number>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewAudioTable.attemptId,
+      ms: sql<number>`coalesce(sum(${interviewAudioTable.durationMs}), 0)::int`,
+    })
+    .from(interviewAudioTable)
+    .where(
+      and(
+        inArray(interviewAudioTable.attemptId, attemptIds),
+        eq(interviewAudioTable.kind, "answer"),
+      ),
+    )
+    .groupBy(interviewAudioTable.attemptId);
+
+  for (const row of rows) byAttempt.set(row.attemptId, row.ms / 60000);
+  return byAttempt;
 }
 
 /** The first recorded answer clip per attempt, for the card thumbnail. */

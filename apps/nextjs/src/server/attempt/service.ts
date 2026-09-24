@@ -3,6 +3,7 @@ import "server-only";
 import { and, asc, desc, eq, inArray, lt, ne, or, sql } from "drizzle-orm";
 
 import { db } from "~/server/db";
+import { withUsageScope } from "~/server/interview/usage";
 import {
   interviewAttemptsTable,
   interviewAudioTable,
@@ -295,7 +296,12 @@ function toHistory(turns: InterviewTurn[]): PriorTurn[] {
  * Idempotent: a refresh or double click returns the existing state rather than
  * creating a second turn. No OpenAI call — the opener is fixed per-language text.
  */
-export async function startAttempt(attemptId: string): Promise<void> {
+/** Everything this does, and everything it calls, is billed to the attempt. */
+export function startAttempt(attemptId: string): Promise<void> {
+  return withUsageScope(attemptId, () => startAttemptInner(attemptId));
+}
+
+async function startAttemptInner(attemptId: string): Promise<void> {
   const attempt = await reload(attemptId);
   const existing = await getTurns(attemptId);
   // Guard on the OPENER specifically, not "any turn" — the first question may
@@ -361,7 +367,16 @@ export async function startAttempt(attemptId: string): Promise<void> {
  * every later question still uses the intro and prior answers. Best-effort: if
  * it fails, the question is simply generated the normal way when reached.
  */
-export async function prewarmFirstQuestion(
+export function prewarmFirstQuestion(
+  attempt: InterviewAttempt,
+  interview: Interview,
+): Promise<void> {
+  return withUsageScope(attempt.id, () =>
+    prewarmFirstQuestionInner(attempt, interview),
+  );
+}
+
+async function prewarmFirstQuestionInner(
   attempt: InterviewAttempt,
   interview: Interview,
 ): Promise<void> {
@@ -454,7 +469,16 @@ async function tryAttachQuestionAudio(
   return true;
 }
 
-export async function regenerateQuestionAudio(
+export function regenerateQuestionAudio(
+  attempt: InterviewAttempt,
+  turnNumber: number,
+): Promise<boolean> {
+  return withUsageScope(attempt.id, () =>
+    regenerateQuestionAudioInner(attempt, turnNumber),
+  );
+}
+
+async function regenerateQuestionAudioInner(
   attempt: InterviewAttempt,
   turnNumber: number,
 ): Promise<boolean> {
@@ -869,7 +893,25 @@ const MAX_DOUBTS_BEFORE_SKIP = 1;
  */
 const FOLLOWUP_MIN_SCORE = 1;
 
-export async function processTurn(
+/**
+ * Transcribe, score and move the interview on — billed to this attempt.
+ *
+ * The scope wraps the whole thing rather than each provider call, so anything
+ * added underneath is counted without being told to.
+ */
+export function processTurn(
+  attemptId: string,
+  turnId: string,
+  interview: Interview,
+  answer?: AnswerAudio,
+  providedTranscript?: string,
+): Promise<void> {
+  return withUsageScope(attemptId, () =>
+    processTurnScoped(attemptId, turnId, interview, answer, providedTranscript),
+  );
+}
+
+async function processTurnScoped(
   attemptId: string,
   turnId: string,
   interview: Interview,
@@ -1493,7 +1535,17 @@ async function advanceOrFinish(
  * note): the skill simply reads as unassessed, like one never reached. Then we
  * move on exactly as a real answer would.
  */
-export async function skipTurn(
+export function skipTurn(
+  attempt: InterviewAttempt,
+  interview: Interview,
+  turnNumber: number,
+): Promise<void> {
+  return withUsageScope(attempt.id, () =>
+    skipTurnInner(attempt, interview, turnNumber),
+  );
+}
+
+async function skipTurnInner(
   attempt: InterviewAttempt,
   interview: Interview,
   turnNumber: number,
@@ -1737,7 +1789,11 @@ async function finaliseAttempt(
  * score. Skipped / unscored turns keep their null score, and it CANNOT add a
  * follow-up that never happened — it only re-grades what was actually said.
  */
-export async function rescoreAttempt(attemptId: string): Promise<void> {
+export function rescoreAttempt(attemptId: string): Promise<void> {
+  return withUsageScope(attemptId, () => rescoreAttemptInner(attemptId));
+}
+
+async function rescoreAttemptInner(attemptId: string): Promise<void> {
   const attempt = await reload(attemptId);
   const interview = await db.query.interviewsTable.findFirst({
     where: eq(interviewsTable.id, attempt.interviewId),

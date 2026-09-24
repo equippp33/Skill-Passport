@@ -1,4 +1,5 @@
 import "server-only";
+import { recordUsage } from "~/server/interview/usage";
 
 import OpenAI from "openai";
 import { z } from "zod";
@@ -267,6 +268,13 @@ async function requestStructured<T>(args: {
         },
       });
       raw = response.output_text;
+      // Billed tokens, straight from the response. Free to read, and the only
+      // honest source — a token count estimated from characters is not one.
+      recordUsage({
+        llmRequests: 1,
+        llmInputTokens: response.usage?.input_tokens ?? 0,
+        llmOutputTokens: response.usage?.output_tokens ?? 0,
+      });
     } catch (error) {
       wrapOpenAIError(error);
     }
