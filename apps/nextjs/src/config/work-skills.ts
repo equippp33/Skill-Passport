@@ -33,6 +33,15 @@ export interface WorkSkill {
   definition: string;
   /** Concrete situation the question should be built around. */
   scenarioFocus: string;
+  /**
+   * Calm, everyday-life questions that work for someone with no job experience.
+   * For `work_readiness` this is the FIXED bank the question is picked from
+   * verbatim (never AI-generated). For the other skills these are STYLE ANCHORS
+   * the model mimics — it writes a fresh question in the same spirit, never a
+   * workplace/"your job" scenario. `customer_orientation` is the exception: it
+   * is framed from the candidate's course, so it has no fixed anchors.
+   */
+  exampleQuestions: string[];
 }
 
 export const WORK_SKILLS: readonly WorkSkill[] = [
@@ -43,6 +52,14 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
       "A realistic picture of working life and clear goals — understanding what a job expects and what they want to get out of it.",
     scenarioFocus:
       "what they want from work and what being ready for a job means to them",
+    exampleQuestions: [
+      "What kind of work do you want to do, and why?",
+      "What salary are you expecting to start with?",
+      "Are you okay working night shifts or on weekends?",
+      "Can you move to another city for a job?",
+      "Are you okay starting as a helper and learning on the job?",
+      "Where do you see yourself after two years?",
+    ],
   },
   {
     id: "reliability",
@@ -50,6 +67,13 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
     definition:
       "Turning up as agreed and finishing work by the time promised, without needing chasing.",
     scenarioFocus: "completing work on time and keeping commitments",
+    exampleQuestions: [
+      "What work do you do every day at home?",
+      "How do you make sure you reach places on time?",
+      "Tell me about a promise you made and kept.",
+      "If you were going to be late somewhere, what would you do?",
+      "How do you wake up on time every morning?",
+    ],
   },
   {
     id: "responsibility",
@@ -57,6 +81,13 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
     definition:
       "Owning outcomes, admitting mistakes early, and putting them right rather than shifting blame.",
     scenarioFocus: "taking responsibility for a mistake at work",
+    exampleQuestions: [
+      "Tell me about a mistake you made. What did you do after that?",
+      "Have you ever broken or lost something? What did you do?",
+      "If you damaged something by mistake, what would you do?",
+      "What responsibilities do you have in your family?",
+      "Tell me about something someone trusted you to take care of.",
+    ],
   },
   {
     id: "following_instructions",
@@ -64,6 +95,14 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
     definition:
       "Understanding and following instructions, rules and processes correctly, and asking when unsure.",
     scenarioFocus: "following instructions and workplace processes exactly",
+    exampleQuestions: [
+      "When someone gives you a task with steps, how do you make sure you do it right?",
+      "If you don't understand an instruction, what do you do?",
+      "Tell me about a time you followed a recipe or a list exactly.",
+      "If someone tells you to do it one way but you know an easier way, what will you do?",
+      "How do you remember instructions someone gives you?",
+      "Have you ever filled out a form? How did you make sure it was correct?",
+    ],
   },
   {
     id: "attention_to_detail",
@@ -71,6 +110,13 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
     definition:
       "Noticing small but important details and catching errors before they cause problems.",
     scenarioFocus: "noticing an important detail others missed",
+    exampleQuestions: [
+      "When you buy something from a shop, what do you check before leaving?",
+      "How do you check that you got the right change?",
+      "Before leaving home, what do you check?",
+      "If you were packing boxes, how would you make sure nothing is missing?",
+      "Tell me about a time you noticed a small mistake that others missed.",
+    ],
   },
   {
     id: "communication",
@@ -78,6 +124,13 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
     definition:
       "Explaining things clearly and listening properly, in person and in writing.",
     scenarioFocus: "communicating clearly with a colleague or supervisor",
+    exampleQuestions: [
+      "Explain to me, step by step, how to make tea.",
+      "Tell me how to go from your house to the nearest bus stand.",
+      "Tell me about yourself and your family.",
+      "If you were feeling unwell, how would you tell someone?",
+      "How would you explain a simple task to a new person?",
+    ],
   },
   {
     id: "teamwork",
@@ -85,6 +138,14 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
     definition:
       "Cooperating with colleagues, sharing work fairly, and handling disagreement respectfully.",
     scenarioFocus: "cooperating with colleagues, including during disagreement",
+    exampleQuestions: [
+      "Tell me about a time you worked with others, like at a wedding or festival.",
+      "What will you do if someone in your group is not doing their share?",
+      "If you and a friend disagree, how will you sort it out?",
+      "Have you ever helped someone finish their work?",
+      "Do you like doing things alone or with others? Why?",
+      "What do you do when a friend or family member is upset with you?",
+    ],
   },
   {
     id: "problem_solving",
@@ -92,6 +153,13 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
     definition:
       "Working out the cause of a practical problem and choosing a sensible way to fix it.",
     scenarioFocus: "solving an unexpected problem at work",
+    exampleQuestions: [
+      "Tell me about a time something suddenly went wrong. What did you do?",
+      "If your bus doesn't come and you're getting late, what will you do?",
+      "If a machine stops working while you're using it, what will you do?",
+      "If you lost your phone or wallet, what would you do first?",
+      "If you run out of something in the middle of a task, what will you do?",
+    ],
   },
   {
     id: "learning_adaptability",
@@ -99,6 +167,13 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
     definition:
       "Learning new tasks quickly, accepting feedback, and adjusting when things change.",
     scenarioFocus: "learning from feedback or adapting to a change at work",
+    exampleQuestions: [
+      "If someone says you are doing a task the wrong way, what will you do?",
+      "If your daily schedule changes suddenly, how will you manage?",
+      "Tell me about a time you had to learn something new quickly.",
+      "Have you ever moved to a new place? How did you adjust?",
+      "If you're given a different task than the one you expected, what will you do?",
+    ],
   },
   {
     id: "initiative",
@@ -106,6 +181,13 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
     definition:
       "Spotting what needs doing and acting on it without waiting to be told.",
     scenarioFocus: "taking initiative without being asked",
+    exampleQuestions: [
+      "Tell me about something you did without anyone asking you.",
+      "If you finish your work early, what will you do?",
+      "If you see something dirty or out of place, what will you do?",
+      "Have you ever learned something new on your own?",
+      "Tell me about a time you helped someone without being asked.",
+    ],
   },
   {
     id: "customer_orientation",
@@ -114,6 +196,8 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
       "Treating customers with respect and patience, especially when they are unhappy.",
     scenarioFocus:
       "handling a customer respectfully, including a difficult one",
+    // Framed from the candidate's course/field instead of a fixed bank.
+    exampleQuestions: [],
   },
 ];
 

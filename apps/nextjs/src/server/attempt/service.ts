@@ -40,6 +40,7 @@ import {
   generateInterviewSummary,
   generateQuestion,
   scoreAndMaybeFollowUp,
+  translateQuestion,
 } from "~/server/services/openai";
 import type { InterviewContext, PriorTurn } from "~/server/services/openai";
 import { generateSpeech, transcribeAudio } from "~/server/services/sarvam";
@@ -1210,12 +1211,23 @@ async function generateAndInsertQuestion(
   if (!skill) return;
 
   const ctx = await buildContext(attempt, interview);
-  const generated = await generateQuestion({
-    ctx,
-    skill,
-    turnNumber: skillNumberOf(skill.id),
-    history: toHistory(priorTurns),
-  });
+  // Work readiness comes from a FIXED bank (never AI-invented): pick one at
+  // random and just say it in the interview language. Every other skill is
+  // AI-generated in its everyday-life style.
+  const generated =
+    skill.id === "work_readiness"
+      ? await translateQuestion(
+          ctx,
+          skill.exampleQuestions[
+            Math.floor(Math.random() * skill.exampleQuestions.length)
+          ]!,
+        )
+      : await generateQuestion({
+          ctx,
+          skill,
+          turnNumber: skillNumberOf(skill.id),
+          history: toHistory(priorTurns),
+        });
 
   // Voiced before the turn is written, so it is never current without audio.
   const questionAudioId = await synthesiseQuestionAudio(
@@ -1628,6 +1640,9 @@ async function handleAnsweredTurn(args: {
       // low — and following those up with "anything to add?" is exactly the
       // behaviour candidates hated. Gate the follow-up on a scorable answer, no
       // matter what the model put in nextQuestion.
+      // At most one follow-up per skill: a follow-up turn never spawns another
+      // (it is ineligible above), so a primary + its one follow-up is the
+      // ceiling — 11 skills → 22 turns max.
       const followUp = evaluation.nextQuestion?.trim();
       if (followUp && evaluation.score >= FOLLOWUP_MIN_SCORE) {
         await deliverFollowUp(

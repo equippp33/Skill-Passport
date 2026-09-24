@@ -74,23 +74,27 @@ export const PROBE_QUESTION_TEXT = PROBE_SPOKEN_TEXT;
  * processing gap feels like a reply, not dead air. A few per language, rotated
  * at random so it never sounds like a recording. Deliberately NOT "thank you" —
  * these are the natural little things a real interviewer says between answers:
- * an acknowledgement, a "let me see", and an invitation to add more.
+ * an acknowledgement and a "let me see". NEVER a question — a filler is
+ * cosmetic and the interview advances while it plays, so it can take no reply.
+ * Inviting the candidate to "add more" here would promise a turn that isn't
+ * coming (no voice meter, it just moves on); that job belongs to a real
+ * follow-up question turn instead.
  *
  * Confident for English / Hindi / Marathi / Telugu; have a native speaker
  * eyeball the rest before shipping widely.
  */
 export const FILLERS_BY_KEY: Record<InterviewLanguageKey, string[]> = {
-  english: ["Okay.", "Alright, let me see.", "Got it — anything you'd like to add?"],
-  hindi: ["ठीक है।", "ओके, देखते हैं।", "समझ गया — कुछ और ऐड करना चाहेंगे?"],
-  marathi: ["ठीक आहे.", "ओके, बघूया.", "समजलं — आणखी काही अ‍ॅड करायचंय का?"],
-  bengali: ["ঠিক আছে।", "আচ্ছা, দেখি।", "বুঝলাম — আর কিছু যোগ করতে চান?"],
-  gujarati: ["બરાબર.", "સારું, જોઈએ.", "સમજ્યું — બીજું કંઈ ઉમેરવું છે?"],
-  kannada: ["ಸರಿ.", "ಆಯ್ತು, ನೋಡೋಣ.", "ಅರ್ಥವಾಯಿತು — ಇನ್ನೇನಾದರೂ ಸೇರಿಸಬೇಕೆ?"],
-  malayalam: ["ശരി.", "ശരി, നോക്കാം.", "മനസ്സിലായി — വേറെ എന്തെങ്കിലും ചേർക്കാനുണ്ടോ?"],
-  odia: ["ଠିକ୍ ଅଛି।", "ଆଚ୍ଛା, ଦେଖିବା।", "ବୁଝିଲି — ଆଉ କିଛି କହିବେ କି?"],
-  punjabi: ["ਠੀਕ ਹੈ।", "ਚੰਗਾ, ਵੇਖਦੇ ਹਾਂ।", "ਸਮਝ ਗਿਆ — ਹੋਰ ਕੁਝ ਦੱਸਣਾ ਚਾਹੋਗੇ?"],
-  tamil: ["சரி.", "சரி, பார்க்கலாம்.", "புரிந்தது — வேறு ஏதாவது சொல்ல வேண்டுமா?"],
-  telugu: ["ఓకే.", "సరే, ఒక్క నిమిషం.", "అర్థమైంది — ఇంకేమైనా యాడ్ చేయాలనుకుంటున్నారా?"],
+  english: ["Okay.", "Alright, let me see.", "Got it."],
+  hindi: ["ठीक है।", "ओके, देखते हैं।", "समझ गया।"],
+  marathi: ["ठीक आहे.", "ओके, बघूया.", "समजलं."],
+  bengali: ["ঠিক আছে।", "আচ্ছা, দেখি।", "বুঝলাম।"],
+  gujarati: ["બરાબર.", "સારું, જોઈએ.", "સમજ્યું."],
+  kannada: ["ಸರಿ.", "ಆಯ್ತು, ನೋಡೋಣ.", "ಅರ್ಥವಾಯಿತು."],
+  malayalam: ["ശരി.", "ശരി, നോക്കാം.", "മനസ്സിലായി."],
+  odia: ["ଠିକ୍ ଅଛି।", "ଆଚ୍ଛା, ଦେଖିବା।", "ବୁଝିଲି।"],
+  punjabi: ["ਠੀਕ ਹੈ।", "ਚੰਗਾ, ਵੇਖਦੇ ਹਾਂ।", "ਸਮਝ ਗਿਆ।"],
+  tamil: ["சரி.", "சரி, பார்க்கலாம்.", "புரிந்தது."],
+  telugu: ["ఓకే.", "సరే, ఒక్క నిమిషం.", "అర్థమైంది."],
 };
 
 /**
