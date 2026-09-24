@@ -49,7 +49,7 @@ export default async function AdminLayout({
               href="/admin"
               className="flex items-center gap-2 text-sm font-semibold tracking-tight"
             >
-              <Brand className="gap-2 [&>svg]:size-8 [&>span]:text-base" />
+              <Brand className="h-8" />
             </Link>
             <form action={logoutAction}>
               <Button type="submit" variant="secondary" size="sm">

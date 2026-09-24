@@ -1,58 +1,30 @@
 import { cn } from "~/lib/utils";
 
-/** An original passport spine, voice waveform and verification stamp. */
-export function BrandMark({ className }: { className?: string }) {
+/**
+ * The Path Saathi wordmark.
+ *
+ * One horizontal logo (public/assets/logo-horizontal.webp), always sized by
+ * HEIGHT so it can never distort — callers set the height (`h-8`, `h-10`) and
+ * the width follows. A plain <img> on purpose: it is a small static asset that
+ * needs no runtime optimisation, and next/image would force an intrinsic
+ * width/height we would have to keep in sync with the file.
+ */
+export function Brand({ className }: { className?: string }) {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 48 48"
-      fill="none"
-      className={cn("size-10 shrink-0", className)}
-    >
-      <rect width="48" height="48" rx="13" fill="#4338CA" />
-      <path
-        d="M16 11h17a3 3 0 0 1 3 3v20a3 3 0 0 1-3 3H16a4 4 0 0 1-4-4V15a4 4 0 0 1 4-4Z"
-        stroke="white"
-        strokeWidth="2"
-      />
-      <path
-        d="M18 11v26M23 21v6M27 17v14M31 21v6"
-        stroke="white"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <circle
-        cx="36"
-        cy="35"
-        r="8"
-        fill="#C7D2FE"
-        stroke="#4338CA"
-        strokeWidth="2"
-      />
-      <path
-        d="m32.5 35 2.3 2.3 4.5-4.6"
-        stroke="#312E81"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    // eslint-disable-next-line @next/next/no-img-element -- static brand asset
+    <img
+      src="/assets/logo-horizontal.webp"
+      alt="Path Saathi"
+      className={cn("h-9 w-auto shrink-0 select-none sm:h-10", className)}
+    />
   );
 }
 
-export function Brand({ className }: { className?: string }) {
-  return (
-    <span
-      lang="en"
-      className={cn("inline-flex items-center gap-3 text-content", className)}
-    >
-      <BrandMark />
-      <span className="text-lg font-semibold tracking-tight whitespace-nowrap">
-        Skill <span className="text-accent">Passport</span>
-      </span>
-    </span>
-  );
-}
+/**
+ * Kept for the couple of spots that used the old compact mark — it is the same
+ * logo now, so they just pass a height.
+ */
+export const BrandMark = Brand;
 
 export function CandidateHeader() {
   return (

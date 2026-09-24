@@ -14,7 +14,7 @@ export default function ErrorPage({
         role="alert"
         className="w-full rounded-2xl border border-border-subtle bg-surface p-8 text-center shadow-[var(--shadow-card)]"
       >
-        <BrandMark className="mx-auto mb-5 size-12" />
+        <BrandMark className="mx-auto mb-5 h-10 w-auto" />
         <h1 className="text-2xl font-semibold tracking-tight">
           We could not load this page
         </h1>

@@ -187,6 +187,12 @@ export const interviewAttemptsTable = pgTable(
     /** The candidate's course/field, from the start form. Grounds questions and
      *  lets the first one be prepared before the interview begins. */
     candidateCourse: text("candidate_course"),
+    /**
+     * The partner's own student id, carried through the integration link so the
+     * completed result can be posted back keyed to their record. Null for
+     * candidates who came through a normal shared link.
+     */
+    externalStudentId: text("external_student_id"),
 
     /**
      * Detected from the candidate's first spoken answer, then used for every
@@ -221,6 +227,12 @@ export const interviewAttemptsTable = pgTable(
 
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    /**
+     * When the result was successfully POSTed to the partner's webhook. Null
+     * until delivered (or when there is no webhook / no partner student). Lets
+     * a failed delivery be found and re-sent later without double-posting.
+     */
+    resultDeliveredAt: timestamp("result_delivered_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

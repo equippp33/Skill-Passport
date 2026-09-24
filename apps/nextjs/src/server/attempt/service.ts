@@ -42,6 +42,7 @@ import {
   translateQuestion,
 } from "~/server/services/openai";
 import type { InterviewContext, PriorTurn } from "~/server/services/openai";
+import { deliverResult } from "~/server/integrations/result-webhook";
 import { generateSpeech, transcribeAudio } from "~/server/services/sarvam";
 import { timed } from "~/server/services/timing";
 import { loadAudioBytes, storeAudio } from "~/server/interview/audio";
@@ -106,6 +107,8 @@ export interface CandidateDetails {
   language: InterviewLanguageKey;
   /** Course / field of study, for grounding and pre-preparing questions. */
   course: string | null;
+  /** Partner student id, when the candidate came through an integration link. */
+  externalStudentId?: string | null;
 }
 
 /**
@@ -129,6 +132,7 @@ export async function createAttempt(
       candidateEmail: details.email,
       candidatePhone: details.phone,
       candidateCourse: details.course,
+      externalStudentId: details.externalStudentId ?? null,
       language: details.language,
       status: "not_started",
     })
@@ -1741,6 +1745,28 @@ async function finaliseAttempt(
       updatedAt: new Date(),
     })
     .where(eq(interviewAttemptsTable.id, attemptId));
+
+  // Post the result to the partner (only for integration candidates, only if a
+  // webhook is configured). Best-effort and self-contained — a delivery failure
+  // must never undo a finished, saved interview.
+  try {
+    await deliverResult({
+      attempt,
+      interview,
+      turns,
+      skillScores,
+      overallScore,
+      summary,
+      strengths,
+      improvements,
+    });
+  } catch (error) {
+    console.error(
+      `[attempt] result delivery threw attempt=${attemptId}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
 }
 
 /**

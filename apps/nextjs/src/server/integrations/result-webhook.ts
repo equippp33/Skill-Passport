@@ -1,0 +1,149 @@
+import "server-only";
+
+import { eq } from "drizzle-orm";
+
+import { env } from "~/env";
+import { getWorkSkill } from "~/config/work-skills";
+import type { WorkSkillId } from "~/config/work-skills";
+import { db } from "~/server/db";
+import { interviewAttemptsTable } from "~/server/db/schema";
+import type {
+  Interview,
+  InterviewAttempt,
+  InterviewTurn,
+} from "~/server/db/schema";
+import type { SkillScore } from "~/lib/scoring";
+
+/**
+ * Post a finished student's result to the partner's webhook.
+ *
+ * Fired once, at the end of `finaliseAttempt`, and only for candidates who
+ * carried a partner `externalStudentId` (i.e. came through an integration
+ * link). Best-effort: a failure here must never break a finished interview —
+ * the result is always saved in our own reports regardless. `resultDeliveredAt`
+ * is stamped on success so a later resend can find what did NOT get through.
+ */
+
+const MAX_ATTEMPTS = 3;
+const TIMEOUT_MS = 15_000;
+
+interface Args {
+  attempt: InterviewAttempt;
+  interview: Interview;
+  turns: InterviewTurn[];
+  skillScores: SkillScore[];
+  /** Stored on the ×10 scale (0–100); the payload sends it back as /10. */
+  overallScore: number | null;
+  summary: string | null;
+  strengths: string[];
+  improvements: string[];
+}
+
+/** The blob the partner receives. Scores are all on a 0–10 scale. */
+function buildPayload(args: Args): Record<string, unknown> {
+  const { attempt, interview, turns, skillScores } = args;
+
+  const intro =
+    turns.find((t) => t.kind === "language_probe")?.answerTranscript ?? null;
+
+  const questions = turns
+    .filter((t) => t.kind === "skill")
+    .map((t) => ({
+      turnNumber: t.turnNumber,
+      skillId: t.skillId,
+      skillLabel: t.skillId
+        ? getWorkSkill(t.skillId as WorkSkillId).label
+        : null,
+      isFollowUp: t.isFollowUp,
+      question: t.question,
+      questionTranslation: t.questionTranslation,
+      answer: t.answerTranscript,
+      skipped: t.answerTranscript === null,
+      score: t.score,
+      evaluation: t.evaluation,
+    }));
+
+  return {
+    studentId: attempt.externalStudentId,
+    attemptId: attempt.id,
+    interviewId: interview.id,
+    interviewTitle: interview.title,
+    candidate: {
+      name: attempt.candidateName,
+      email: attempt.candidateEmail,
+      phone: attempt.candidatePhone,
+      course: attempt.candidateCourse,
+    },
+    language: attempt.language,
+    overallScore: args.overallScore === null ? null : args.overallScore / 10,
+    skills: skillScores.map((s) => ({
+      skillId: s.skillId,
+      label: getWorkSkill(s.skillId).label,
+      score: s.score,
+    })),
+    summary: args.summary,
+    strengths: args.strengths,
+    improvements: args.improvements,
+    introduction: intro,
+    questions,
+    startedAt: attempt.startedAt?.toISOString() ?? null,
+    completedAt: new Date().toISOString(),
+  };
+}
+
+export async function deliverResult(args: Args): Promise<void> {
+  const url = env.INTEGRATION_RESULT_WEBHOOK_URL;
+  if (!url) return; // No partner webhook configured — nothing to deliver.
+  if (!args.attempt.externalStudentId) return; // Not an integration candidate.
+
+  const body = JSON.stringify(buildPayload(args));
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (env.INTEGRATION_RESULT_WEBHOOK_KEY) {
+    headers.Authorization = `Bearer ${env.INTEGRATION_RESULT_WEBHOOK_KEY}`;
+  }
+
+  for (let attemptNo = 1; attemptNo <= MAX_ATTEMPTS; attemptNo++) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body,
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+
+      if (res.ok) {
+        await db
+          .update(interviewAttemptsTable)
+          .set({ resultDeliveredAt: new Date() })
+          .where(eq(interviewAttemptsTable.id, args.attempt.id));
+        return;
+      }
+
+      // 4xx (other than 429) is a deterministic rejection — retrying will not
+      // help, so stop and leave it undelivered for inspection.
+      if (res.status < 500 && res.status !== 429) {
+        console.error(
+          `[integration] result webhook rejected attempt=${args.attempt.id} status=${res.status}`,
+        );
+        return;
+      }
+      console.warn(
+        `[integration] result webhook ${res.status} (try ${attemptNo}/${MAX_ATTEMPTS}) attempt=${args.attempt.id}`,
+      );
+    } catch (error) {
+      console.warn(
+        `[integration] result webhook error (try ${attemptNo}/${MAX_ATTEMPTS}) attempt=${args.attempt.id}: ${
+          error instanceof Error ? error.message : "unknown"
+        }`,
+      );
+    }
+
+    if (attemptNo < MAX_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, 500 * attemptNo));
+    }
+  }
+
+  console.error(
+    `[integration] result webhook FAILED after ${MAX_ATTEMPTS} tries attempt=${args.attempt.id} (left undelivered)`,
+  );
+}

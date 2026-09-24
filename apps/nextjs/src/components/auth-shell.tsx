@@ -25,7 +25,7 @@ export function AuthShell({
           </h2>
           <div className="mt-10 rounded-2xl border border-white bg-white/90 p-6 shadow-[var(--shadow-raised)]">
             <div className="flex items-center gap-3">
-              <BrandMark className="size-12" />
+              <BrandMark className="h-8 w-auto" />
               <div>
                 <p className="font-semibold">{m.dashboard.assessmentName}</p>
                 <p className="mt-1 text-sm text-content-muted">

@@ -4,6 +4,7 @@ import { Card, CardContent, EmptyState } from "~/components/ui";
 import { CandidateSplit } from "~/components/candidate-split";
 import { CameraPreview } from "~/components/camera-preview";
 import { getInterviewByPublicToken } from "~/server/attempt/access";
+import { decodePrefill } from "~/server/integrations/prefill";
 import { StartForm } from "./start-form";
 
 export const metadata: Metadata = { title: "Start your interview" };
@@ -24,10 +25,14 @@ export const dynamic = "force-dynamic";
  */
 export default async function CandidateLandingPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string }>;
+  searchParams: Promise<{ p?: string }>;
 }) {
   const { token } = await params;
+  const { p } = await searchParams;
+  const prefill = decodePrefill(p);
   const interview = await getInterviewByPublicToken(token);
 
   if (!interview) {
@@ -67,7 +72,7 @@ export default async function CandidateLandingPage({
 
         <Card className="min-w-0">
           <CardContent className="space-y-4 pt-5">
-            <StartForm token={token} />
+            <StartForm token={token} initial={prefill} />
 
             <p className="text-xs leading-relaxed text-content-muted">
               The interview is spoken. Find a quiet, well-lit spot and have your

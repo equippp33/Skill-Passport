@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Instrument_Sans, Noto_Sans_Devanagari } from "next/font/google";
+import { Anek_Devanagari, Archivo } from "next/font/google";
 
 import { uiLanguage, uiMessages } from "~/server/language";
 
@@ -18,7 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     description: m.dashboard.subtitle,
     applicationName: "Skill Passport",
-    icons: { icon: "/icon.svg" },
+    icons: { icon: "/assets/favicon.webp" },
   };
 }
 
@@ -26,20 +26,22 @@ export async function generateMetadata(): Promise<Metadata> {
  * Self-hosted at build time by next/font, so there is no render-blocking
  * request to Google and no layout shift when it loads.
  */
-const sans = Instrument_Sans({
+// PathSaathi's brand pairing: Archivo for headings, Anek Devanagari for body
+// (Anek carries both Latin and Devanagari, so Hindi/Marathi need no fallback).
+const heading = Archivo({
   subsets: ["latin"],
-  variable: "--font-instrument",
+  variable: "--font-archivo",
   display: "swap",
 });
 
-const devanagari = Noto_Sans_Devanagari({
-  subsets: ["devanagari"],
-  variable: "--font-devanagari",
+const body = Anek_Devanagari({
+  subsets: ["latin", "devanagari"],
+  variable: "--font-anek",
   display: "swap",
 });
 
 export const viewport: Viewport = {
-  themeColor: "#4338ca",
+  themeColor: "#e02228",
   width: "device-width",
   initialScale: 1,
 };
@@ -54,7 +56,7 @@ export default function RootLayout({
   return (
     <html
       lang={lang.code}
-      className={`${sans.variable} ${devanagari.variable}`}
+      className={`${heading.variable} ${body.variable}`}
     >
       <body className="min-h-screen bg-canvas text-content antialiased">
         {children}

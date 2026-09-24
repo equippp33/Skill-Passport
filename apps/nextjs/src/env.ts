@@ -44,6 +44,28 @@ export const env = createEnv({
       .transform((v) => v?.replace(/\/+$/, "")),
 
     /**
+     * Student-integration endpoint (`POST /api/integrations/attempts`).
+     *
+     * A partner site posts a student's details and gets back a pre-filled
+     * start link for our interview. Both are optional so the app boots
+     * without them; the endpoint returns 503 until both are set.
+     *  - `INTEGRATION_API_KEY`: the shared bearer the partner sends. Guards
+     *    the endpoint from being called by anyone.
+     *  - `INTEGRATION_INTERVIEW_TOKEN`: the public token of the ONE interview
+     *    (room) every integrated student joins.
+     */
+    INTEGRATION_API_KEY: z.string().min(16).optional(),
+    INTEGRATION_INTERVIEW_TOKEN: z.string().min(1).optional(),
+    /**
+     * Where a finished student's result is POSTed, and the bearer to send with
+     * it — both supplied by the partner. Optional: with no URL set, nothing is
+     * posted (results still live in our own reports). The key is sent as
+     * `Authorization: Bearer <key>` if present.
+     */
+    INTEGRATION_RESULT_WEBHOOK_URL: z.string().url().optional(),
+    INTEGRATION_RESULT_WEBHOOK_KEY: z.string().min(1).optional(),
+
+    /**
      * Which provider runs the interview "brain" — question generation,
      * follow-ups, answer evaluation and the closing report.
      *

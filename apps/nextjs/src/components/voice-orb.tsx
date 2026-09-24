@@ -13,9 +13,9 @@ import { useEffect, useRef } from "react";
  * expected of them, moves with the voice when the interviewer speaks, moves
  * with THEIR voice while they answer, and turns over slowly while it thinks.
  *
- * Original work: a window into cloud. A blue crown at the top, everything
- * below it lit milk-white, with three oversized masses rolling slowly past
- * each other underneath so the light in it never sits still.
+ * Original work: a window into cloud. A warm sunset crown at the top,
+ * everything below it lit milk-white, with three oversized masses rolling
+ * slowly past each other underneath so the light in it never sits still.
  *
  * Performance, which matters because this is on screen for the whole
  * interview: no `filter: blur()` anywhere (it repaints the blurred region
@@ -192,16 +192,17 @@ export function VoiceOrb({
         className="orb-breathe relative aspect-square w-[76%] overflow-hidden rounded-full"
         style={{
           /**
-           * A blue crown falling away fast into pale haze.
+           * A warm crown falling away fast into pale haze — a sunset sky
+           * rather than a blue one, to sit with the Path Saathi red/copper.
            *
-           * Blue the whole way down, thinning rather than stopping. The
+           * Warm the whole way down, thinning rather than stopping. The
            * cloud above it is what makes the lower half read as white, so
            * this has to stay saturated — an earlier version fell to near-white
            * by a third of the way down, and once the cloud was laid over that
-           * there was no blue left anywhere and the orb went blank.
+           * there was no colour left anywhere and the orb went blank.
            */
           background:
-            "linear-gradient(178deg, #3f63ee 0%, #5478f2 16%, #7b97f6 33%, #a8bbfa 52%, #ccd6fd 72%, #e4e8ff 100%)",
+            "linear-gradient(178deg, #d8442a 0%, #e26330 16%, #ec8a3e 33%, #f3ab63 52%, #f8ca95 72%, #fdeccf 100%)",
           transform: "scale(var(--orb-scale))",
           transition: "transform 90ms linear",
           animation: "orb-breathe 7s ease-in-out infinite",
@@ -209,7 +210,7 @@ export function VoiceOrb({
           // inner shadows this replaced turned it into a lit sphere; the thing
           // it should look like is a window, which has no shading of its own.
           boxShadow:
-            "0 0 60px color-mix(in oklab, var(--accent) 30%, transparent), inset 0 10px 22px rgba(45,85,200,0.16)",
+            "0 0 60px color-mix(in oklab, var(--accent) 30%, transparent), inset 0 10px 22px rgba(150,55,20,0.16)",
         }}
       >
         {/*
@@ -285,7 +286,7 @@ export function VoiceOrb({
           className="absolute inset-0 rounded-full"
           style={{
             background:
-              "radial-gradient(circle at 32% 24%, rgba(255,255,255,0.45) 0%, transparent 34%), radial-gradient(circle at 50% 50%, transparent 58%, rgba(30,60,150,0.18) 100%)",
+              "radial-gradient(circle at 32% 24%, rgba(255,255,255,0.45) 0%, transparent 34%), radial-gradient(circle at 50% 50%, transparent 58%, rgba(140,50,20,0.18) 100%)",
           }}
         />
       </div>
@@ -318,8 +319,8 @@ const MASS_LOW = [
 const MASS_MID = [
   "radial-gradient(50% 24% at 26% 48%, rgba(255,255,255,0.58) 0%, rgba(255,255,255,0.34) 46%, rgba(255,255,255,0.1) 72%, rgba(255,255,255,0) 88%)",
   "radial-gradient(42% 19% at 68% 42%, rgba(255,255,255,0.52) 0%, rgba(255,255,255,0.28) 48%, rgba(255,255,255,0) 84%)",
-  // A cooler hollow, so the white has shape in it rather than reading flat.
-  "radial-gradient(34% 18% at 48% 62%, rgba(150,175,235,0.2) 0%, rgba(150,175,235,0) 76%)",
+  // A warm hollow, so the white has shape in it rather than reading flat.
+  "radial-gradient(34% 18% at 48% 62%, rgba(220,130,70,0.2) 0%, rgba(220,130,70,0) 76%)",
 ].join(", ");
 
 /** Thin stuff riding up into the blue, keeping the crown from being a band. */

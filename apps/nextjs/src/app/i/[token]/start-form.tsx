@@ -27,14 +27,35 @@ function SubmitButton() {
 }
 
 /**
+ * Details a partner site may pre-fill (via the integration link's `?p=` blob).
+ * Language is never here — the candidate always chooses it themselves below.
+ */
+interface StartPrefill {
+  name?: string;
+  email?: string;
+  phone?: string;
+  course?: string;
+  studentId?: string;
+}
+
+/**
  * Candidate details, collected before an attempt exists.
  *
  * The public token is bound into the action here rather than posted as a
  * form field, so the browser cannot point this submission at a different
- * interview.
+ * interview. `initial` pre-fills the fields when the candidate arrived through
+ * an integration link; every field stays editable so they can correct it.
  */
-export function StartForm({ token }: { token: string }) {
-  const [phone, setPhone] = useState("");
+export function StartForm({
+  token,
+  initial,
+}: {
+  token: string;
+  initial?: StartPrefill | null;
+}) {
+  const [phone, setPhone] = useState(
+    initial?.phone ? normalisePhoneInput(initial.phone) : "",
+  );
   const [state, formAction] = useActionState(
     beginAttemptAction.bind(null, token),
     initialState,
@@ -44,6 +65,11 @@ export function StartForm({ token }: { token: string }) {
     <form action={formAction} className="space-y-3" noValidate>
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
 
+      {/* Partner student id, carried straight through — not shown or editable. */}
+      {initial?.studentId ? (
+        <input type="hidden" name="studentId" value={initial.studentId} />
+      ) : null}
+
       <div>
         <Label htmlFor="name">Your full name</Label>
         <Input
@@ -51,6 +77,7 @@ export function StartForm({ token }: { token: string }) {
           name="name"
           autoComplete="name"
           maxLength={120}
+          defaultValue={initial?.name ?? undefined}
           required
           className="min-h-11"
           aria-invalid={state.fieldErrors?.name ? true : undefined}
@@ -70,6 +97,7 @@ export function StartForm({ token }: { token: string }) {
           id="course"
           name="course"
           maxLength={120}
+          defaultValue={initial?.course ?? undefined}
           className="min-h-11"
           placeholder="e.g. Accounting, Nursing, ITI Electrician"
           aria-invalid={state.fieldErrors?.course ? true : undefined}
@@ -123,6 +151,7 @@ export function StartForm({ token }: { token: string }) {
           type="email"
           autoComplete="email"
           maxLength={255}
+          defaultValue={initial?.email ?? undefined}
           className="min-h-11"
           aria-invalid={state.fieldErrors?.email ? true : undefined}
           aria-describedby="email-error"

@@ -31,45 +31,54 @@
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
 
-  --radius-card: 1rem;
+  /* PathSaathi radius (14px), so cards/buttons share their softer corner. */
+  --radius-card: 0.875rem;
 
-  /* next/font sets separate Inter and Devanagari variables; the stack covers
-     and for scripts Inter does not cover (Devanagari, Tamil, …). */
+  /* PathSaathi type: Archivo for headings, Anek Devanagari for body — both
+     loaded by next/font. Anek covers Latin + Devanagari; the system Indic
+     fallbacks (Nirmala UI / Noto Sans) still catch Telugu, Tamil, Kannada,
+     Malayalam, Bengali, Gujarati, Odia, Gurmukhi per-glyph, so a non-Hindi
+     interview never loses its script. */
   --font-sans:
-    var(--font-instrument), var(--font-devanagari), ui-sans-serif, system-ui,
-    "Segoe UI", "Nirmala UI", "Noto Sans", sans-serif;
+    var(--font-anek), ui-sans-serif, system-ui, "Segoe UI", "Nirmala UI",
+    "Noto Sans", sans-serif;
+  --font-heading:
+    var(--font-archivo), var(--font-anek), ui-sans-serif, system-ui,
+    "Nirmala UI", "Noto Sans", sans-serif;
 
+  /* PathSaathi shadows (neutral warm-grey, softer than our old indigo tint). */
   --shadow-card:
-    0 1px 2px oklch(20% 0.02 260 / 0.04), 0 1px 3px oklch(20% 0.02 260 / 0.06);
+    0 1px 2px rgba(22, 25, 28, 0.06), 0 1px 1px rgba(22, 25, 28, 0.04);
   --shadow-raised:
-    0 1px 2px oklch(20% 0.02 260 / 0.05),
-    0 8px 24px -6px oklch(20% 0.02 260 / 0.1);
+    0 4px 12px rgba(22, 25, 28, 0.08), 0 2px 4px rgba(22, 25, 28, 0.06);
 }
 
 :root {
   /* Keeps native controls (selects, checkboxes, scrollbars) light too. */
   color-scheme: light;
 
-  --canvas: #f6f8fc;
-  --surface: oklch(100% 0 0);
-  --surface-muted: #f0f3f9;
-  --border-subtle: #e1e6f0;
-  --border-strong: #c6cfdf;
+  /* Palette ported from PathSaathi's design system (their globals.css): warm
+     off-white paper, hairline warm-grey borders, and their red brand accent. */
+  --canvas: #fdfbf9;
+  --surface: #ffffff;
+  --surface-muted: #f6f0ea;
+  --border-subtle: #eee6de;
+  --border-strong: #ddd0c3;
 
-  --content: #17233b;
-  --content-muted: #58667e;
+  --content: #16191c;
+  --content-muted: #545a60;
 
-  --accent: #4338ca;
-  --accent-hover: #3730a3;
-  --accent-contrast: oklch(100% 0 0);
-  --accent-soft: #eef0ff;
+  --accent: #e02228;
+  --accent-hover: #c41a20;
+  --accent-contrast: #ffffff;
+  --accent-soft: #fdecec;
 
-  --danger: oklch(52% 0.17 26);
-  --danger-soft: oklch(96.5% 0.024 26);
-  --success: oklch(48% 0.1 158);
-  --success-soft: oklch(96% 0.03 158);
-  --warning: oklch(53% 0.115 72);
-  --warning-soft: oklch(96.5% 0.036 72);
+  --danger: #c41a20;
+  --danger-soft: #fdecec;
+  --success: #1a7a47;
+  --success-soft: #e7f5ec;
+  --warning: #b35f13;
+  --warning-soft: #fef2e5;
 }
 
 body {
@@ -78,6 +87,19 @@ body {
   color: var(--content);
   -webkit-font-smoothing: antialiased;
   line-height: 1.6;
+}
+
+/* PathSaathi headings: Archivo, bold, slightly tightened — matching their
+   h1–h4 treatment. Latin renders in Archivo; Indic glyphs fall through the
+   stack to Anek / system fonts per-glyph, so headings stay legible in every
+   interview language. */
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 /**
@@ -205,13 +227,13 @@ li {
   overflow-wrap: anywhere;
 }
 ::selection {
-  background: #dfe3ff;
-  color: #231b79;
+  background: #fdecec;
+  color: #c41a20;
 }
 .auth-story {
   background:
-    radial-gradient(ellipse at 20% 80%, #e0e7ff 0%, transparent 65%),
-    linear-gradient(145deg, #f6f8ff, #eef2fa);
+    radial-gradient(ellipse at 20% 80%, #ffe3cf 0%, transparent 65%),
+    linear-gradient(145deg, #fff3e6, #fbf6f1);
 }
 .eyebrow {
   display: inline-flex;
