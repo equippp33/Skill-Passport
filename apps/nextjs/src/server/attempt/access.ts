@@ -90,6 +90,29 @@ export async function getAttemptForCandidate(
   return found;
 }
 
+/**
+ * Has this partner student already FINISHED an interview here?
+ *
+ * Integration links carry the student's id (`externalStudentId`); once they
+ * have a completed attempt, the link is "closed" — the start page shows a
+ * done screen instead of the form, so a student cannot retake. Keyed on the
+ * interview too, so the same student could still be invited to a different one.
+ */
+export async function studentHasCompletedAttempt(
+  interviewId: string,
+  externalStudentId: string,
+): Promise<boolean> {
+  const found = await db.query.interviewAttemptsTable.findFirst({
+    where: and(
+      eq(interviewAttemptsTable.interviewId, interviewId),
+      eq(interviewAttemptsTable.externalStudentId, externalStudentId),
+      eq(interviewAttemptsTable.status, "completed"),
+    ),
+    columns: { id: true },
+  });
+  return Boolean(found);
+}
+
 /** The interview behind a share link, or null if the token is wrong/closed. */
 export async function getInterviewByPublicToken(
   publicToken: string,

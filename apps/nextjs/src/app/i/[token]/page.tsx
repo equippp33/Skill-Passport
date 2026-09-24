@@ -3,7 +3,10 @@ import type { Metadata } from "next";
 import { Card, CardContent, EmptyState } from "~/components/ui";
 import { CandidateSplit } from "~/components/candidate-split";
 import { CameraPreview } from "~/components/camera-preview";
-import { getInterviewByPublicToken } from "~/server/attempt/access";
+import {
+  getInterviewByPublicToken,
+  studentHasCompletedAttempt,
+} from "~/server/attempt/access";
 import { decodePrefill } from "~/server/integrations/prefill";
 import { StartForm } from "./start-form";
 
@@ -42,6 +45,23 @@ export default async function CandidateLandingPage({
           headingLevel={1}
           title="This link is not active"
           description="The interview may have been closed, or the link may be incomplete. Please check with whoever sent it to you."
+        />
+      </main>
+    );
+  }
+
+  // Integration links close once the student has finished: a partner student
+  // who already completed this interview cannot start a second attempt.
+  if (
+    prefill?.studentId &&
+    (await studentHasCompletedAttempt(interview.id, prefill.studentId))
+  ) {
+    return (
+      <main className="mx-auto max-w-lg px-4 py-16">
+        <EmptyState
+          headingLevel={1}
+          title="You've already completed this interview"
+          description="Thanks — your responses have been recorded and there's nothing more to do here. You can close this tab."
         />
       </main>
     );
