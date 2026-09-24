@@ -23,20 +23,24 @@ export const dynamic = "force-dynamic";
  */
 
 /**
- * The partner's student payload.
- *
- * ADJUST THESE FIELD NAMES to match the JSON the partner actually sends — this
- * schema is the only place the shape is pinned.
+ * PathSaathi's student payload. They POST a full student profile; we take only
+ * what the interview needs and ignore the rest (zod strips unknown keys). The
+ * few fields below are the only ones pinned — the mapping to our form lives
+ * just after parsing.
  */
 const bodySchema = z.object({
-  name: z.string().trim().min(1).max(120),
+  // Their record id — REQUIRED, since it is what the result is keyed back to.
+  student_uuid: z.string().trim().min(1).max(128),
+  full_name: z.string().trim().max(120).nullish(),
+  first_name: z.string().trim().max(80).nullish(),
+  middle_name: z.string().trim().max(80).nullish(),
+  last_name: z.string().trim().max(80).nullish(),
   email: z.string().trim().max(255).nullish(),
   phone: z.string().trim().max(20).nullish(),
-  course: z.string().trim().max(120).nullish(),
-  // The partner's own student id — echoed back with the result so they can
-  // match it to their record. Strongly recommended; results are otherwise only
-  // matchable by email.
-  studentId: z.string().trim().max(128).nullish(),
+  // Course sits nested under training_record, e.g. "Industrial Electrician".
+  training_record: z
+    .object({ course: z.string().trim().max(120).nullish() })
+    .nullish(),
 });
 
 /** Constant-time bearer check, so the key cannot be recovered by timing. */
@@ -79,12 +83,26 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  const d = parsed.data;
+  const name =
+    d.full_name?.trim() ||
+    [d.first_name, d.middle_name, d.last_name]
+      .filter((p) => p && p.trim())
+      .join(" ")
+      .trim();
+  if (!name) {
+    return NextResponse.json(
+      { error: "A student name is required (full_name or name parts)." },
+      { status: 422 },
+    );
+  }
+
   const blob = encodePrefill({
-    name: parsed.data.name,
-    email: parsed.data.email ?? undefined,
-    phone: parsed.data.phone ?? undefined,
-    course: parsed.data.course ?? undefined,
-    studentId: parsed.data.studentId ?? undefined,
+    name,
+    email: d.email ?? undefined,
+    phone: d.phone ?? undefined,
+    course: d.training_record?.course ?? undefined,
+    studentId: d.student_uuid,
   });
   const url = await absoluteUrl(`/i/${interviewToken}?p=${blob}`);
 
