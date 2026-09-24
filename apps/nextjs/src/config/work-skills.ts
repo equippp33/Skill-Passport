@@ -9,6 +9,8 @@
  * interview covers all ten.
  */
 
+import { WORK_READINESS_QUESTIONS } from "./work-readiness-pool";
+
 export const WORK_SKILL_IDS = [
   "work_readiness",
   "reliability",
@@ -52,14 +54,9 @@ export const WORK_SKILLS: readonly WorkSkill[] = [
       "A realistic picture of working life and clear goals — understanding what a job expects and what they want to get out of it.",
     scenarioFocus:
       "what they want from work and what being ready for a job means to them",
-    exampleQuestions: [
-      "What kind of work do you want to do, and why?",
-      "What salary are you expecting to start with?",
-      "Are you okay working night shifts or on weekends?",
-      "Can you move to another city for a job?",
-      "Are you okay starting as a helper and learning on the job?",
-      "Where do you see yourself after two years?",
-    ],
+    // Work readiness is drawn from a FIXED per-language pool, not AI-generated
+    // — see `work-readiness-pool.ts`. This English list mirrors it.
+    exampleQuestions: WORK_READINESS_QUESTIONS.map((q) => q.en),
   },
   {
     id: "reliability",

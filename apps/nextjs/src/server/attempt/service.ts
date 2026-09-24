@@ -26,6 +26,7 @@ import {
   getWorkSkill,
 } from "~/config/work-skills";
 import type { WorkSkill, WorkSkillId } from "~/config/work-skills";
+import { WORK_READINESS_QUESTIONS } from "~/config/work-readiness-pool";
 import {
   isRepeatRequest,
   isSkipRequest,
@@ -1201,6 +1202,30 @@ function skillNumberOf(skillId: WorkSkillId): number {
   return WORK_SKILL_IDS.indexOf(skillId) + 1;
 }
 
+/**
+ * Pick a Work Readiness question from the fixed pool for this interview.
+ *
+ * Hindi and Marathi use the client-finalised text verbatim (with the English
+ * kept as the reviewer translation); English uses the English; every other
+ * language renders the English seed live. This is the only skill that skips
+ * the model for its wording.
+ */
+async function pickReadinessQuestion(
+  ctx: InterviewContext,
+  languageKey: string | null,
+): Promise<{ question: string; translation: string | null }> {
+  const q =
+    WORK_READINESS_QUESTIONS[
+      Math.floor(Math.random() * WORK_READINESS_QUESTIONS.length)
+    ]!;
+  if (languageKey === "hindi") return { question: q.hi, translation: q.en };
+  if (languageKey === "marathi") return { question: q.mr, translation: q.en };
+  if (languageKey === "english" || !languageKey)
+    return { question: q.en, translation: null };
+  // Telugu, Tamil, etc. — render the English seed in the interview language.
+  return translateQuestion(ctx, q.en);
+}
+
 async function generateAndInsertQuestion(
   attemptId: string,
   interview: Interview,
@@ -1222,17 +1247,12 @@ async function generateAndInsertQuestion(
   if (!skill) return;
 
   const ctx = await buildContext(attempt, interview);
-  // Work readiness comes from a FIXED bank (never AI-invented): pick one at
-  // random and just say it in the interview language. Every other skill is
-  // AI-generated in its everyday-life style.
+  // Work readiness comes from a FIXED per-language pool (never AI-invented):
+  // pick one at random, using the stored Hindi/Marathi text as-is and rendering
+  // the English live for other languages. Every other skill is AI-generated.
   const generated =
     skill.id === "work_readiness"
-      ? await translateQuestion(
-          ctx,
-          skill.exampleQuestions[
-            Math.floor(Math.random() * skill.exampleQuestions.length)
-          ]!,
-        )
+      ? await pickReadinessQuestion(ctx, attempt.language)
       : await generateQuestion({
           ctx,
           skill,
