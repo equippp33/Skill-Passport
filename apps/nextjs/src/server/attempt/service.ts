@@ -907,6 +907,25 @@ const FOLLOWUP_MIN_SCORE = 1;
 const MAX_FOLLOWUPS_PER_INTERVIEW = 3;
 
 /**
+ * How short an answer must be to be worth pausing on.
+ *
+ * The follow-up decision is a model call on the critical path, so running it on
+ * every answer taxes the whole interview with a pause. Instead we only reach
+ * for it when the answer is genuinely THIN — a bare "yes", a couple of words —
+ * which is exactly the case a probe is for. A substantive answer skips the call
+ * entirely: advance instantly on the prefetched next question, score in the
+ * background. Tunable — raise to probe more often, lower to probe less.
+ */
+const THIN_ANSWER_MAX_WORDS = 6;
+
+function isThinAnswer(transcript: string): boolean {
+  return (
+    transcript.trim().split(/\s+/).filter(Boolean).length <=
+    THIN_ANSWER_MAX_WORDS
+  );
+}
+
+/**
  * Transcribe, score and move the interview on — billed to this attempt.
  *
  * The scope wraps the whole thing rather than each provider call, so anything
@@ -1335,17 +1354,13 @@ async function prefetchNextQuestion(
   currentTurnNumber: number,
 ): Promise<void> {
   const turns = await getTurns(attemptId);
-  const current = turns.find((t) => t.turnNumber === currentTurnNumber);
 
-  // Don't prepare across a possible follow-up: ANY primary may spawn a
-  // follow-up as the very next turn, decided from the answer, not ahead of
-  // time. Preparing the next primary now would take the turn number the
-  // follow-up needs. (Follow-ups are answer-driven on every skill now, so we
-  // only prefetch after a follow-up turn, which never spawns another.)
-  if (current && !current.isFollowUp && current.skillId) {
-    return;
-  }
-
+  // Prepare the next primary ahead of time after EVERY turn, so the common case
+  // (a substantive answer that needs no follow-up) advances with the next
+  // question already in hand — no on-demand generation, no pause. On the rare
+  // thin answer that does earn a follow-up, `deliverFollowUp` reclaims this
+  // slot (see there).
+  //
   // Nothing left to prepare once every skill has its primary question.
   if (!nextPrimarySkill(turns)) return;
 
@@ -1423,20 +1438,44 @@ async function deliverFollowUp(
     language.code,
   );
 
+  // A next primary may have been prefetched into this slot while the candidate
+  // answered. The follow-up takes it: drop that prepared turn (and its clip)
+  // first, and overwrite on the off chance a prefetch lands in the same instant
+  // — so the follow-up always wins, never a silent no-op that leaves the
+  // primary in place.
+  const prepared = await db.query.interviewTurnsTable.findFirst({
+    where: and(
+      eq(interviewTurnsTable.attemptId, attempt.id),
+      eq(interviewTurnsTable.turnNumber, nextTurnNumber),
+    ),
+  });
+  if (prepared) {
+    if (prepared.questionAudioId) await discardAudioClip(prepared.questionAudioId);
+    await db
+      .delete(interviewTurnsTable)
+      .where(eq(interviewTurnsTable.id, prepared.id));
+  }
+
+  const followUpValues = {
+    kind: "skill" as const,
+    skillId: currentTurn.skillId,
+    isFollowUp: true,
+    question: followUpQuestion,
+    questionTranslation: followUpTranslation,
+    questionAudioId,
+    status: "awaiting_answer" as const,
+  };
   await db
     .insert(interviewTurnsTable)
     .values({
       attemptId: attempt.id,
       turnNumber: nextTurnNumber,
-      kind: "skill",
-      skillId: currentTurn.skillId,
-      isFollowUp: true,
-      question: followUpQuestion,
-      questionTranslation: followUpTranslation,
-      questionAudioId,
-      status: "awaiting_answer",
+      ...followUpValues,
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: [interviewTurnsTable.attemptId, interviewTurnsTable.turnNumber],
+      set: followUpValues,
+    });
 
   await db
     .update(interviewAttemptsTable)
@@ -1632,13 +1671,15 @@ async function handleAnsweredTurn(args: {
 }): Promise<void> {
   const { attempt, interview, turn, transcript, languageCode } = args;
 
-  // Every primary skill turn now scores AND decides a follow-up from the
-  // answer — there is no per-interview opt-in any more. Follow-up turns
-  // themselves are never followed up (they ARE the follow-up).
+  // A follow-up is considered ONLY for a primary skill turn whose answer is
+  // thin — a bare / one-word reply that a probe is actually for. Every other
+  // answer (substantive, a follow-up's own answer, or a skip) takes the fast
+  // path below: advance instantly on the prefetched next question and score in
+  // the background, with no model call between questions.
   const skillId = turn.skillId as WorkSkillId | null;
-  const eligible = !turn.isFollowUp && !!skillId;
+  const eligible = !turn.isFollowUp && !!skillId && isThinAnswer(transcript);
 
-  // --- Eligible primary: score AND decide the follow-up in one call. --------
+  // --- Thin answer on a primary: score AND decide the follow-up in one call. -
   // This is the one path with a provider call on the critical path (the
   // decision has to see the answer), so a failure here — even after its own
   // retries — must not strand the candidate on an error screen. It falls
