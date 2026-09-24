@@ -899,6 +899,13 @@ const MAX_DOUBTS_BEFORE_SKIP = 1;
 const FOLLOWUP_MIN_SCORE = 1;
 
 /**
+ * Hard ceiling on follow-ups across the whole interview, so its length can't
+ * balloon even when many answers are thin. Primaries are unaffected — every
+ * skill is still asked — this only bounds the extra probes on top.
+ */
+const MAX_FOLLOWUPS_PER_INTERVIEW = 3;
+
+/**
  * Transcribe, score and move the interview on — billed to this attempt.
  *
  * The scope wraps the whole thing rather than each provider call, so anything
@@ -1644,11 +1651,16 @@ async function handleAnsweredTurn(args: {
       // low — and following those up with "anything to add?" is exactly the
       // behaviour candidates hated. Gate the follow-up on a scorable answer, no
       // matter what the model put in nextQuestion.
-      // At most one follow-up per skill: a follow-up turn never spawns another
-      // (it is ineligible above), so a primary + its one follow-up is the
-      // ceiling — 11 skills → 22 turns max.
+      // Bounded: at most one follow-up per skill (a follow-up never spawns
+      // another), and no more than MAX_FOLLOWUPS_PER_INTERVIEW across the whole
+      // interview, so a run of thin answers can't turn every skill into two.
+      const followUpsSoFar = priorTurns.filter((t) => t.isFollowUp).length;
       const followUp = evaluation.nextQuestion?.trim();
-      if (followUp && evaluation.score >= FOLLOWUP_MIN_SCORE) {
+      if (
+        followUp &&
+        evaluation.score >= FOLLOWUP_MIN_SCORE &&
+        followUpsSoFar < MAX_FOLLOWUPS_PER_INTERVIEW
+      ) {
         await deliverFollowUp(
           attempt,
           interview,

@@ -27,7 +27,7 @@ import type { SkillScore } from "~/lib/scoring";
 const MAX_ATTEMPTS = 3;
 const TIMEOUT_MS = 15_000;
 
-interface Args {
+export interface ResultPayloadArgs {
   attempt: InterviewAttempt;
   interview: Interview;
   turns: InterviewTurn[];
@@ -39,8 +39,13 @@ interface Args {
   improvements: string[];
 }
 
-/** The blob the partner receives. Scores are all on a 0–10 scale. */
-function buildPayload(args: Args): Record<string, unknown> {
+/**
+ * The result blob — sent to the partner's webhook (push) and also returned by
+ * the pull endpoint. Scores are all on a 0–10 scale.
+ */
+export function buildResultPayload(
+  args: ResultPayloadArgs,
+): Record<string, unknown> {
   const { attempt, interview, turns, skillScores } = args;
 
   const intro =
@@ -87,16 +92,16 @@ function buildPayload(args: Args): Record<string, unknown> {
     introduction: intro,
     questions,
     startedAt: attempt.startedAt?.toISOString() ?? null,
-    completedAt: new Date().toISOString(),
+    completedAt: attempt.completedAt?.toISOString() ?? new Date().toISOString(),
   };
 }
 
-export async function deliverResult(args: Args): Promise<void> {
+export async function deliverResult(args: ResultPayloadArgs): Promise<void> {
   const url = env.INTEGRATION_RESULT_WEBHOOK_URL;
   if (!url) return; // No partner webhook configured — nothing to deliver.
   if (!args.attempt.externalStudentId) return; // Not an integration candidate.
 
-  const body = JSON.stringify(buildPayload(args));
+  const body = JSON.stringify(buildResultPayload(args));
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (env.INTEGRATION_RESULT_WEBHOOK_KEY) {
     headers.Authorization = `Bearer ${env.INTEGRATION_RESULT_WEBHOOK_KEY}`;

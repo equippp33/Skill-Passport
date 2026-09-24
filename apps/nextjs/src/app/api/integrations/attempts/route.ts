@@ -1,9 +1,9 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { env } from "~/env";
 import { absoluteUrl } from "~/server/app-url";
+import { bearerAuthorised } from "~/server/integrations/auth";
 import { encodePrefill } from "~/server/integrations/prefill";
 
 export const dynamic = "force-dynamic";
@@ -43,15 +43,6 @@ const bodySchema = z.object({
     .nullish(),
 });
 
-/** Constant-time bearer check, so the key cannot be recovered by timing. */
-function authorised(request: Request, key: string): boolean {
-  const header = request.headers.get("authorization") ?? "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const a = Buffer.from(token);
-  const b = Buffer.from(key);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 export async function POST(request: Request): Promise<NextResponse> {
   const apiKey = env.INTEGRATION_API_KEY;
   const interviewToken = env.INTEGRATION_INTERVIEW_TOKEN;
@@ -61,7 +52,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 503 },
     );
   }
-  if (!authorised(request, apiKey)) {
+  if (!bearerAuthorised(request, apiKey)) {
     return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
   }
 
