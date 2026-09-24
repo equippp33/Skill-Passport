@@ -15,6 +15,8 @@ import {
 } from "~/server/db/schema";
 import type { Interview, InterviewAttempt } from "~/server/db/schema";
 import type { InterviewDetails } from "./dto";
+import { formatInr, interviewCost, wasMetered } from "~/config/pricing";
+import { env } from "~/env";
 import { labelForCode } from "~/lib/spoken-languages";
 import type { SpokenLanguage } from "~/lib/spoken-languages";
 import { getAuth } from "~/server/auth/session";
@@ -304,10 +306,105 @@ export async function getInterviewDetails(
 
   const { interview, attempts } = found;
   const attemptIds = attempts.map((a) => a.id);
-  const [spokenByAttempt, thumbnailByAttempt] = await Promise.all([
+  const isDev = env.NODE_ENV === "development";
+  const [
+    spokenByAttempt,
+    thumbnailByAttempt,
+    sttMinutesByAttempt,
+    questionCharsByAttempt,
+  ] = await Promise.all([
     getSpokenLanguages(attemptIds),
     getThumbnailVideos(attemptIds),
+    // Only in development, and only because the cost badge needs it — these
+    // are extra aggregates over every clip and turn in the interview.
+    isDev ? getSttMinutes(attemptIds) : Promise.resolve(new Map()),
+    isDev ? getQuestionChars(attemptIds) : Promise.resolve(new Map()),
   ]);
+
+  /**
+   * The running total for this link, split by provider. Development only.
+   *
+   * Summed over the attempts the meter actually covered; the rest are counted
+   * separately rather than folded in as zero, because a total over four runs
+   * out of seven is a different claim from a total over all seven.
+   */
+  /** One place both the per-card badge and the header total cost from. */
+  const costOf = (a: (typeof attempts)[number]) =>
+    interviewCost(
+      {
+        sttMinutes: sttMinutesByAttempt.get(a.id) ?? 0,
+        ttsCharacters: a.ttsCharacters,
+        llmInputTokens: a.llmInputTokens,
+        llmOutputTokens: a.llmOutputTokens,
+      },
+      env.AI_PROVIDER,
+    );
+
+  /**
+   * The least this interview can have cost, for one the meter never saw.
+   *
+   * Speech can be priced exactly after the fact: the question text is stored
+   * and this branch synthesises one clip per question, so the characters are
+   * known, and the answers carry their own measured durations. Only the model
+   * tokens are unrecoverable — and they are the larger share, so this is a
+   * floor and is labelled as one rather than passed off as the total.
+   */
+  const floorOf = (a: (typeof attempts)[number]) =>
+    interviewCost(
+      {
+        sttMinutes: sttMinutesByAttempt.get(a.id) ?? 0,
+        ttsCharacters: questionCharsByAttempt.get(a.id) ?? 0,
+        llmInputTokens: 0,
+        llmOutputTokens: 0,
+      },
+      env.AI_PROVIDER,
+    );
+
+  /** Metered where we can, floored where we cannot, and which is which. */
+  const readingFor = (a: (typeof attempts)[number]) => {
+    if (!isDev) return { cost: undefined, parts: undefined, floor: undefined };
+    const metered = wasMetered(a);
+    const c = metered ? costOf(a) : floorOf(a);
+    if (!metered && c.total === 0) {
+      return { cost: null, parts: null, floor: undefined };
+    }
+    return {
+      cost: formatInr(c.total),
+      parts: `OpenAI ${formatInr(c.llm)} · TTS ${formatInr(
+        c.tts,
+      )} · STT ${formatInr(c.stt)}`,
+      floor: metered ? undefined : true,
+    };
+  };
+
+  const metered = isDev ? attempts.filter((a) => wasMetered(a)) : [];
+  const devCosts = isDev
+    ? (() => {
+        const sum = attempts.reduce(
+          (acc, a) => {
+            const c = wasMetered(a) ? costOf(a) : floorOf(a);
+            return {
+              llm: acc.llm + c.llm,
+              tts: acc.tts + c.tts,
+              stt: acc.stt + c.stt,
+              total: acc.total + c.total,
+            };
+          },
+          { llm: 0, tts: 0, stt: 0, total: 0 },
+        );
+        return {
+          openai: formatInr(sum.llm),
+          tts: formatInr(sum.tts),
+          stt: formatInr(sum.stt),
+          total: formatInr(sum.total),
+          metered: metered.length,
+          unmetered: attempts.length - metered.length,
+          // True when any part of the total came from a floor, so the header
+          // can say "at least" rather than state it as the bill.
+          hasFloor: metered.length < attempts.length,
+        };
+      })()
+    : undefined;
 
   return {
     id: interview.id,
@@ -317,6 +414,7 @@ export async function getInterviewDetails(
     publicToken: interview.publicToken,
     isOpen: interview.isOpen,
     createdAt: interview.createdAt,
+    devCosts,
     attempts: attempts.map((attempt) => ({
       id: attempt.id,
       candidateName: attempt.candidateName,
@@ -328,9 +426,74 @@ export async function getInterviewDetails(
       spokenLanguages: spokenByAttempt.get(attempt.id) ?? [],
       overallScore: attempt.overallScore,
       awayCount: attempt.awayCount,
+      // Null in production, and null when the meter did not cover this
+      // interview — see `wasMetered`. A zero would be a claim that it was free.
+      devCost: readingFor(attempt).cost,
+      devCostParts: readingFor(attempt).parts,
+      devCostIsFloor: readingFor(attempt).floor,
       createdAt: attempt.createdAt,
     })),
   };
+}
+
+/**
+ * Minutes of candidate audio per attempt, for the development cost badge.
+ *
+ * Read from the recorded answer clips rather than from a counter, because
+ * Sarvam bills speech-to-text per second of audio and the streaming path never
+ * makes a countable request — it holds a socket open. The clips are stored
+ * whichever transcription path ran, so this stays correct either way.
+ */
+async function getSttMinutes(
+  attemptIds: string[],
+): Promise<Map<string, number>> {
+  const byAttempt = new Map<string, number>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewAudioTable.attemptId,
+      ms: sql<number>`coalesce(sum(${interviewAudioTable.durationMs}), 0)::int`,
+    })
+    .from(interviewAudioTable)
+    .where(
+      and(
+        inArray(interviewAudioTable.attemptId, attemptIds),
+        eq(interviewAudioTable.kind, "answer"),
+      ),
+    )
+    .groupBy(interviewAudioTable.attemptId);
+
+  for (const row of rows) byAttempt.set(row.attemptId, row.ms / 60000);
+  return byAttempt;
+}
+
+/**
+ * Characters of question text per attempt, for costing interviews the meter
+ * never saw.
+ *
+ * Sound only because this branch synthesises exactly one clip per question —
+ * verified against stored clips. On older data, where fixed lines were voiced
+ * per attempt, this understates what was actually spoken, which is why every
+ * figure derived from it is presented as a floor.
+ */
+async function getQuestionChars(
+  attemptIds: string[],
+): Promise<Map<string, number>> {
+  const byAttempt = new Map<string, number>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewTurnsTable.attemptId,
+      chars: sql<number>`coalesce(sum(length(${interviewTurnsTable.question})), 0)::int`,
+    })
+    .from(interviewTurnsTable)
+    .where(inArray(interviewTurnsTable.attemptId, attemptIds))
+    .groupBy(interviewTurnsTable.attemptId);
+
+  for (const row of rows) byAttempt.set(row.attemptId, row.chars);
+  return byAttempt;
 }
 
 /** The first recorded answer clip per attempt, for the card thumbnail. */

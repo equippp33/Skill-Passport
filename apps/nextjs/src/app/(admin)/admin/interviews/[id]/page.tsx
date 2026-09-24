@@ -65,6 +65,60 @@ export default async function InterviewDetailPage({
               {details.questionCount} skill questions · created{" "}
               {formatDate(details.createdAt)}
             </p>
+
+            {/*
+             * What this link has cost so far, by provider. Development only —
+             * the server omits `devCosts` entirely in production, so this
+             * renders nothing there.
+             *
+             * The counts sit beside the total on purpose: a figure covering
+             * four runs out of seven reads as the whole bill unless it says
+             * otherwise, and the unmetered ones are interviews that predate
+             * the counters, not free ones.
+             */}
+            {details.devCosts ? (
+              <div className="mt-3 inline-flex flex-wrap items-stretch gap-px overflow-hidden rounded-lg border border-border-subtle bg-border-subtle text-sm">
+                {[
+                  ["OpenAI", details.devCosts.openai],
+                  ["TTS", details.devCosts.tts],
+                  ["STT", details.devCosts.stt],
+                ].map(([label, value]) => (
+                  <div key={label} className="bg-surface px-3 py-1.5">
+                    <div className="text-[11px] tracking-wide text-content-muted uppercase">
+                      {label}
+                    </div>
+                    <div className="font-semibold tabular-nums">{value}</div>
+                  </div>
+                ))}
+                <div className="bg-accent-soft px-3 py-1.5">
+                  <div className="text-[11px] tracking-wide text-content-muted uppercase">
+                    Total
+                  </div>
+                  <div
+                    className="font-semibold text-accent tabular-nums"
+                    title={
+                      details.devCosts.hasFloor
+                        ? "A floor: some interviews predate the meter, so their model usage is missing and the real total is higher"
+                        : "Estimated from provider list prices — see config/pricing.ts"
+                    }
+                  >
+                    {details.devCosts.hasFloor ? "≥" : ""}
+                    {details.devCosts.total}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {details.devCosts ? (
+              <p className="mt-1 text-xs text-content-muted">
+                {details.devCosts.metered} interview
+                {details.devCosts.metered === 1 ? "" : "s"} fully metered
+                {details.devCosts.unmetered > 0
+                  ? ` · ${details.devCosts.unmetered} priced from stored questions and answers only, so the model share is missing and the real total is higher`
+                  : ""}
+                . Realtime STT is billed per second of audio, so the WebSocket
+                itself costs nothing beyond the STT line.
+              </p>
+            ) : null}
           </div>
           <OpenToggle interviewId={details.id} isOpen={details.isOpen} />
         </div>

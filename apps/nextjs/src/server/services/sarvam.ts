@@ -1,4 +1,5 @@
 import "server-only";
+import { recordUsage } from "~/server/interview/usage";
 
 import { env } from "~/env";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
@@ -205,6 +206,8 @@ export async function generateSpeech(
   options: { languageCode: string; speaker?: string; pace?: number },
 ): Promise<SpeechResult> {
   const clipped = text.trim().slice(0, TTS_MAX_CHARS);
+  // Counted on what is SENT, after clipping — that is what Sarvam bills for.
+  recordUsage({ ttsCharacters: clipped.length });
   if (!clipped) {
     throw new ProviderError({
       provider: "sarvam",

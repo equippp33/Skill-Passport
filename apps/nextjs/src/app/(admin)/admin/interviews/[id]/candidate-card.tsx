@@ -101,6 +101,38 @@ export function CandidateCard({
           {statusLabel}
         </span>
 
+        {/*
+         * What this interview cost to run. Development only — the server
+         * sends `devCost` as null in production, so this renders nothing
+         * there without the component needing to know the environment.
+         *
+         * An interview the meter did not cover shows a dash rather than
+         * ₹0.00: a zero next to a completed interview is a claim that it was
+         * free, and that is how a readout like this stops being believed.
+         */}
+        {attempt.devCost !== undefined ? (
+          <span
+            title={
+              attempt.devCost
+                ? `${attempt.devCostParts ?? "Estimated provider cost"}${
+                    attempt.devCostIsFloor
+                      ? " — speech only; model usage was not recorded for this interview, so the real cost is higher"
+                      : ""
+                  }`
+                : "No usage recorded for this interview"
+            }
+            className={`absolute bottom-2 left-2 rounded-md px-2 py-1 text-xs font-semibold tabular-nums backdrop-blur-sm ${
+              attempt.devCost
+                ? "bg-black/70 text-white"
+                : "bg-black/45 text-white/50"
+            }`}
+          >
+            {attempt.devCost
+              ? `${attempt.devCostIsFloor ? "≥" : ""}${attempt.devCost}`
+              : "₹—"}
+          </span>
+        ) : null}
+
         {/* Score, always overlapped on the thumbnail when it exists. */}
         {score !== null ? (
           <span className="absolute top-2 right-2 rounded-md bg-black/70 px-2 py-1 text-sm font-semibold text-white tabular-nums backdrop-blur-sm">
