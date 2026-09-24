@@ -13,6 +13,11 @@ import type {
   InterviewTurn,
 } from "~/server/db/schema";
 import type { SkillScore } from "~/lib/scoring";
+import {
+  presignReportUrl,
+  putReportPdf,
+} from "~/server/interview/storage";
+import { renderAttemptReportPdf } from "./report-pdf";
 
 /**
  * Post a finished student's result to the partner's webhook.
@@ -101,7 +106,24 @@ export async function deliverResult(args: ResultPayloadArgs): Promise<void> {
   if (!url) return; // No partner webhook configured — nothing to deliver.
   if (!args.attempt.externalStudentId) return; // Not an integration candidate.
 
-  const body = JSON.stringify(buildResultPayload(args));
+  // Render the report to PDF, store it in R2, and hand the partner a link to
+  // it in the payload. Best-effort: if the render or upload fails, the result
+  // still goes out with reportUrl null rather than being lost.
+  let reportUrl: string | null = null;
+  try {
+    const pdf = await renderAttemptReportPdf(args.attempt, args.interview);
+    const key = `${env.CLOUDFLARE_R2_PREFIX}/reports/${args.attempt.id}.pdf`;
+    await putReportPdf(key, pdf);
+    reportUrl = await presignReportUrl(key);
+  } catch (error) {
+    console.error(
+      `[integration] report PDF for webhook failed attempt=${args.attempt.id}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
+
+  const body = JSON.stringify({ ...buildResultPayload(args), reportUrl });
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (env.INTEGRATION_RESULT_WEBHOOK_KEY) {
     headers.Authorization = `Bearer ${env.INTEGRATION_RESULT_WEBHOOK_KEY}`;

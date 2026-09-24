@@ -15,7 +15,7 @@ export function AuthShell({
   return (
     <main lang={lang} className="grid min-h-dvh lg:grid-cols-[1.05fr_1fr]">
       <section className="auth-story relative hidden flex-col justify-between overflow-hidden border-r border-border-subtle p-12 lg:flex xl:p-16">
-        <Brand />
+        <Brand className="self-start" />
         <div className="relative z-10 my-12 max-w-lg">
           <span className="eyebrow">
             <Icon name="spark" className="size-4" /> {m.app.tagline}

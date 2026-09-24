@@ -211,6 +211,44 @@ export async function headAudioObject(
   }
 }
 
+/**
+ * Report PDFs delivered to a partner webhook.
+ *
+ * The link travels in the webhook and the partner fetches it on their own
+ * schedule, so it lives far longer than a playback URL — long enough for them
+ * to pull down and store their own copy. Still presigned, not public: the
+ * bucket stays private.
+ */
+export const REPORT_URL_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+
+export async function putReportPdf(key: string, body: Buffer): Promise<void> {
+  try {
+    await getClient().send(
+      new PutObjectCommand({
+        Bucket: env.CLOUDFLARE_R2_BUCKET,
+        Key: key,
+        Body: body,
+        ContentType: "application/pdf",
+        ContentLength: body.byteLength,
+      }),
+    );
+  } catch (error) {
+    throw storageError("putReportPdf", error);
+  }
+}
+
+export async function presignReportUrl(key: string): Promise<string> {
+  try {
+    return await getSignedUrl(
+      getClient(),
+      new GetObjectCommand({ Bucket: env.CLOUDFLARE_R2_BUCKET, Key: key }),
+      { expiresIn: REPORT_URL_TTL_SECONDS },
+    );
+  } catch (error) {
+    throw storageError("presignReportUrl", error);
+  }
+}
+
 /** Best-effort cleanup; never fails the caller. */
 export async function deleteAudioObject(key: string): Promise<void> {
   try {
