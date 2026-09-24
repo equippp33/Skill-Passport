@@ -34,17 +34,14 @@
   /* PathSaathi radius (14px), so cards/buttons share their softer corner. */
   --radius-card: 0.875rem;
 
-  /* PathSaathi type: Archivo for headings, Anek Devanagari for body — both
-     loaded by next/font. Anek covers Latin + Devanagari; the system Indic
-     fallbacks (Nirmala UI / Noto Sans) still catch Telugu, Tamil, Kannada,
-     Malayalam, Bengali, Gujarati, Odia, Gurmukhi per-glyph, so a non-Hindi
-     interview never loses its script. */
+  /* ONE typeface across the whole app: Anek Devanagari, headings and body
+     alike. Anek covers Latin + Devanagari; the system Indic fallbacks (Nirmala
+     UI / Noto Sans) still catch Telugu, Tamil, Kannada, Malayalam, Bengali,
+     Gujarati, Odia, Gurmukhi per-glyph, so a non-Hindi interview never loses
+     its script. */
   --font-sans:
     var(--font-anek), ui-sans-serif, system-ui, "Segoe UI", "Nirmala UI",
     "Noto Sans", sans-serif;
-  --font-heading:
-    var(--font-archivo), var(--font-anek), ui-sans-serif, system-ui,
-    "Nirmala UI", "Noto Sans", sans-serif;
 
   /* PathSaathi shadows (neutral warm-grey, softer than our old indigo tint). */
   --shadow-card:
@@ -89,15 +86,13 @@ body {
   line-height: 1.6;
 }
 
-/* PathSaathi headings: Archivo, bold, slightly tightened — matching their
-   h1–h4 treatment. Latin renders in Archivo; Indic glyphs fall through the
-   stack to Anek / system fonts per-glyph, so headings stay legible in every
-   interview language. */
+/* Headings use the same Anek Devanagari as the body — one font everywhere —
+   just bold and slightly tightened so they still read as headings. */
 h1,
 h2,
 h3,
 h4 {
-  font-family: var(--font-heading);
+  font-family: var(--font-sans);
   font-weight: 700;
   letter-spacing: -0.02em;
 }

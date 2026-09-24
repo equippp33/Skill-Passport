@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Anek_Devanagari, Archivo } from "next/font/google";
+import { Anek_Devanagari } from "next/font/google";
 
 import { uiLanguage, uiMessages } from "~/server/language";
 
@@ -26,14 +26,8 @@ export async function generateMetadata(): Promise<Metadata> {
  * Self-hosted at build time by next/font, so there is no render-blocking
  * request to Google and no layout shift when it loads.
  */
-// PathSaathi's brand pairing: Archivo for headings, Anek Devanagari for body
-// (Anek carries both Latin and Devanagari, so Hindi/Marathi need no fallback).
-const heading = Archivo({
-  subsets: ["latin"],
-  variable: "--font-archivo",
-  display: "swap",
-});
-
+// One typeface across the app: Anek Devanagari (Latin + Devanagari in one
+// family, so Hindi/Marathi need no fallback).
 const body = Anek_Devanagari({
   subsets: ["latin", "devanagari"],
   variable: "--font-anek",
@@ -54,10 +48,7 @@ export default function RootLayout({
   const lang = uiLanguage();
 
   return (
-    <html
-      lang={lang.code}
-      className={`${heading.variable} ${body.variable}`}
-    >
+    <html lang={lang.code} className={body.variable}>
       <body className="min-h-screen bg-canvas text-content antialiased">
         {children}
       </body>
