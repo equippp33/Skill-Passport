@@ -175,6 +175,79 @@ export async function transcribeAudio(input: {
 }
 
 /* -------------------------------------------------------------------------- */
+/*                               Transliteration                              */
+/* -------------------------------------------------------------------------- */
+
+const TRANSLITERATE_TIMEOUT_MS = 6_000;
+
+/**
+ * Force any Latin/English words in a native-script sentence into that script.
+ *
+ * The chat model, however firmly told not to, keeps leaving everyday English
+ * words in Latin ("...deadline చాలా tight గా...") — natural for a bilingual
+ * writer, unreadable for a candidate who only reads Telugu. Sarvam's
+ * transliterate endpoint fixes this deterministically: with source == target ==
+ * the session language it rewrites the Latin runs by sound (design→డిజైన్) and
+ * leaves the native text untouched. Prompt instructions can't guarantee this;
+ * this does.
+ *
+ * Best-effort: on any error it returns the text unchanged. A question with a
+ * stray English word is far better than no question, and this must never block
+ * or fail a turn. Callers should skip it for English and for already-clean text.
+ *
+ * POST https://api.sarvam.ai/transliterate
+ */
+export async function transliterateToNative(
+  text: string,
+  languageCode: string,
+): Promise<string> {
+  const trimmed = text.trim();
+  if (!trimmed) return text;
+
+  const run = async (): Promise<string> => {
+    const response = await fetchWithTimeout(
+      `${SARVAM_BASE_URL}/transliterate`,
+      {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input: trimmed,
+          source_language_code: languageCode,
+          target_language_code: languageCode,
+          // We want the written form (డిజైన్), not a spoken expansion.
+          spoken_form: false,
+        }),
+      },
+      TRANSLITERATE_TIMEOUT_MS,
+      "transliterate",
+    );
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      logProviderFailure("transliterate", response.status, body);
+      return text;
+    }
+
+    const json = (await response.json().catch(() => null)) as {
+      transliterated_text?: unknown;
+    } | null;
+
+    const out =
+      typeof json?.transliterated_text === "string"
+        ? json.transliterated_text.trim()
+        : "";
+    return out || text;
+  };
+
+  try {
+    return await timed("transliterate.sarvam", run, () => `chars=${trimmed.length}`);
+  } catch {
+    // Never let a cleanup step break a turn.
+    return text;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /*                               Text-to-Speech                               */
 /* -------------------------------------------------------------------------- */
 

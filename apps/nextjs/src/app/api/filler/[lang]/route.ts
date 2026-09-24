@@ -43,7 +43,7 @@ export async function GET(
     ? Math.min(Math.max(0, Math.trunc(requested)), variants.length - 1)
     : 0;
 
-  const key = `${env.CLOUDFLARE_R2_PREFIX}/fillers/${lang}-${v}.mp3`;
+  const key = `${env.CLOUDFLARE_R2_PREFIX}/fillers/${lang}-${v}-${env.SARVAM_TTS_SPEAKER}.mp3`;
 
   let bytes = await getAudioObject(key);
   if (!bytes) {

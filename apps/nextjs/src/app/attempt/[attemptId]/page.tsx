@@ -100,6 +100,7 @@ export default async function AttemptPage({
         initialAttemptStatus={attempt.status}
         fillerUrls={fillerUrls}
         checkUrl={`/api/check/${languageKey}`}
+        addUrl={`/api/add/${languageKey}`}
         initialTurn={
           current
             ? {

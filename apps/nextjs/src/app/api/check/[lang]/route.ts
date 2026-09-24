@@ -28,7 +28,7 @@ export async function GET(
     return new NextResponse("Unknown language", { status: 404 });
   }
   const language = INTERVIEW_LANGUAGES[lang as InterviewLanguageKey];
-  const key = `${env.CLOUDFLARE_R2_PREFIX}/checks/${lang}.mp3`;
+  const key = `${env.CLOUDFLARE_R2_PREFIX}/checks/${lang}-${env.SARVAM_TTS_SPEAKER}.mp3`;
 
   let bytes = await getAudioObject(key);
   if (!bytes) {

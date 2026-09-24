@@ -34,6 +34,8 @@ import {
   SILENCE_ADVANCE_SECONDS,
   SILENCE_WARN_SECONDS,
   SILENCE_SKIP_SECONDS,
+  ADD_WAIT_MS,
+  ADD_DECLINE_MAX_WORDS,
 } from "./constants";
 
 interface TurnView {
@@ -68,6 +70,7 @@ export function ActiveInterview({
   initialAttemptStatus,
   fillerUrls,
   checkUrl,
+  addUrl,
   m,
   languageCode,
 }: {
@@ -83,6 +86,8 @@ export function ActiveInterview({
   fillerUrls: string[];
   /** "Did you understand the question?" check-in, played after a long silence. */
   checkUrl: string;
+  /** "Would you like to add anything?" prompt, played on the first answer pause. */
+  addUrl: string;
   m: Messages;
   /** BCP-47 code of the session language, for correct text rendering. */
   languageCode: string;
@@ -432,6 +437,27 @@ export function ActiveInterview({
   // than the whole messages object.
   const genericError = m.errors.generic;
 
+  // "Add anything?" ask-state: whether we've offered on the current answer, the
+  // answer stashed before the offer, and the fallback silence timer. `poll`
+  // resets these when a turn (re)arms so each answer starts fresh; the offer
+  // logic itself lives with the streaming handler below.
+  const addAskedRef = useRef(false);
+  const pendingAnswerRef = useRef("");
+  const addTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearAddTimer = useCallback(() => {
+    if (addTimerRef.current) {
+      clearTimeout(addTimerRef.current);
+      addTimerRef.current = null;
+    }
+  }, []);
+
+  const resetAddState = useCallback(() => {
+    addAskedRef.current = false;
+    pendingAnswerRef.current = "";
+    clearAddTimer();
+  }, [clearAddTimer]);
+
   const poll = useCallback(async () => {
     try {
       const response = await fetch(`/api/attempt/${attemptId}/status`, {
@@ -488,6 +514,7 @@ export function ActiveInterview({
         // the previous turn should not force batch for the rest of the interview.
         setStreamFailed(false);
         resetRecorder();
+        resetAddState();
         allowReplay();
         setPhase("answering");
         return;
@@ -513,6 +540,7 @@ export function ActiveInterview({
         // previous one — the failure may have been a transient Sarvam blip.
         setStreamFailed(false);
         resetRecorder();
+        resetAddState();
         allowReplay();
         setPhase("answering");
         return;
@@ -552,6 +580,7 @@ export function ActiveInterview({
     stopPolling,
     scheduleNextPoll,
     resetRecorder,
+    resetAddState,
     warmNextQuestionAudio,
     genericError,
     flushRecordings,
@@ -724,24 +753,89 @@ export function ActiveInterview({
     submitCurrentAnswerRef.current = () => void handleNext();
   }, [handleNext]);
 
+  /* --------------------------- "add anything?" flow -------------------------- */
+
+  // On the first pause of an answer we invite the candidate to add more before
+  // moving on, keeping the mic open. Ask-state refs + reset live above `poll`.
+  const addRef = useRef<HTMLAudioElement | null>(null);
+  // streaming.rearm, reached via a ref because `streaming` is defined below.
+  const streamRearmRef = useRef<() => void>(() => undefined);
+
+  /** Play "would you like to add anything?" — own element, mutes mic while on. */
+  const playAdd = useCallback(() => {
+    const el = addRef.current;
+    if (!el) return;
+    try {
+      el.currentTime = 0;
+      void el.play().catch(() => undefined);
+    } catch {
+      // Best-effort — if it can't play, the silence timer still advances us.
+    }
+  }, []);
+
   /**
-   * Streaming path: Sarvam signalled end-of-turn with the whole transcript.
-   * Stop the video (kept for the archive) and submit the transcript — no local
-   * VAD, no batch STT, no silent-tail hallucination. Empty means we only heard
-   * noise, so keep waiting rather than submitting nothing.
+   * Actually submit the answer: stop the video (kept for the archive) and send
+   * the transcript. Shared by the "they're done" and "they went quiet" paths.
    */
-  const handleStreamedTurn = useCallback(
+  const finalizeStreamedAnswer = useCallback(
     async (transcript: string) => {
       const active = turnRef.current;
       if (!active) return;
       if (submittedTurnRef.current === active.turnNumber) return;
       if (!transcript.trim()) return;
       submittedTurnRef.current = active.turnNumber;
+      clearAddTimer();
       answerEndedAtRef.current = performance.now();
       const { video, durationMs } = await recorder.stopRecording();
       await submitTranscript(transcript, video, durationMs);
     },
-    [recorder, submitTranscript],
+    [recorder, submitTranscript, clearAddTimer],
+  );
+
+  /**
+   * Streaming path: Sarvam signalled end-of-turn with the whole transcript.
+   *
+   * We don't submit on the first pause. Instead we invite the candidate to add
+   * anything — the mic stays open — so they are never cut off mid-thought:
+   *   1st pause → stash the answer, play "would you like to add anything?",
+   *               re-arm the stream, and start a short silence timer.
+   *   2nd pause → a brief reply ("no", "that's all") is a decline, so submit
+   *               the stashed answer; anything longer is appended and submitted.
+   *   silence   → the timer submits the stashed answer on its own.
+   * Empty transcript means we only heard noise, so keep waiting.
+   */
+  const handleStreamedTurn = useCallback(
+    async (transcript: string) => {
+      const active = turnRef.current;
+      if (!active) return;
+      if (submittedTurnRef.current === active.turnNumber) return;
+      const text = transcript.trim();
+      if (!text) return;
+
+      // First pause: offer to add, keep listening, fall back to submitting the
+      // answer if they stay quiet.
+      if (!addAskedRef.current) {
+        addAskedRef.current = true;
+        pendingAnswerRef.current = text;
+        playAdd();
+        streamRearmRef.current();
+        clearAddTimer();
+        addTimerRef.current = setTimeout(() => {
+          void finalizeStreamedAnswer(pendingAnswerRef.current);
+        }, ADD_WAIT_MS);
+        return;
+      }
+
+      // Their reply to the offer: a few words is a decline; more is a real add.
+      clearAddTimer();
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
+      const answer =
+        wordCount <= ADD_DECLINE_MAX_WORDS
+          ? pendingAnswerRef.current
+          : `${pendingAnswerRef.current} ${text}`.trim();
+      await finalizeStreamedAnswer(answer);
+    },
+    [playAdd, clearAddTimer, finalizeStreamedAnswer],
   );
 
   /* ------------------------------ tap / voice controls ----------------------- */
@@ -847,6 +941,21 @@ export function ActiveInterview({
     noAnswerStages: NO_ANSWER_STAGES,
     onSilenceStage: (i) => handleSilenceStage(i),
   });
+
+  // Let handleStreamedTurn re-arm the stream after the "add?" ask without a
+  // definition-order cycle (it's declared above `streaming`).
+  useEffect(() => {
+    streamRearmRef.current = streaming.rearm;
+  }, [streaming.rearm]);
+
+  // While the "add anything?" offer is open, a fallback timer submits the
+  // stashed answer if the candidate stays quiet. The instant they actually
+  // start speaking (a partial transcript appears), cancel it — their addition
+  // is coming, and only their next real pause should end the turn. Without this
+  // the fixed timer fires mid-sentence and cuts them off.
+  useEffect(() => {
+    if (streaming.partial && addTimerRef.current) clearAddTimer();
+  }, [streaming.partial, clearAddTimer]);
 
   // Elapsed silence (candidate has said nothing yet), from whichever detector
   // is live. Drives the visible "skipping in Ns" countdown.
@@ -1021,6 +1130,16 @@ export function ActiveInterview({
       <audio
         ref={checkRef}
         src={checkUrl}
+        preload="auto"
+        className="hidden"
+        onPlay={() => setSpeaking(true)}
+        onEnded={() => setSpeaking(false)}
+        onPause={() => setSpeaking(false)}
+      />
+      {/* "Would you like to add anything?" — first pause of an answer. */}
+      <audio
+        ref={addRef}
+        src={addUrl}
         preload="auto"
         className="hidden"
         onPlay={() => setSpeaking(true)}

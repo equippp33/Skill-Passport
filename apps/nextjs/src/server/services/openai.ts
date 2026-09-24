@@ -10,6 +10,7 @@ import { ProviderError, isRetryableStatus, withRetry } from "./errors";
 import { timed } from "./timing";
 import { requestStructuredViaSarvam } from "./sarvam-chat";
 import type { SarvamChatKind } from "./sarvam-chat";
+import { transliterateToNative } from "./sarvam";
 import {
   contextBlock,
   frameworkBlock,
@@ -366,6 +367,27 @@ export interface GeneratedQuestion {
 }
 
 /**
+ * Backstop the "zero Latin" rule the chat model keeps breaking.
+ *
+ * However firmly the prompt forbids it, `sarvam-105b` still leaves everyday
+ * English words in Latin inside a native-script question ("...deadline చాలా
+ * tight గా..."), which a candidate who only reads Telugu cannot follow. Sarvam
+ * transliteration fixes it deterministically (design→డిజైన్) where instructions
+ * can't. No-op for English and for already-clean text, so it only costs a call
+ * when there is genuinely Latin to convert. Applied to every spoken question the
+ * model produces — opening, follow-up, translated, and repeat.
+ */
+async function toNativeScript(
+  ctx: InterviewContext,
+  text: string,
+): Promise<string> {
+  if (!text || ctx.language.promptName === "English" || !/[a-z]/i.test(text)) {
+    return text;
+  }
+  return transliterateToNative(text, ctx.language.code);
+}
+
+/**
  * Generate a fresh question for a given skill and turn, WITHOUT needing the
  * previous answer.
  *
@@ -427,7 +449,10 @@ export async function generateQuestion(args: {
       retryable: true,
     });
   }
-  return { question, translation: normaliseTranslation(ctx, result) };
+  return {
+    question: await toNativeScript(ctx, question),
+    translation: normaliseTranslation(ctx, result),
+  };
 }
 
 /**
@@ -491,6 +516,8 @@ export async function generateDoubtResponse(args: {
   doubtTranscript: string;
   /** Interview language — the reply is spoken in it, in its own script. */
   languageName: string;
+  /** BCP-47 code, for the transliteration backstop on the spoken reply. */
+  languageCode: string;
 }): Promise<string> {
   const result = await requestStructured({
     instructions: [
@@ -527,7 +554,8 @@ export async function generateDoubtResponse(args: {
       retryable: true,
     });
   }
-  return reply;
+  if (args.languageName === "English" || !/[a-z]/i.test(reply)) return reply;
+  return transliterateToNative(reply, args.languageCode);
 }
 
 /**
@@ -667,7 +695,11 @@ export async function evaluateAnswerAndGetNextQuestion(args: {
       retryable: true,
     });
   }
-  return { ...evaluation, interviewComplete: false };
+  return {
+    ...evaluation,
+    nextQuestion: await toNativeScript(ctx, evaluation.nextQuestion),
+    interviewComplete: false,
+  };
 }
 
 /**
@@ -736,7 +768,13 @@ export async function scoreAndMaybeFollowUp(args: {
     kind: "conversation",
   });
 
-  return { ...evaluation, interviewComplete: false };
+  return {
+    ...evaluation,
+    nextQuestion: evaluation.nextQuestion
+      ? await toNativeScript(ctx, evaluation.nextQuestion)
+      : null,
+    interviewComplete: false,
+  };
 }
 
 /** Final report for the reviewer, written in English. */
@@ -818,17 +856,20 @@ export async function translateQuestion(
 ): Promise<GeneratedQuestion> {
   const result = await requestStructured({
     instructions: [
-      "You translate interview questions between languages.",
-      "Preserve the meaning and the scenario exactly.",
-      "Do not answer it, shorten it, or ask anything different.",
-      // Same register rule as `interviewerRules`. Without it the re-ask
-      // after a language switch came back in formal, literary language
-      // while every other question in the interview was conversational.
-      "Write SPOKEN language, the way people actually talk at work — not",
-      "literary, news-reader or textbook language. Keep ordinary workplace",
-      "words in English inside the sentence (customer, team, manager, shift,",
-      "problem, handle, solve), as people really speak. Prefer the English",
-      "verb with the local helper verb over the formal native verb.",
+      "You translate an interview question into the target language, keeping the",
+      "meaning and scenario exactly — do not answer it, shorten it, or change it.",
+      // Same register as `interviewerRules`: casual and code-mixed, NOT the
+      // formal/literary translation the model reaches for by default.
+      "Write CASUAL, SPOKEN language, the way people actually talk day to day —",
+      "never formal, literary, news-reader or textbook language.",
+      "Mix in the everyday ENGLISH words people naturally use (career, job,",
+      "salary, team, deadline, project, manager), but write each one in the",
+      "TARGET LANGUAGE'S OWN SCRIPT, transliterated by sound — e.g. Telugu",
+      "career→కెరీర్, job→జాబ్, salary→సాలరీ. Prefer the English verb with the",
+      "local helper verb over the formal native verb.",
+      "HARD RULE: for any non-Latin target language the finished question",
+      "contains ZERO Latin letters (a-z) — transliterate every English word.",
+      "Only if the target language IS English do you leave it as plain English.",
       "Return only the translation.",
     ].join(" "),
     input: [
@@ -860,7 +901,7 @@ export async function translateQuestion(
 
   const english = result.questionTranslation.trim();
   return {
-    question: translated,
+    question: await toNativeScript(ctx, translated),
     translation:
       ctx.language.promptName === "English" || english === translated
         ? null
@@ -919,7 +960,7 @@ export async function rephraseQuestionSimpler(
 
   const english = result.questionTranslation.trim();
   return {
-    question: restated,
+    question: await toNativeScript(ctx, restated),
     translation:
       ctx.language.promptName === "English" || english === restated
         ? null

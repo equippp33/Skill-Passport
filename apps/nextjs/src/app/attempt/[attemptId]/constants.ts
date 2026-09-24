@@ -54,6 +54,18 @@ export const SILENCE_ADVANCE_SECONDS = 8;
  *  - 60s → auto-skip the question, unscored, and move on.
  * Any speech at all resets the ladder — it can never cut off someone talking.
  */
+/**
+ * The "would you like to add anything?" flow (streaming path only).
+ *
+ * On the first pause we don't submit — we ask if they want to add more and keep
+ * the mic open. If they stay quiet this long after the ask, the stashed answer
+ * is submitted on its own. Covers the short "add?" clip plus a few seconds of
+ * real listening. A reply of at most this many words is read as a decline
+ * ("no", "that's all") and dropped; anything longer is appended to the answer.
+ */
+export const ADD_WAIT_MS = 6000;
+export const ADD_DECLINE_MAX_WORDS = 3;
+
 export const SILENCE_CHECK_IN_SECONDS = 15;
 export const SILENCE_WARN_SECONDS = 30;
 export const SILENCE_SKIP_SECONDS = 60;

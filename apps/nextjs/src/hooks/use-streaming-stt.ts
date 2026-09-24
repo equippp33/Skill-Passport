@@ -110,10 +110,21 @@ export function useStreamingStt({
   onFinalTurn: (transcript: string) => void;
   /** The relay/upstream failed — caller should fall back to the batch path. */
   onFailed?: () => void;
-}): { partial: string; connected: boolean; silentSeconds: number | null } {
+}): {
+  partial: string;
+  connected: boolean;
+  silentSeconds: number | null;
+  /**
+   * Keep listening on the SAME turn after `onFinalTurn` fired — used by the
+   * "would you like to add?" flow: the pause is not the end, so re-arm and let
+   * the next pause fire `onFinalTurn` again with only what they add next.
+   */
+  rearm: () => void;
+} {
   const [partial, setPartial] = useState("");
   const [connected, setConnected] = useState(false);
   const [silentSeconds, setSilentSeconds] = useState<number | null>(null);
+  const rearmRef = useRef<() => void>(() => undefined);
 
   const onFinalTurnRef = useRef(onFinalTurn);
   const onSpeechStartRef = useRef(onSpeechStart);
@@ -162,6 +173,15 @@ export function useStreamingStt({
       if (firedTurn) return;
       firedTurn = true;
       onFinalTurnRef.current(finals.join(" ").replace(/\s+/g, " ").trim());
+    };
+
+    // Re-arm for the "add?" flow: allow another fire, and drop the finals so the
+    // NEXT fire carries only what they say from here on (their addition), not a
+    // repeat of the answer just submitted.
+    rearmRef.current = () => {
+      firedTurn = false;
+      finals.length = 0;
+      setPartial("");
     };
 
     const start = async () => {
@@ -322,5 +342,10 @@ export function useStreamingStt({
     };
   }, [stream, active, languageCode, relayUrl, turnSilenceMs, noAnswerStages]);
 
-  return { partial, connected, silentSeconds };
+  return {
+    partial,
+    connected,
+    silentSeconds,
+    rearm: () => rearmRef.current(),
+  };
 }

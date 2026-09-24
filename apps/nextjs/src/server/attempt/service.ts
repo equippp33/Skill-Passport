@@ -638,6 +638,7 @@ async function speakDoubtResponse(
       question: turn.questionTranslation ?? turn.question,
       doubtTranscript,
       languageName: language.promptName,
+      languageCode: language.code,
     });
   } catch (error) {
     console.error(
@@ -1216,6 +1217,25 @@ function nextPrimarySkill(priorTurns: InterviewTurn[]): WorkSkill | null {
   return asked < WORK_SKILL_COUNT ? WORK_SKILLS[asked]! : null;
 }
 
+/**
+ * Whether the turn the candidate just answered was the last skill.
+ *
+ * The look-ahead prefetches the NEXT primary question — inserting a real turn
+ * row — while the candidate is still on the current one. So `getTurns()` already
+ * contains a skill turn that has NOT been delivered yet, and counting it made
+ * the interview finish one skill early: the prefetched last skill (customer
+ * orientation) was inserted, counted as "asked", then never shown. Count only
+ * turns up to and including the one just answered, so a prefetched-ahead turn is
+ * still delivered rather than mistaken for an already-covered skill.
+ */
+function isLastSkillTurn(
+  turns: InterviewTurn[],
+  answeredTurnNumber: number,
+): boolean {
+  const delivered = turns.filter((t) => t.turnNumber <= answeredTurnNumber);
+  return !nextPrimarySkill(delivered);
+}
+
 /** 1-based position of a skill in the fixed framework order. */
 function skillNumberOf(skillId: WorkSkillId): number {
   return WORK_SKILL_IDS.indexOf(skillId) + 1;
@@ -1602,7 +1622,7 @@ async function advanceOrFinish(
   turn: InterviewTurn,
 ): Promise<void> {
   const turns = await getTurns(attempt.id);
-  if (!nextPrimarySkill(turns)) {
+  if (isLastSkillTurn(turns, turn.turnNumber)) {
     await settleScoring(attempt.id);
     await finaliseAttempt(attempt.id, interview);
     return;
@@ -1747,7 +1767,7 @@ async function handleAnsweredTurn(args: {
   // --- Ineligible primary, a follow-up answer, or a failed follow-up decision
   // above: advance fast, score after. --------------------------------------
   const turns = await getTurns(attempt.id);
-  const isLast = !nextPrimarySkill(turns);
+  const isLast = isLastSkillTurn(turns, turn.turnNumber);
 
   if (isLast) {
     // Score before the report is written, after any earlier background

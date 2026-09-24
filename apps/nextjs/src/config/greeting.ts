@@ -137,6 +137,26 @@ export const UNDERSTANDING_CHECK_BY_KEY: Record<InterviewLanguageKey, string> = 
 };
 
 /**
+ * Played once the candidate first pauses on an answer: a gentle invitation to
+ * add more before the interview moves on, so they are never cut off mid-thought.
+ * The mic stays open through it — if they add something it is captured; if they
+ * decline or stay quiet, the answer is submitted as-is. One per language.
+ */
+export const ADD_PROMPT_BY_KEY: Record<InterviewLanguageKey, string> = {
+  english: "Would you like to add anything?",
+  hindi: "कुछ और जोड़ना चाहेंगे?",
+  marathi: "आणखी काही सांगायचंय का?",
+  bengali: "আর কিছু যোগ করতে চান?",
+  gujarati: "બીજું કંઈ ઉમેરવું છે?",
+  kannada: "ಇನ್ನೇನಾದರೂ ಸೇರಿಸಬೇಕೆ?",
+  malayalam: "വേറെ എന്തെങ്കിലും ചേർക്കാനുണ്ടോ?",
+  odia: "ଆଉ କିଛି କହିବେ କି?",
+  punjabi: "ਹੋਰ ਕੁਝ ਦੱਸਣਾ ਚਾਹੋਗੇ?",
+  tamil: "வேறு ஏதாவது சொல்ல வேண்டுமா?",
+  telugu: "ఇంకేమైనా చెప్పాలనుకుంటున్నారా?",
+};
+
+/**
  * The opening question, per language.
  *
  * The candidate now picks their language before the interview, so the opener is
