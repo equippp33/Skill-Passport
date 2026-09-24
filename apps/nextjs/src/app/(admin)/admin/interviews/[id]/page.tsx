@@ -96,8 +96,13 @@ export default async function InterviewDetailPage({
                   </div>
                   <div
                     className="font-semibold text-accent tabular-nums"
-                    title="Estimated from provider list prices — see config/pricing.ts"
+                    title={
+                      details.devCosts.hasFloor
+                        ? "A floor: some interviews predate the meter, so their model usage is missing and the real total is higher"
+                        : "Estimated from provider list prices — see config/pricing.ts"
+                    }
                   >
+                    {details.devCosts.hasFloor ? "≥" : ""}
                     {details.devCosts.total}
                   </div>
                 </div>
@@ -105,10 +110,10 @@ export default async function InterviewDetailPage({
             ) : null}
             {details.devCosts ? (
               <p className="mt-1 text-xs text-content-muted">
-                across {details.devCosts.metered} metered interview
-                {details.devCosts.metered === 1 ? "" : "s"}
+                {details.devCosts.metered} interview
+                {details.devCosts.metered === 1 ? "" : "s"} fully metered
                 {details.devCosts.unmetered > 0
-                  ? ` · ${details.devCosts.unmetered} not metered`
+                  ? ` · ${details.devCosts.unmetered} priced from stored questions and answers only, so the model share is missing and the real total is higher`
                   : ""}
                 . Realtime STT is billed per second of audio, so the WebSocket
                 itself costs nothing beyond the STT line.

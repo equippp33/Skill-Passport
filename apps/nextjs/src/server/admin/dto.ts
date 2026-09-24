@@ -45,6 +45,16 @@ export interface AttemptSummary {
   devCost?: string | null;
   /** The same figure split by provider, for the card's tooltip. */
   devCostParts?: string | null;
+  /**
+   * True when `devCost` is a FLOOR rather than the whole bill.
+   *
+   * An interview that ran before the meter existed still has its question text
+   * and its recorded answers, so speech can be priced exactly — but nothing
+   * recorded the model tokens, which are the larger share. Showing the speech
+   * total alone as if it were the cost would understate it roughly threefold,
+   * so the card marks it "≥" instead.
+   */
+  devCostIsFloor?: boolean;
   createdAt: Date;
 }
 
@@ -72,5 +82,7 @@ export interface InterviewDetails {
     total: string;
     metered: number;
     unmetered: number;
+    /** Some of the total is a floor — see `devCostIsFloor`. */
+    hasFloor: boolean;
   };
 }

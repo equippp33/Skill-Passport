@@ -114,7 +114,11 @@ export function CandidateCard({
           <span
             title={
               attempt.devCost
-                ? (attempt.devCostParts ?? "Estimated provider cost")
+                ? `${attempt.devCostParts ?? "Estimated provider cost"}${
+                    attempt.devCostIsFloor
+                      ? " — speech only; model usage was not recorded for this interview, so the real cost is higher"
+                      : ""
+                  }`
                 : "No usage recorded for this interview"
             }
             className={`absolute bottom-2 left-2 rounded-md px-2 py-1 text-xs font-semibold tabular-nums backdrop-blur-sm ${
@@ -123,7 +127,9 @@ export function CandidateCard({
                 : "bg-black/45 text-white/50"
             }`}
           >
-            {attempt.devCost ?? "₹—"}
+            {attempt.devCost
+              ? `${attempt.devCostIsFloor ? "≥" : ""}${attempt.devCost}`
+              : "₹—"}
           </span>
         ) : null}
 

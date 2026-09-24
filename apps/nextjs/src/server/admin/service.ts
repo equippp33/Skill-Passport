@@ -307,14 +307,19 @@ export async function getInterviewDetails(
   const { interview, attempts } = found;
   const attemptIds = attempts.map((a) => a.id);
   const isDev = env.NODE_ENV === "development";
-  const [spokenByAttempt, thumbnailByAttempt, sttMinutesByAttempt] =
-    await Promise.all([
-      getSpokenLanguages(attemptIds),
-      getThumbnailVideos(attemptIds),
-      // Only in development, and only because the cost badge needs it — this
-      // is an extra aggregate over every clip in the interview.
-      isDev ? getSttMinutes(attemptIds) : Promise.resolve(new Map()),
-    ]);
+  const [
+    spokenByAttempt,
+    thumbnailByAttempt,
+    sttMinutesByAttempt,
+    questionCharsByAttempt,
+  ] = await Promise.all([
+    getSpokenLanguages(attemptIds),
+    getThumbnailVideos(attemptIds),
+    // Only in development, and only because the cost badge needs it — these
+    // are extra aggregates over every clip and turn in the interview.
+    isDev ? getSttMinutes(attemptIds) : Promise.resolve(new Map()),
+    isDev ? getQuestionChars(attemptIds) : Promise.resolve(new Map()),
+  ]);
 
   /**
    * The running total for this link, split by provider. Development only.
@@ -335,12 +340,49 @@ export async function getInterviewDetails(
       env.AI_PROVIDER,
     );
 
+  /**
+   * The least this interview can have cost, for one the meter never saw.
+   *
+   * Speech can be priced exactly after the fact: the question text is stored
+   * and this branch synthesises one clip per question, so the characters are
+   * known, and the answers carry their own measured durations. Only the model
+   * tokens are unrecoverable — and they are the larger share, so this is a
+   * floor and is labelled as one rather than passed off as the total.
+   */
+  const floorOf = (a: (typeof attempts)[number]) =>
+    interviewCost(
+      {
+        sttMinutes: sttMinutesByAttempt.get(a.id) ?? 0,
+        ttsCharacters: questionCharsByAttempt.get(a.id) ?? 0,
+        llmInputTokens: 0,
+        llmOutputTokens: 0,
+      },
+      env.AI_PROVIDER,
+    );
+
+  /** Metered where we can, floored where we cannot, and which is which. */
+  const readingFor = (a: (typeof attempts)[number]) => {
+    if (!isDev) return { cost: undefined, parts: undefined, floor: undefined };
+    const metered = wasMetered(a);
+    const c = metered ? costOf(a) : floorOf(a);
+    if (!metered && c.total === 0) {
+      return { cost: null, parts: null, floor: undefined };
+    }
+    return {
+      cost: formatInr(c.total),
+      parts: `OpenAI ${formatInr(c.llm)} · TTS ${formatInr(
+        c.tts,
+      )} · STT ${formatInr(c.stt)}`,
+      floor: metered ? undefined : true,
+    };
+  };
+
   const metered = isDev ? attempts.filter((a) => wasMetered(a)) : [];
   const devCosts = isDev
     ? (() => {
-        const sum = metered.reduce(
+        const sum = attempts.reduce(
           (acc, a) => {
-            const c = costOf(a);
+            const c = wasMetered(a) ? costOf(a) : floorOf(a);
             return {
               llm: acc.llm + c.llm,
               tts: acc.tts + c.tts,
@@ -357,6 +399,9 @@ export async function getInterviewDetails(
           total: formatInr(sum.total),
           metered: metered.length,
           unmetered: attempts.length - metered.length,
+          // True when any part of the total came from a floor, so the header
+          // can say "at least" rather than state it as the bill.
+          hasFloor: metered.length < attempts.length,
         };
       })()
     : undefined;
@@ -383,21 +428,9 @@ export async function getInterviewDetails(
       awayCount: attempt.awayCount,
       // Null in production, and null when the meter did not cover this
       // interview — see `wasMetered`. A zero would be a claim that it was free.
-      devCostParts: !isDev
-        ? undefined
-        : wasMetered(attempt)
-          ? (() => {
-              const c = costOf(attempt);
-              return `OpenAI ${formatInr(c.llm)} · TTS ${formatInr(
-                c.tts,
-              )} · STT ${formatInr(c.stt)}`;
-            })()
-          : null,
-      devCost: !isDev
-        ? undefined
-        : wasMetered(attempt)
-          ? formatInr(costOf(attempt).total)
-          : null,
+      devCost: readingFor(attempt).cost,
+      devCostParts: readingFor(attempt).parts,
+      devCostIsFloor: readingFor(attempt).floor,
       createdAt: attempt.createdAt,
     })),
   };
@@ -432,6 +465,34 @@ async function getSttMinutes(
     .groupBy(interviewAudioTable.attemptId);
 
   for (const row of rows) byAttempt.set(row.attemptId, row.ms / 60000);
+  return byAttempt;
+}
+
+/**
+ * Characters of question text per attempt, for costing interviews the meter
+ * never saw.
+ *
+ * Sound only because this branch synthesises exactly one clip per question —
+ * verified against stored clips. On older data, where fixed lines were voiced
+ * per attempt, this understates what was actually spoken, which is why every
+ * figure derived from it is presented as a floor.
+ */
+async function getQuestionChars(
+  attemptIds: string[],
+): Promise<Map<string, number>> {
+  const byAttempt = new Map<string, number>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewTurnsTable.attemptId,
+      chars: sql<number>`coalesce(sum(length(${interviewTurnsTable.question})), 0)::int`,
+    })
+    .from(interviewTurnsTable)
+    .where(inArray(interviewTurnsTable.attemptId, attemptIds))
+    .groupBy(interviewTurnsTable.attemptId);
+
+  for (const row of rows) byAttempt.set(row.attemptId, row.chars);
   return byAttempt;
 }
 
