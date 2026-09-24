@@ -120,7 +120,9 @@ export const candidateDetailsSchema = z.object({
     .string()
     .trim()
     .max(128)
-    .optional()
-    .or(z.literal(""))
+    // nullish, NOT just optional: a plain link omits the hidden field entirely,
+    // so `formData.get("studentId")` is null (not undefined) — `.optional()`
+    // alone rejects null and would fail every ordinary candidate's submit.
+    .nullish()
     .transform((v) => (v && v.length > 0 ? v : null)),
 });
