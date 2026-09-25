@@ -909,6 +909,16 @@ const FOLLOWUP_MIN_SCORE = 1;
 const MAX_FOLLOWUPS_PER_INTERVIEW = 3;
 
 /**
+ * Floor on follow-ups per interview. Real freshers mostly give substantive
+ * answers, so the thin-answer path almost never fires and interviews were
+ * ending with ZERO probes. Once the remaining primary skills are down to
+ * exactly the number of probes still owed, the follow-up decision is FORCED —
+ * the model still writes the probe from what the candidate said; we only insist
+ * one happens. Best-effort: an empty / skipped final answer can still slip it.
+ */
+const MIN_FOLLOWUPS_PER_INTERVIEW = 2;
+
+/**
  * How short an answer must be to be worth pausing on.
  *
  * The follow-up decision is a model call on the critical path, so running it on
@@ -1692,30 +1702,49 @@ async function handleAnsweredTurn(args: {
 }): Promise<void> {
   const { attempt, interview, turn, transcript, languageCode } = args;
 
-  // A follow-up is considered ONLY for a primary skill turn whose answer is
-  // thin — a bare / one-word reply that a probe is actually for. Every other
-  // answer (substantive, a follow-up's own answer, or a skip) takes the fast
-  // path below: advance instantly on the prefetched next question and score in
-  // the background, with no model call between questions.
   const skillId = turn.skillId as WorkSkillId | null;
-  const eligible = !turn.isFollowUp && !!skillId && isThinAnswer(transcript);
+  const priorTurns = await db.query.interviewTurnsTable.findMany({
+    where: and(
+      eq(interviewTurnsTable.attemptId, attempt.id),
+      lt(interviewTurnsTable.turnNumber, turn.turnNumber),
+    ),
+    orderBy: asc(interviewTurnsTable.turnNumber),
+  });
+  const followUpsSoFar = priorTurns.filter((t) => t.isFollowUp).length;
 
-  // --- Thin answer on a primary: score AND decide the follow-up in one call. -
-  // This is the one path with a provider call on the critical path (the
-  // decision has to see the answer), so a failure here — even after its own
-  // retries — must not strand the candidate on an error screen. It falls
-  // through to the ordinary fast path below instead: rare, and costs at most
-  // one skipped follow-up, never a stuck interview.
+  // A follow-up runs the decision on the critical path (it has to see the
+  // answer), so we don't do it on every turn. Two triggers:
+  //  - the answer is THIN — a bare / one-word reply a probe is actually for;
+  //  - the FLOOR is at risk — the remaining primary skills are down to exactly
+  //    the number of probes still owed, so this one is forced to guarantee the
+  //    minimum (see MIN_FOLLOWUPS_PER_INTERVIEW). AI still writes the probe.
+  // Everything else takes the fast path: advance on the prefetched next
+  // question and score in the background, with no model call between questions.
+  const primariesBefore = primaryTurns(priorTurns).length;
+  const followUpsOwed = MIN_FOLLOWUPS_PER_INTERVIEW - followUpsSoFar;
+  const remainingPrimaries = WORK_SKILL_COUNT - primariesBefore; // incl. this turn
+  const underCap = followUpsSoFar < MAX_FOLLOWUPS_PER_INTERVIEW;
+  const mustFollowUp =
+    !turn.isFollowUp &&
+    !!skillId &&
+    underCap &&
+    followUpsOwed > 0 &&
+    remainingPrimaries <= followUpsOwed;
+  const eligible =
+    !turn.isFollowUp &&
+    !!skillId &&
+    underCap &&
+    (isThinAnswer(transcript) || mustFollowUp);
+
+  // --- Score AND decide the follow-up in one call. --------------------------
+  // This is the one path with a provider call on the critical path, so a
+  // failure here — even after its own retries — must not strand the candidate
+  // on an error screen. It falls through to the ordinary fast path below
+  // instead: rare, and costs at most one skipped follow-up, never a stuck
+  // interview.
   if (eligible && skillId) {
     try {
       const ctx = await buildContext(attempt, interview);
-      const priorTurns = await db.query.interviewTurnsTable.findMany({
-        where: and(
-          eq(interviewTurnsTable.attemptId, attempt.id),
-          lt(interviewTurnsTable.turnNumber, turn.turnNumber),
-        ),
-        orderBy: asc(interviewTurnsTable.turnNumber),
-      });
 
       const evaluation = await scoreAndMaybeFollowUp({
         ctx,
@@ -1724,23 +1753,21 @@ async function handleAnsweredTurn(args: {
         currentQuestion: turn.question,
         answerTranscript: transcript,
         skillNumber: skillNumberOf(skillId),
+        force: mustFollowUp,
       });
 
       await writeScoredTurn(turn.id, transcript, languageCode, evaluation);
 
       // Only dig deeper into a REAL answer. A skip, "I don't know", an evasive
       // reply, or silence-noise that slipped past the earlier checks all score
-      // low — and following those up with "anything to add?" is exactly the
-      // behaviour candidates hated. Gate the follow-up on a scorable answer, no
-      // matter what the model put in nextQuestion.
-      // Bounded: at most one follow-up per skill (a follow-up never spawns
-      // another), and no more than MAX_FOLLOWUPS_PER_INTERVIEW across the whole
-      // interview, so a run of thin answers can't turn every skill into two.
-      const followUpsSoFar = priorTurns.filter((t) => t.isFollowUp).length;
+      // low — and following those up is exactly the behaviour candidates hated.
+      // Gate on a scorable answer, EXCEPT when forced to meet the floor (there
+      // the model already returns null for a genuine non-answer). Bounded by
+      // MAX_FOLLOWUPS_PER_INTERVIEW so the interview can't balloon.
       const followUp = evaluation.nextQuestion?.trim();
       if (
         followUp &&
-        evaluation.score >= FOLLOWUP_MIN_SCORE &&
+        (mustFollowUp || evaluation.score >= FOLLOWUP_MIN_SCORE) &&
         followUpsSoFar < MAX_FOLLOWUPS_PER_INTERVIEW
       ) {
         await deliverFollowUp(
