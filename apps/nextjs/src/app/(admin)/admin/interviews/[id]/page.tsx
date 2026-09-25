@@ -79,7 +79,7 @@ export default async function InterviewDetailPage({
             {details.devCosts ? (
               <div className="mt-3 inline-flex flex-wrap items-stretch gap-px overflow-hidden rounded-lg border border-border-subtle bg-border-subtle text-sm">
                 {[
-                  ["OpenAI", details.devCosts.openai],
+                  [details.devCosts.modelLabel, details.devCosts.openai],
                   ["TTS", details.devCosts.tts],
                   ["STT", details.devCosts.stt],
                 ].map(([label, value]) => (

@@ -360,6 +360,9 @@ export async function getInterviewDetails(
       env.AI_PROVIDER,
     );
 
+  /** Whoever is running the brain today. See `AI_PROVIDER`. */
+  const modelLabel = env.AI_PROVIDER === "sarvam" ? "Sarvam" : "OpenAI";
+
   /** Metered where we can, floored where we cannot, and which is which. */
   const readingFor = (a: (typeof attempts)[number]) => {
     if (!isDev) return { cost: undefined, parts: undefined, floor: undefined };
@@ -370,7 +373,7 @@ export async function getInterviewDetails(
     }
     return {
       cost: formatInr(c.total),
-      parts: `OpenAI ${formatInr(c.llm)} · TTS ${formatInr(
+      parts: `${modelLabel} ${formatInr(c.llm)} · TTS ${formatInr(
         c.tts,
       )} · STT ${formatInr(c.stt)}`,
       floor: metered ? undefined : true,
@@ -393,6 +396,10 @@ export async function getInterviewDetails(
           { llm: 0, tts: 0, stt: 0, total: 0 },
         );
         return {
+          // Named by whichever provider is actually running the brain — the
+          // label used to say OpenAI whatever `AI_PROVIDER` was set to, which
+          // meant it read "OpenAI" while quoting Sarvam's rates.
+          modelLabel: env.AI_PROVIDER === "sarvam" ? "Sarvam" : "OpenAI",
           openai: formatInr(sum.llm),
           tts: formatInr(sum.tts),
           stt: formatInr(sum.stt),
@@ -439,10 +446,20 @@ export async function getInterviewDetails(
 /**
  * Minutes of candidate audio per attempt, for the development cost badge.
  *
- * Read from the recorded answer clips rather than from a counter, because
- * Sarvam bills speech-to-text per second of audio and the streaming path never
- * makes a countable request — it holds a socket open. The clips are stored
- * whichever transcription path ran, so this stays correct either way.
+ * Read from recordings rather than a counter, because Sarvam bills
+ * speech-to-text per second of audio and the streaming path never makes a
+ * countable request — it holds a socket open, so there is nothing to increment.
+ *
+ * The VIDEO is the source, not the audio clip. Since realtime streaming
+ * replaced batch transcription, answer audio is no longer archived at all —
+ * recent interviews have zero `answer` rows — while the webcam recording still
+ * runs for every answer on every path and carries a measured duration. It also
+ * happens to be the better match: the socket streams for as long as the
+ * candidate has the microphone, which is the length of the recording.
+ *
+ * The `answer` clips remain as a fallback so interviews from the batch era
+ * still price correctly. Whichever source is used, only one is counted, so a
+ * turn that produced both cannot be billed twice.
  */
 async function getSttMinutes(
   attemptIds: string[],
@@ -453,18 +470,28 @@ async function getSttMinutes(
   const rows = await db
     .select({
       attemptId: interviewAudioTable.attemptId,
+      kind: interviewAudioTable.kind,
       ms: sql<number>`coalesce(sum(${interviewAudioTable.durationMs}), 0)::int`,
     })
     .from(interviewAudioTable)
     .where(
       and(
         inArray(interviewAudioTable.attemptId, attemptIds),
-        eq(interviewAudioTable.kind, "answer"),
+        inArray(interviewAudioTable.kind, ["answer_video", "answer"]),
       ),
     )
-    .groupBy(interviewAudioTable.attemptId);
+    .groupBy(interviewAudioTable.attemptId, interviewAudioTable.kind);
 
-  for (const row of rows) byAttempt.set(row.attemptId, row.ms / 60000);
+  // Video first; audio only where an attempt has no video at all.
+  const video = new Map<string, number>();
+  const audio = new Map<string, number>();
+  for (const row of rows) {
+    (row.kind === "answer_video" ? video : audio).set(row.attemptId, row.ms);
+  }
+  for (const id of attemptIds) {
+    const ms = video.get(id) ?? audio.get(id) ?? 0;
+    if (ms > 0) byAttempt.set(id, ms / 60000);
+  }
   return byAttempt;
 }
 

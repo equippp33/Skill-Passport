@@ -76,6 +76,8 @@ export interface InterviewDetails {
    * cost IS the STT line; a relay connection of its own costs nothing.
    */
   devCosts?: {
+    /** "Sarvam" or "OpenAI" — whichever `AI_PROVIDER` selects. */
+    modelLabel: string;
     openai: string;
     tts: string;
     stt: string;
