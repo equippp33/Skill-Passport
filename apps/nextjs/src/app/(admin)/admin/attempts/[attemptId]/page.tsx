@@ -17,6 +17,7 @@ import { safeReturnTo } from "~/lib/return-to";
 import { appUrl } from "~/server/app-url";
 import { DownloadReport } from "./download-report";
 import { RescoreReport } from "./rescore-report";
+import { ResendResult } from "./resend-result";
 
 export const metadata: Metadata = { title: "Candidate" };
 export const dynamic = "force-dynamic";
@@ -73,6 +74,12 @@ export default async function AdminAttemptPage({
           </Link>
 
           <div data-print-hide className="flex items-center gap-2">
+            {attempt.status === "completed" && attempt.externalStudentId ? (
+              <ResendResult
+                attemptId={attempt.id}
+                delivered={attempt.resultDeliveredAt !== null}
+              />
+            ) : null}
             {attempt.status === "completed" ? (
               <RescoreReport attemptId={attempt.id} />
             ) : null}
@@ -83,6 +90,23 @@ export default async function AdminAttemptPage({
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">
           {attempt.candidateName}
         </h1>
+
+        {/* Integration candidates only: whether the result reached the partner
+            webhook. Others never trigger a webhook, so it says nothing. */}
+        {attempt.externalStudentId ? (
+          <p
+            data-print-hide
+            className={`mt-1 text-sm ${
+              attempt.resultDeliveredAt
+                ? "text-emerald-700"
+                : "text-amber-700"
+            }`}
+          >
+            {attempt.resultDeliveredAt
+              ? `Result delivered to partner · ${formatDate(attempt.resultDeliveredAt)}`
+              : "Result not yet delivered to partner"}
+          </p>
+        ) : null}
 
         {/* On screen the interview is named by the back link, which is not
             printed — so the document says for itself what it is. */}

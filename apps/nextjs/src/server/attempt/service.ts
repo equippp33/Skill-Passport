@@ -45,6 +45,7 @@ import {
 } from "~/server/services/openai";
 import type { InterviewContext, PriorTurn } from "~/server/services/openai";
 import { deliverResult } from "~/server/integrations/result-webhook";
+import { env } from "~/env";
 import { generateSpeech, transcribeAudio } from "~/server/services/sarvam";
 import { timed } from "~/server/services/timing";
 import { loadAudioBytes, storeAudio } from "~/server/interview/audio";
@@ -1912,6 +1913,56 @@ async function finaliseAttempt(
       }`,
     );
   }
+}
+
+/**
+ * Re-send a finished attempt's result to the partner webhook, from STORED data.
+ *
+ * For integration candidates whose result never reached the partner — the
+ * webhook URL was added only after they finished, or an earlier delivery
+ * failed. Rebuilds the exact payload `finaliseAttempt` sends (no re-scoring, no
+ * model calls) and re-runs delivery, which re-stamps `resultDeliveredAt` and
+ * re-uploads the report PDF on success.
+ */
+export async function resendResult(
+  attemptId: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  const attempt = await reload(attemptId);
+  if (!attempt.externalStudentId) {
+    return {
+      ok: false,
+      reason: "This candidate did not come through a partner link.",
+    };
+  }
+  if (!env.INTEGRATION_RESULT_WEBHOOK_URL) {
+    return { ok: false, reason: "No partner webhook URL is configured." };
+  }
+
+  const interview = await db.query.interviewsTable.findFirst({
+    where: eq(interviewsTable.id, attempt.interviewId),
+  });
+  if (!interview) {
+    return { ok: false, reason: "That interview could not be found." };
+  }
+
+  const turns = await getTurns(attemptId);
+  const delivered = await deliverResult({
+    attempt,
+    interview,
+    turns,
+    skillScores: aggregateSkillScores(turns),
+    overallScore: attempt.overallScore,
+    summary: attempt.summary,
+    strengths: attempt.strengths ?? [],
+    improvements: attempt.improvements ?? [],
+  });
+
+  return delivered
+    ? { ok: true }
+    : {
+        ok: false,
+        reason: "The partner webhook did not accept the result — see the logs.",
+      };
 }
 
 /**

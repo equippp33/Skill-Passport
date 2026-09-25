@@ -36,6 +36,7 @@ import {
   SILENCE_SKIP_SECONDS,
   ADD_WAIT_MS,
   ADD_DECLINE_MAX_WORDS,
+  ADD_MAX_ANSWER_MS,
 } from "./constants";
 
 interface TurnView {
@@ -444,6 +445,11 @@ export function ActiveInterview({
   const addAskedRef = useRef(false);
   const pendingAnswerRef = useRef("");
   const addTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // When the candidate first and last had partial speech on THIS answer — the
+  // span between them is how long they actually spoke, used to skip the "add?"
+  // offer on answers that were already long enough.
+  const speechStartRef = useRef<number | null>(null);
+  const speechEndRef = useRef<number | null>(null);
 
   const clearAddTimer = useCallback(() => {
     if (addTimerRef.current) {
@@ -455,6 +461,8 @@ export function ActiveInterview({
   const resetAddState = useCallback(() => {
     addAskedRef.current = false;
     pendingAnswerRef.current = "";
+    speechStartRef.current = null;
+    speechEndRef.current = null;
     clearAddTimer();
   }, [clearAddTimer]);
 
@@ -812,9 +820,17 @@ export function ActiveInterview({
       const text = transcript.trim();
       if (!text) return;
 
-      // First pause: offer to add, keep listening, fall back to submitting the
-      // answer if they stay quiet.
+      // First pause: only offer to add if the answer was SHORT — otherwise they
+      // clearly said their piece, so submit without nagging.
       if (!addAskedRef.current) {
+        const spokenMs =
+          speechStartRef.current !== null && speechEndRef.current !== null
+            ? speechEndRef.current - speechStartRef.current
+            : 0;
+        if (spokenMs >= ADD_MAX_ANSWER_MS) {
+          await finalizeStreamedAnswer(text);
+          return;
+        }
         addAskedRef.current = true;
         pendingAnswerRef.current = text;
         playAdd();
@@ -948,13 +964,17 @@ export function ActiveInterview({
     streamRearmRef.current = streaming.rearm;
   }, [streaming.rearm]);
 
-  // While the "add anything?" offer is open, a fallback timer submits the
-  // stashed answer if the candidate stays quiet. The instant they actually
-  // start speaking (a partial transcript appears), cancel it — their addition
-  // is coming, and only their next real pause should end the turn. Without this
-  // the fixed timer fires mid-sentence and cuts them off.
+  // Track how long the candidate is actually speaking (first partial → last
+  // partial), and while the "add anything?" offer is open, cancel the fallback
+  // timer the instant they start speaking again — their addition is coming, and
+  // only their next real pause should end the turn. Without the cancel the fixed
+  // timer fires mid-sentence and cuts them off.
   useEffect(() => {
-    if (streaming.partial && addTimerRef.current) clearAddTimer();
+    if (!streaming.partial) return;
+    const now = Date.now();
+    if (speechStartRef.current === null) speechStartRef.current = now;
+    speechEndRef.current = now;
+    if (addTimerRef.current) clearAddTimer();
   }, [streaming.partial, clearAddTimer]);
 
   // Elapsed silence (candidate has said nothing yet), from whichever detector

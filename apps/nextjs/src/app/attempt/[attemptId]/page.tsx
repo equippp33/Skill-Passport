@@ -13,6 +13,7 @@ import { getTurns } from "~/server/attempt/service";
 import { uiMessages } from "~/server/language";
 import { isOpenAIConfigured } from "~/server/services/openai";
 import { uuidSchema } from "~/server/interview/validation";
+import { env } from "~/env";
 import { ActiveInterview } from "./active-interview";
 import { Instructions } from "./instructions";
 
@@ -81,9 +82,15 @@ export default async function AttemptPage({
   // The language is fixed at the start, so it is always set here.
   const languageKey = (attempt.language ?? "english") as InterviewLanguageKey;
   const languageCode = resolveInterviewLanguage(languageKey).code;
+  // The fixed clips are cached hard in the browser (immutable), but their voice
+  // depends on the server-side speaker, which is NOT in the URL. So a voice
+  // change would keep serving the old cached clip. Putting the speaker in the
+  // URL makes it part of the cache key: switch voices and the browser fetches
+  // fresh instead of replaying the previous speaker.
+  const speaker = env.SARVAM_TTS_SPEAKER;
   // One URL per rotating filler variant, so the client can vary them per turn.
   const fillerUrls = FILLERS_BY_KEY[languageKey].map(
-    (_, i) => `/api/filler/${languageKey}?v=${i}`,
+    (_, i) => `/api/filler/${languageKey}?v=${i}&s=${speaker}`,
   );
 
   return (
@@ -99,8 +106,8 @@ export default async function AttemptPage({
         initialQuestionNumber={attempt.currentQuestionNumber}
         initialAttemptStatus={attempt.status}
         fillerUrls={fillerUrls}
-        checkUrl={`/api/check/${languageKey}`}
-        addUrl={`/api/add/${languageKey}`}
+        checkUrl={`/api/check/${languageKey}?s=${speaker}`}
+        addUrl={`/api/add/${languageKey}?s=${speaker}`}
         initialTurn={
           current
             ? {

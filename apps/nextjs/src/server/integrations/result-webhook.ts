@@ -101,10 +101,15 @@ export function buildResultPayload(
   };
 }
 
-export async function deliverResult(args: ResultPayloadArgs): Promise<void> {
+/**
+ * @returns true when the partner accepted the result, false otherwise (no
+ * webhook configured, not an integration candidate, or every attempt failed).
+ * `finaliseAttempt` ignores it; the admin resend uses it to report back.
+ */
+export async function deliverResult(args: ResultPayloadArgs): Promise<boolean> {
   const url = env.INTEGRATION_RESULT_WEBHOOK_URL;
-  if (!url) return; // No partner webhook configured — nothing to deliver.
-  if (!args.attempt.externalStudentId) return; // Not an integration candidate.
+  if (!url) return false; // No partner webhook configured — nothing to deliver.
+  if (!args.attempt.externalStudentId) return false; // Not an integration candidate.
 
   // Render the report to PDF, store it in R2, and hand the partner a link to
   // it in the payload. Best-effort: if the render or upload fails, the result
@@ -143,7 +148,12 @@ export async function deliverResult(args: ResultPayloadArgs): Promise<void> {
           .update(interviewAttemptsTable)
           .set({ resultDeliveredAt: new Date() })
           .where(eq(interviewAttemptsTable.id, args.attempt.id));
-        return;
+        // Log host + whether the report link made it — NOT the signed URL
+        // itself, which is a live 7-day link to a PII report.
+        console.log(
+          `[integration] result delivered attempt=${args.attempt.id} student=${args.attempt.externalStudentId} -> ${new URL(url).host} (report ${reportUrl ? "included" : "MISSING"})`,
+        );
+        return true;
       }
 
       // 4xx (other than 429) is a deterministic rejection — retrying will not
@@ -152,7 +162,7 @@ export async function deliverResult(args: ResultPayloadArgs): Promise<void> {
         console.error(
           `[integration] result webhook rejected attempt=${args.attempt.id} status=${res.status}`,
         );
-        return;
+        return false;
       }
       console.warn(
         `[integration] result webhook ${res.status} (try ${attemptNo}/${MAX_ATTEMPTS}) attempt=${args.attempt.id}`,
@@ -173,4 +183,5 @@ export async function deliverResult(args: ResultPayloadArgs): Promise<void> {
   console.error(
     `[integration] result webhook FAILED after ${MAX_ATTEMPTS} tries attempt=${args.attempt.id} (left undelivered)`,
   );
+  return false;
 }

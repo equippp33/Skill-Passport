@@ -66,6 +66,14 @@ export const SILENCE_ADVANCE_SECONDS = 8;
 export const ADD_WAIT_MS = 6000;
 export const ADD_DECLINE_MAX_WORDS = 3;
 
+/**
+ * Only offer "add anything?" when the answer was SHORT — a barely-there reply
+ * that probably has more behind it. If they actually spoke for longer than this
+ * (measured from the first to the last partial transcript), they clearly said
+ * their piece, so submit and move on without nagging.
+ */
+export const ADD_MAX_ANSWER_MS = 3000;
+
 export const SILENCE_CHECK_IN_SECONDS = 15;
 export const SILENCE_WARN_SECONDS = 30;
 export const SILENCE_SKIP_SECONDS = 60;

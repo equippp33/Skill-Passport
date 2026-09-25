@@ -8,7 +8,7 @@ import {
   requireAdmin,
   setInterviewOpen,
 } from "./service";
-import { rescoreAttempt } from "~/server/attempt/service";
+import { rescoreAttempt, resendResult } from "~/server/attempt/service";
 import type { CreateInterviewResult } from "./dto";
 
 /**
@@ -71,6 +71,33 @@ export async function rescoreAttemptAction(
     return {
       ok: false,
       error: "Could not re-score this report. Please try again.",
+    };
+  }
+}
+
+/**
+ * Re-send a finished result to the partner webhook (integration candidates only).
+ * For results that never reached the partner — the webhook was configured after
+ * the interview, or an earlier delivery failed.
+ */
+export async function resendResultAction(
+  attemptId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const admin = await requireAdmin("/admin");
+
+  const found = await getAttemptForAdmin(admin.id, attemptId);
+  if (!found) return { ok: false, error: "That report could not be found." };
+
+  try {
+    const result = await resendResult(attemptId);
+    if (!result.ok) return { ok: false, error: result.reason };
+    revalidatePath(`/admin/attempts/${attemptId}`);
+    return { ok: true };
+  } catch (error) {
+    console.error("[admin] resend result failed", error);
+    return {
+      ok: false,
+      error: "Could not resend the result. Please try again.",
     };
   }
 }
