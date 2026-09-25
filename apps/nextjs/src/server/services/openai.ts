@@ -718,6 +718,13 @@ export async function scoreAndMaybeFollowUp(args: {
   answerTranscript: string;
   /** 1-based skill number, for "question N of …" framing only. */
   skillNumber: number;
+  /**
+   * Insist on a follow-up. Used to guarantee a minimum per interview: the
+   * caller has decided this answer MUST be probed, so the model asks one unless
+   * the answer is genuinely empty / a skip / a flat refusal. Otherwise the model
+   * is free to return null.
+   */
+  force?: boolean;
 }): Promise<TurnEvaluation> {
   const {
     ctx,
@@ -726,7 +733,40 @@ export async function scoreAndMaybeFollowUp(args: {
     currentQuestion,
     answerTranscript,
     skillNumber,
+    force = false,
   } = args;
+
+  // The follow-up instruction: normally "probe only when it rescues a thin
+  // answer"; when forced, "ask one that digs into what they said, unless there
+  // is nothing to build on".
+  const followUpInstruction = force
+    ? [
+        `Score this answer for ${currentSkill.label} only, then ask ONE`,
+        `follow-up on the SAME skill that digs into something SPECIFIC the`,
+        `candidate just said — a concrete example, or the next step they would`,
+        `take. Write it in ${ctx.language.promptName} (English rendering in`,
+        `questionTranslation).`,
+        `Set nextQuestion to null ONLY if the answer was empty, a skip, or a`,
+        `flat refusal with nothing to build on — otherwise you MUST ask one.`,
+        `Never a hollow "is there anything you'd like to add?".`,
+        `Set interviewComplete to false.`,
+      ]
+    : [
+        `Score this answer for ${currentSkill.label} only, then decide whether ONE`,
+        `follow-up on the SAME skill is truly needed. DEFAULT TO null — most`,
+        `answers get NO follow-up. A good interview probes only now and then, not`,
+        `after every answer. When you do ask one, write it in`,
+        `${ctx.language.promptName} (English rendering in questionTranslation).`,
+        `- Ask a follow-up ONLY to rescue a GENUINE attempt that is too short or`,
+        `  vague to score fairly — a one-word or one-line answer that clearly has`,
+        `  more behind it. Give them a single chance to show the skill: a concrete`,
+        `  example, or the next step they would take.`,
+        `- Return null for everything else — a clear or reasonably complete answer,`,
+        `  a strong answer, or an empty / off-topic / refusal / "I don't know" /`,
+        `  skip. Never follow up just because you can, and never a hollow "is there`,
+        `  anything you'd like to add?".`,
+        `Set interviewComplete to false.`,
+      ];
 
   const evaluation = await requestStructured({
     instructions: interviewerRules(ctx),
@@ -747,20 +787,7 @@ export async function scoreAndMaybeFollowUp(args: {
         answerTranscript,
       )}`,
       "",
-      `Score this answer for ${currentSkill.label} only, then decide whether ONE`,
-      `follow-up on the SAME skill is truly needed. DEFAULT TO null — most`,
-      `answers get NO follow-up. A good interview probes only now and then, not`,
-      `after every answer. When you do ask one, write it in`,
-      `${ctx.language.promptName} (English rendering in questionTranslation).`,
-      `- Ask a follow-up ONLY to rescue a GENUINE attempt that is too short or`,
-      `  vague to score fairly — a one-word or one-line answer that clearly has`,
-      `  more behind it. Give them a single chance to show the skill: a concrete`,
-      `  example, or the next step they would take.`,
-      `- Return null for everything else — a clear or reasonably complete answer,`,
-      `  a strong answer, or an empty / off-topic / refusal / "I don't know" /`,
-      `  skip. Never follow up just because you can, and never a hollow "is there`,
-      `  anything you'd like to add?".`,
-      `Set interviewComplete to false.`,
+      ...followUpInstruction,
     ].join("\n"),
     schemaName: "interview_turn",
     jsonSchema: TURN_JSON_SCHEMA,
