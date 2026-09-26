@@ -7,6 +7,7 @@ import { Alert, Button, Progress } from "~/components/ui";
 import { CameraPreview } from "~/components/camera-preview";
 import { VoiceOrb } from "~/components/voice-orb";
 import type { OrbState } from "~/components/voice-orb";
+import { SubmittingOverlay } from "./submitting-overlay";
 import { Waveform } from "./waveform";
 import { t } from "~/config/messages";
 import type { Messages } from "~/config/messages";
@@ -98,7 +99,9 @@ export function ActiveInterview({
   const [turn, setTurn] = useState<TurnView | null>(initialTurn);
   const [questionNumber, setQuestionNumber] = useState(initialQuestionNumber);
   // Progress is by skill, not turn: a follow-up keeps the same skill number.
-  const [skillNumber, setSkillNumber] = useState(Math.max(1, initialSkillNumber));
+  const [skillNumber, setSkillNumber] = useState(
+    Math.max(1, initialSkillNumber),
+  );
   const [phase, setPhase] = useState<Phase>(
     initialAttemptStatus === "processing" ||
       initialTurn?.status === "processing"
@@ -294,6 +297,28 @@ export function ActiveInterview({
     { turnNumber: number; video: Blob; durationMs: number }[]
   >([]);
   const [savingRecordings, setSavingRecordings] = useState(false);
+  /**
+   * The interview is over and the last recordings are uploading.
+   *
+   * Named apart from `submittingRef`, which guards a single answer being sent
+   * twice — this is the whole interview ending, and it happens once.
+   *
+   * Set the instant the server says the interview is complete, BEFORE the
+   * upload rather than after, because covering those seconds is the entire
+   * point. Never cleared: the only way out is the navigation to the results.
+   */
+  const [finalising, setFinalising] = useState(false);
+  /**
+   * How much of the final upload is done, as a real count of recordings.
+   *
+   * Honest by construction: `flushRecordings` sends them one at a time over a
+   * queue whose length is known before it starts, so this is progress that
+   * actually happened rather than a bar animated against a guess. `total` is
+   * zero when everything was already uploaded during the interview, which is
+   * the common case — the overlay shows an indeterminate state for the moment
+   * it takes to navigate.
+   */
+  const [upload, setUpload] = useState({ done: 0, total: 0 });
   /** One flush at a time, or an interruption could upload a clip twice. */
   const flushingRef = useRef(false);
 
@@ -315,7 +340,10 @@ export function ActiveInterview({
       if (queued.length === 0) return;
 
       flushingRef.current = true;
-      if (visible) setSavingRecordings(true);
+      if (visible) {
+        setSavingRecordings(true);
+        setUpload({ done: 0, total: queued.length });
+      }
       try {
         // One at a time: several multi-megabyte uploads at once on a slow
         // link finish no sooner and are far more likely to time out.
@@ -327,6 +355,11 @@ export function ActiveInterview({
             item.durationMs,
           );
           if (!sent) pendingVideosRef.current.push(item);
+          // Counted whether or not it succeeded: the bar tracks how far
+          // through the queue we are, and a failed upload is re-queued for
+          // the background sweep rather than retried in front of the
+          // candidate.
+          if (visible) setUpload((p) => ({ ...p, done: p.done + 1 }));
         }
       } finally {
         flushingRef.current = false;
@@ -482,6 +515,10 @@ export function ActiveInterview({
 
       if (data.isComplete) {
         stopPolling();
+        // Blur the interview away first, then upload behind it. Setting this
+        // after the race would show the overlay only once there was nothing
+        // left to wait for.
+        setFinalising(true);
         // Upload the held recordings, but never trap the candidate here: go to
         // the results after a short cap whatever happens, and the "See your
         // results" button (shown while saving) lets them skip immediately. The
@@ -979,7 +1016,9 @@ export function ActiveInterview({
 
   // Elapsed silence (candidate has said nothing yet), from whichever detector
   // is live. Drives the visible "skipping in Ns" countdown.
-  const silentElapsed = streamingOn ? streaming.silentSeconds : speech.noAnswerIn;
+  const silentElapsed = streamingOn
+    ? streaming.silentSeconds
+    : speech.noAnswerIn;
   const skipInSeconds =
     silentElapsed !== null &&
     silentElapsed >= SILENCE_WARN_SECONDS &&
@@ -1135,6 +1174,24 @@ export function ActiveInterview({
       ref={stageRef}
       className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-linear-to-b from-surface to-surface-muted"
     >
+      {/* The last thing the candidate sees here: the interview blurs back
+          while the final recordings upload, until the results page replaces
+          this one. Rendered inside the stage so it covers the whole of it. */}
+      {finalising ? (
+        <SubmittingOverlay
+          title={m.interview.submittingInterview}
+          hint={
+            upload.total > 0
+              ? t(m.interview.savingProgress, {
+                  done: Math.min(upload.done + 1, upload.total),
+                  total: upload.total,
+                })
+              : m.interview.submittingHint
+          }
+          done={upload.done}
+          total={upload.total}
+        />
+      ) : null}
       {/* One filler element; its src is swapped to a random variant per turn
           (variants are pre-warmed on mount). Played the moment an answer is sent
           to mask the processing gap, and it drives the blob too. */}
@@ -1178,7 +1235,11 @@ export function ActiveInterview({
           </p>
         </div>
         <div className="mx-auto mt-2 max-w-5xl">
-          <Progress value={skillNumber} max={totalSkills} label={progressLabel} />
+          <Progress
+            value={skillNumber}
+            max={totalSkills}
+            label={progressLabel}
+          />
         </div>
       </header>
 
@@ -1307,7 +1368,10 @@ export function ActiveInterview({
           ) : recorder.isRecording ? (
             <div className="flex flex-col items-center gap-1">
               {/* You're being heard — live bars of the candidate's own voice. */}
-              <Waveform stream={recorder.stream} active={recorder.isRecording} />
+              <Waveform
+                stream={recorder.stream}
+                active={recorder.isRecording}
+              />
               {skipInSeconds !== null ? (
                 <p className="text-sm font-medium text-warning">
                   {t(m.interview.skippingIn, { seconds: skipInSeconds })}
@@ -1327,9 +1391,12 @@ export function ActiveInterview({
           ) : null}
         </div>
 
-
         {error ? (
-          <Alert tone="danger" title={m.interview.errorTitle} className="max-w-md">
+          <Alert
+            tone="danger"
+            title={m.interview.errorTitle}
+            className="max-w-md"
+          >
             <p>{error}</p>
             <div className="mt-3">
               <Button size="sm" variant="secondary" onClick={handleRetrySubmit}>
@@ -1360,16 +1427,21 @@ export function ActiveInterview({
 
       {/* Fullscreen gate. Shown until they are in fullscreen — the button is the
           user gesture the browser needs both to go fullscreen AND to unblock
-          audio autoplay, so the first question speaks right after it. */}
-      {!isFullscreen ? (
+          audio autoplay, so the first question speaks right after it.
+
+          Not once the interview is finishing: this gate sits at the same layer
+          and later in the DOM, so a candidate who left fullscreen at the very
+          end would be told to go back into it for an interview that is already
+          over. */}
+      {!isFullscreen && !finalising ? (
         <div className="absolute inset-0 z-50 grid place-items-center bg-content/85 px-6 text-center backdrop-blur-sm">
           <div className="max-w-sm space-y-4">
             <h2 className="text-xl font-semibold text-white">
               Your interview is ready
             </h2>
             <p className="text-sm leading-relaxed text-white/80">
-              This runs in fullscreen so you can focus. Please stay in fullscreen
-              until the interview is finished.
+              This runs in fullscreen so you can focus. Please stay in
+              fullscreen until the interview is finished.
             </p>
             {/* Entering fullscreen is the gesture that also unblocks audio; the
                 question-play effect (gated on `isFullscreen`) then speaks the

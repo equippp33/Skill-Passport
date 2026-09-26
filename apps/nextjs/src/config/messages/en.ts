@@ -131,7 +131,8 @@ export const en = {
     finish: "Finish assessment",
     keepSpeaking: "Keep speaking — this moves on by itself when you stop.",
     waitingForAnswer: "Listening — start speaking whenever you're ready.",
-    skippingIn: "Skipping this question in {seconds}s — start speaking to continue.",
+    skippingIn:
+      "Skipping this question in {seconds}s — start speaking to continue.",
     advancingIn: "Moving on in {seconds}…",
     introduction: "Introduction",
     chooseLanguageTitle: "Which language would you like to continue in?",
@@ -146,6 +147,9 @@ export const en = {
     greeting:
       "Hello, and welcome. I will ask you a few questions about how you work. Answer naturally — there are no trick questions.",
     savingRecordings: "Saving your recordings — nearly done…",
+    submittingInterview: "Submitting your interview",
+    submittingHint: "Hold on a moment — we are saving everything.",
+    savingProgress: "Saving your answers — {done} of {total}",
     processingHint:
       "Transcribing and evaluating your answer. This usually takes a few seconds — keep this tab open.",
     errorTitle: "Something went wrong",

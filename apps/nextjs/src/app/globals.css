@@ -264,6 +264,61 @@ li {
 /*  an interview. Amplitude arrives as `--orb-amp` (0-1) from an animation    */
 /*  frame, never React state.                                                */
 /* ------------------------------------------------------------------------- */
+/**
+ * The hand-off between the last answer and the results page.
+ *
+ * Two staggered parts: the blurred backdrop arrives first, then the text lifts
+ * into it a moment later. Doing both at once reads as a modal appearing; the
+ * stagger reads as the page stepping back and something else stepping forward.
+ *
+ * The blur is animated rather than simply switched on — going from 0 to 24px
+ * instantly looks like a rendering glitch, whereas easing it over a third of a
+ * second looks deliberate. This is the one place in the app where `filter` is
+ * animated, and it is affordable precisely because it happens once, at the end,
+ * when nothing else needs the frame budget.
+ */
+@keyframes submitting-in {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+}
+
+@keyframes submitting-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+}
+
+.submitting-overlay {
+  animation: submitting-in 320ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.submitting-panel {
+  animation: submitting-panel-in 380ms cubic-bezier(0.2, 0, 0, 1) 120ms both;
+}
+
+/**
+ * The indeterminate sweep, for when there is nothing left to upload.
+ *
+ * Runs edge to edge rather than pulsing in place, so it reads as work passing
+ * through rather than a stalled bar breathing. Transform-only, so it stays on
+ * the compositor alongside the backdrop blur it sits on top of.
+ */
+@keyframes submitting-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
+}
+
+.submitting-sweep {
+  animation: submitting-sweep 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
 @keyframes orb-roll-a {
   0%,
   100% {
@@ -352,6 +407,9 @@ li {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .submitting-overlay,
+  .submitting-panel,
+  .submitting-sweep,
   .orb-layer,
   .orb-breathe,
   .orb-ripple {
