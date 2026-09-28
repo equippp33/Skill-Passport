@@ -38,24 +38,6 @@ const MAX_FRAME_SAMPLES = 1600;
  */
 const POST_SPEAK_MUTE_MS = 700;
 
-/**
- * Noise gate. Audio quieter than this (RMS, 0–1) is NOT streamed upstream, so
- * other people's voices and room chatter — which reach a headset mic much
- * fainter than the candidate speaking into it — never reach Sarvam's VAD and are
- * never transcribed as the answer. Conservative on purpose: a candidate on a
- * headset sits well above it. Raise it if other voices still get through; lower
- * it if a soft-spoken candidate gets clipped.
- */
-const MIN_SEND_RMS = 0.015;
-
-/** Root-mean-square level of a mono float frame, 0–1. */
-function frameRms(frame: Float32Array): number {
-  if (frame.length === 0) return 0;
-  let sum = 0;
-  for (let i = 0; i < frame.length; i += 1) sum += frame[i]! * frame[i]!;
-  return Math.sqrt(sum / frame.length);
-}
-
 /** Float32 at `inRate` → linear16 PCM resampled to 16kHz. */
 function resampleToPcm16(float32: Float32Array, inRate: number): Int16Array {
   let data = float32;
@@ -309,10 +291,6 @@ export function useStreamingStt({
           }
           pending = [];
           pendingLen = 0;
-          // Noise gate: skip near-silent / faint chunks so background chatter and
-          // other voices in the room are never streamed to Sarvam and mistaken
-          // for the candidate. The candidate's own headset audio clears this.
-          if (frameRms(merged) < MIN_SEND_RMS) return;
           // Resample once, then send in frames small enough that even a full
           // second handed over by a throttled timer never trips Sarvam's
           // per-frame cap.

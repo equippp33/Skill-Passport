@@ -75,6 +75,7 @@ export function ActiveInterview({
   checkUrl,
   addUrl,
   openingBitUrls,
+  openingBitTexts,
   m,
   languageCode,
 }: {
@@ -94,6 +95,8 @@ export function ActiveInterview({
   addUrl: string;
   /** The opening turn's 2nd/3rd bits (hobbies, location), played in sequence. */
   openingBitUrls: string[];
+  /** On-screen text for those same bits, shown as each one is spoken. */
+  openingBitTexts: string[];
   m: Messages;
   /** BCP-47 code of the session language, for correct text rendering. */
   languageCode: string;
@@ -117,6 +120,10 @@ export function ActiveInterview({
   );
   const [audioError, setAudioError] = useState(false);
   const [retryingAudio, setRetryingAudio] = useState(false);
+  // On the multi-part opening, the text of the bit currently being spoken
+  // (hobbies, then location). Overrides the shown question so the candidate READS
+  // the prompt too, not just hears it. Null on every other turn / bit 1.
+  const [openingBitText, setOpeningBitText] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   /** One filler element whose src is swapped to a random variant each turn, so
@@ -506,6 +513,7 @@ export function ActiveInterview({
     speechEndRef.current = null;
     openingStepRef.current = 0;
     openingTranscriptRef.current = "";
+    setOpeningBitText(null);
     clearAddTimer();
   }, [clearAddTimer]);
 
@@ -889,6 +897,7 @@ export function ActiveInterview({
       const step = openingStepRef.current;
       if (step < openingBitUrls.length) {
         openingStepRef.current = step + 1;
+        setOpeningBitText(openingBitTexts[step] ?? null);
         playOpeningBit(step);
         streamRearmRef.current();
         clearAddTimer();
@@ -901,7 +910,13 @@ export function ActiveInterview({
       clearAddTimer();
       void finalizeStreamedAnswer(combined);
     },
-    [openingBitUrls.length, playOpeningBit, clearAddTimer, finalizeStreamedAnswer],
+    [
+      openingBitUrls.length,
+      openingBitTexts,
+      playOpeningBit,
+      clearAddTimer,
+      finalizeStreamedAnswer,
+    ],
   );
   useEffect(() => {
     advanceOpeningRef.current = advanceOpening;
@@ -1116,12 +1131,15 @@ export function ActiveInterview({
    */
   const turnNumber = turn?.turnNumber ?? null;
 
+  // On the opening turn the shown text follows the bit being spoken; every other
+  // turn just shows the question. The override is cleared in `poll` when a turn
+  // (re)arms, alongside the other per-turn state.
+  const displayQuestion = openingBitText ?? turn?.question ?? "";
+
   // The question is typed out as it is spoken, rather than snapping in whole —
   // and NOT before they are in fullscreen, so the whole question (text and
   // voice together) only begins once they have entered the interview.
-  const typedQuestion = useTypewriter(
-    isFullscreen ? (turn?.question ?? "") : "",
-  );
+  const typedQuestion = useTypewriter(isFullscreen ? displayQuestion : "");
 
   useEffect(() => {
     if (phase !== "answering" || turnNumber === null) return;
@@ -1362,16 +1380,18 @@ export function ActiveInterview({
           >
             <span aria-hidden="true">
               {typedQuestion}
-              {typedQuestion.length < turn.question.length ? (
+              {typedQuestion.length < displayQuestion.length ? (
                 <span className="ml-0.5 inline-block animate-pulse text-accent">
                   |
                 </span>
               ) : null}
             </span>
-            <span className="sr-only">{turn.question}</span>
+            <span className="sr-only">{displayQuestion}</span>
           </h1>
 
-          {turn.questionTranslation ? (
+          {/* The translation belongs to the server question (bit 1); the later
+              bits are already in the interview language, so hide it for them. */}
+          {turn.questionTranslation && openingBitText === null ? (
             <p
               className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-content-muted"
               lang="en"
