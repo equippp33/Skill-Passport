@@ -92,6 +92,11 @@ export default async function AttemptPage({
   const fillerUrls = FILLERS_BY_KEY[languageKey].map(
     (_, i) => `/api/filler/${languageKey}?v=${i}&s=${speaker}`,
   );
+  // The opening turn's 2nd/3rd bits (hobbies, location), played in sequence
+  // after each is answered. Speaker in the URL for the same cache-bust reason.
+  const openingBitUrls = [0, 1].map(
+    (b) => `/api/opening-bit/${languageKey}?b=${b}&s=${speaker}`,
+  );
 
   return (
     <main className="w-full">
@@ -108,6 +113,7 @@ export default async function AttemptPage({
         fillerUrls={fillerUrls}
         checkUrl={`/api/check/${languageKey}?s=${speaker}`}
         addUrl={`/api/add/${languageKey}?s=${speaker}`}
+        openingBitUrls={openingBitUrls}
         initialTurn={
           current
             ? {

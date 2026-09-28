@@ -227,6 +227,12 @@ export function interviewerRules(ctx: InterviewContext): string {
     `  • The answer addresses the question clearly but does not elaborate — this`,
     `    is FINE, especially for a fresher. Score what they DID say, and score it`,
     `    well if it is sound.`,
+    `  • The candidate says the SCENARIO does not apply to them ("I don't cook",`,
+    `    "I don't play cricket") — this is NOT off-topic and NOT a refusal, the`,
+    `    situation simply did not fit them. Do NOT score it low for that. Ask a`,
+    `    follow-up (nextQuestion) that puts the SAME skill in a situation they DO`,
+    `    relate to, and judge the skill from their answer to THAT. Score low only`,
+    `    if they then refuse or cannot engage with the re-framed version either.`,
     `- This is a FRESHER assessment. Most have NO work history, so a thoughtful`,
     `  HYPOTHETICAL ("I would do X, then Y") is a normal and GOOD answer — score`,
     `  the reasoning, never the absence of a real example. If a question asks for`,
@@ -299,9 +305,14 @@ export function contextBlock(ctx: InterviewContext): string {
     ...(ctx.candidateIntroduction
       ? [
           ``,
-          `The candidate introduced themselves as follows. Use it only to know`,
-          `them a little and pick everyday scenarios they can relate to. Do NOT`,
-          `score it, quote it back, or turn it into a workplace question:`,
+          `The candidate introduced themselves below — a bit about themselves,`,
+          `their interests / hobbies, and where they live. GROUND your scenarios`,
+          `in it: prefer situations drawn from the hobbies, interests and everyday`,
+          `life they actually mentioned, so every question is something they can`,
+          `genuinely relate to. AVOID a scenario they have no connection to — e.g.`,
+          `do not build a cooking situation for someone who never mentioned`,
+          `cooking; use something they DID mention instead. Do NOT score it, quote`,
+          `it back, or turn it into a workplace question:`,
           untrusted("INTRODUCTION", ctx.candidateIntroduction),
         ]
       : [

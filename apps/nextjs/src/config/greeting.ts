@@ -188,3 +188,64 @@ export const OPENING_BY_KEY: Record<InterviewLanguageKey, string> = {
   telugu:
     "నమస్కారం! స్టార్ట్ చేద్దాం — మీ పేరు, మీ గురించి కొంచెం చెప్పండి.",
 };
+
+/**
+ * The opening is ONE turn asked in three bits: the greeting above, then these
+ * two follow-ons — hobbies/interests, then where they live — each played after
+ * the previous bit is answered while the mic keeps recording. Together they give
+ * a much richer picture of the candidate to ground and personalise the rest of
+ * the interview. Only the NEW part is spoken each time (not a re-read), so it
+ * sounds like a natural conversation. `[hobbies, location]` per language.
+ *
+ * Confident for English / Hindi / Marathi / Telugu; the rest want a native
+ * speaker's eyeball, like the other fixed clips in this file.
+ */
+export const OPENING_BIT_PROMPTS_BY_KEY: Record<
+  InterviewLanguageKey,
+  readonly [string, string]
+> = {
+  english: [
+    "Thanks! And what do you enjoy doing — any hobbies or interests?",
+    "Got it. And where are you based right now?",
+  ],
+  hindi: [
+    "शुक्रिया! और आपको क्या करना पसंद है — कोई शौक या रुचि?",
+    "ठीक है। और आप अभी कहाँ रहते हैं?",
+  ],
+  marathi: [
+    "धन्यवाद! आणि तुम्हाला काय करायला आवडतं — काही छंद किंवा आवड?",
+    "ठीक आहे. आणि तुम्ही सध्या कुठे राहता?",
+  ],
+  bengali: [
+    "ধন্যবাদ! আর আপনি কী করতে ভালোবাসেন — কোনো শখ বা আগ্রহ?",
+    "ঠিক আছে। আর আপনি এখন কোথায় থাকেন?",
+  ],
+  gujarati: [
+    "આભાર! અને તમને શું કરવું ગમે છે — કોઈ શોખ કે રસ?",
+    "બરાબર. અને તમે અત્યારે ક્યાં રહો છો?",
+  ],
+  kannada: [
+    "ಧನ್ಯವಾದ! ನಿಮಗೆ ಏನು ಮಾಡಲು ಇಷ್ಟ — ಯಾವುದಾದರೂ ಹವ್ಯಾಸ ಅಥವಾ ಆಸಕ್ತಿ?",
+    "ಸರಿ. ಮತ್ತು ನೀವು ಈಗ ಎಲ್ಲಿ ವಾಸಿಸುತ್ತೀರಿ?",
+  ],
+  malayalam: [
+    "നന്ദി! നിങ്ങൾക്ക് എന്തു ചെയ്യാനാണ് ഇഷ്ടം — എന്തെങ്കിലും ഹോബികളോ താൽപ്പര്യങ്ങളോ?",
+    "ശരി. നിങ്ങൾ ഇപ്പോൾ എവിടെയാണ് താമസിക്കുന്നത്?",
+  ],
+  odia: [
+    "ଧନ୍ୟବାଦ! ଆପଣ କଣ କରିବାକୁ ଭଲ ପାଆନ୍ତି — କୌଣସି ଶଖ କିମ୍ବା ଆଗ୍ରହ?",
+    "ଠିକ୍ ଅଛି। ଆଉ ଆପଣ ବର୍ତ୍ତମାନ କେଉଁଠି ରୁହନ୍ତି?",
+  ],
+  punjabi: [
+    "ਧੰਨਵਾਦ! ਅਤੇ ਤੁਹਾਨੂੰ ਕੀ ਕਰਨਾ ਪਸੰਦ ਹੈ — ਕੋਈ ਸ਼ੌਕ ਜਾਂ ਦਿਲਚਸਪੀ?",
+    "ਠੀਕ ਹੈ। ਅਤੇ ਤੁਸੀਂ ਹੁਣ ਕਿੱਥੇ ਰਹਿੰਦੇ ਹੋ?",
+  ],
+  tamil: [
+    "நன்றி! நீங்கள் என்ன செய்ய விரும்புகிறீர்கள் — ஏதேனும் பொழுதுபோக்கு அல்லது ஆர்வம்?",
+    "சரி. நீங்கள் இப்போது எங்கே வசிக்கிறீர்கள்?",
+  ],
+  telugu: [
+    "థాంక్స్! మీకు ఏం చేయడం ఇష్టం — ఏమైనా హాబీస్ లేదా ఇంటరెస్ట్స్?",
+    "సరే. మీరు ప్రస్తుతం ఎక్కడ ఉంటారు?",
+  ],
+};

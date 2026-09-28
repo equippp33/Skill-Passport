@@ -4,8 +4,10 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
 import {
+  attemptEligibility,
   getAttemptForCandidate,
   getInterviewByPublicToken,
+  MAX_ATTEMPTS_PER_CANDIDATE,
   setAttemptCookie,
 } from "./access";
 import { candidateDetailsSchema } from "~/server/interview/validation";
@@ -58,6 +60,27 @@ export async function beginAttemptAction(
       }
     }
     return { error: null, fieldErrors };
+  }
+
+  // Retake limits: at most a few attempts per candidate, with a cooldown after
+  // each finished one. Checked here (identity is known from the form) so it holds
+  // for ordinary and integration links alike.
+  const eligibility = await attemptEligibility(interview.id, {
+    externalStudentId: parsed.data.studentId,
+    email: parsed.data.email,
+  });
+  if (!eligibility.allowed) {
+    if (eligibility.reason === "cooldown") {
+      const minutes = eligibility.readyInMinutes ?? 1;
+      return {
+        error: `You just finished an attempt. Please wait about ${minutes} minute${
+          minutes === 1 ? "" : "s"
+        } before retaking this interview.`,
+      };
+    }
+    return {
+      error: `You've used all ${MAX_ATTEMPTS_PER_CANDIDATE} attempts for this interview.`,
+    };
   }
 
   const { attemptId, accessToken } = await createAttempt(interview, {

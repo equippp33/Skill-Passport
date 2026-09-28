@@ -2,7 +2,7 @@ import "server-only";
 
 import { timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import { db } from "~/server/db";
 import { interviewAttemptsTable, interviewsTable } from "~/server/db/schema";
@@ -90,27 +90,94 @@ export async function getAttemptForCandidate(
   return found;
 }
 
+/** A candidate may retake the same interview a few times, with a cooldown. */
+export const MAX_ATTEMPTS_PER_CANDIDATE = 3;
+export const ATTEMPT_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
+
+export interface AttemptEligibility {
+  allowed: boolean;
+  /** Why not, when `allowed` is false. */
+  reason?: "max_reached" | "cooldown";
+  /** Completed attempts so far for this candidate on this interview. */
+  attemptsUsed: number;
+  maxAttempts: number;
+  /** When the candidate may retake, for the cooldown case. */
+  readyAt?: Date;
+  /** Whole minutes until they may retake (>=1), for the cooldown case. */
+  readyInMinutes?: number;
+}
+
 /**
- * Has this partner student already FINISHED an interview here?
+ * Whether a candidate may (re)take this interview.
  *
- * Integration links carry the student's id (`externalStudentId`); once they
- * have a completed attempt, the link is "closed" — the start page shows a
- * done screen instead of the form, so a student cannot retake. Keyed on the
- * interview too, so the same student could still be invited to a different one.
+ * A candidate — a partner student by `externalStudentId`, or an ordinary
+ * candidate by email — gets up to {@link MAX_ATTEMPTS_PER_CANDIDATE} COMPLETED
+ * attempts, and must wait {@link ATTEMPT_COOLDOWN_MS} after finishing one before
+ * starting the next. Only completed attempts count: an abandoned or failed run
+ * never burns a retry. With no identity to key on (an ordinary link where no
+ * email was given) we cannot count, so we do not gate.
  */
-export async function studentHasCompletedAttempt(
+export async function attemptEligibility(
   interviewId: string,
-  externalStudentId: string,
-): Promise<boolean> {
-  const found = await db.query.interviewAttemptsTable.findFirst({
+  candidate: { externalStudentId?: string | null; email?: string | null },
+): Promise<AttemptEligibility> {
+  const studentId = candidate.externalStudentId?.trim() || null;
+  const email = candidate.email?.trim().toLowerCase() || null;
+
+  if (!studentId && !email) {
+    return {
+      allowed: true,
+      attemptsUsed: 0,
+      maxAttempts: MAX_ATTEMPTS_PER_CANDIDATE,
+    };
+  }
+
+  // Key on the student id when present (integration links), else the email.
+  const identity = studentId
+    ? eq(interviewAttemptsTable.externalStudentId, studentId)
+    : eq(interviewAttemptsTable.candidateEmail, email!);
+
+  const completed = await db.query.interviewAttemptsTable.findMany({
     where: and(
       eq(interviewAttemptsTable.interviewId, interviewId),
-      eq(interviewAttemptsTable.externalStudentId, externalStudentId),
+      identity,
       eq(interviewAttemptsTable.status, "completed"),
     ),
-    columns: { id: true },
+    columns: { completedAt: true },
+    orderBy: desc(interviewAttemptsTable.completedAt),
   });
-  return Boolean(found);
+
+  const attemptsUsed = completed.length;
+  if (attemptsUsed >= MAX_ATTEMPTS_PER_CANDIDATE) {
+    return {
+      allowed: false,
+      reason: "max_reached",
+      attemptsUsed,
+      maxAttempts: MAX_ATTEMPTS_PER_CANDIDATE,
+    };
+  }
+
+  const latest = completed[0]?.completedAt ?? null;
+  if (latest) {
+    const readyAt = new Date(latest.getTime() + ATTEMPT_COOLDOWN_MS);
+    const remainingMs = readyAt.getTime() - Date.now();
+    if (remainingMs > 0) {
+      return {
+        allowed: false,
+        reason: "cooldown",
+        attemptsUsed,
+        maxAttempts: MAX_ATTEMPTS_PER_CANDIDATE,
+        readyAt,
+        readyInMinutes: Math.max(1, Math.ceil(remainingMs / 60_000)),
+      };
+    }
+  }
+
+  return {
+    allowed: true,
+    attemptsUsed,
+    maxAttempts: MAX_ATTEMPTS_PER_CANDIDATE,
+  };
 }
 
 /** The interview behind a share link, or null if the token is wrong/closed. */

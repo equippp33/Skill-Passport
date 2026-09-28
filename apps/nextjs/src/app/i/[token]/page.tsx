@@ -4,8 +4,8 @@ import { Card, CardContent, EmptyState } from "~/components/ui";
 import { CandidateSplit } from "~/components/candidate-split";
 import { CameraPreview } from "~/components/camera-preview";
 import {
+  attemptEligibility,
   getInterviewByPublicToken,
-  studentHasCompletedAttempt,
 } from "~/server/attempt/access";
 import { decodePrefill } from "~/server/integrations/prefill";
 import { StartForm } from "./start-form";
@@ -50,21 +50,35 @@ export default async function CandidateLandingPage({
     );
   }
 
-  // Integration links close once the student has finished: a partner student
-  // who already completed this interview cannot start a second attempt.
-  if (
-    prefill?.studentId &&
-    (await studentHasCompletedAttempt(interview.id, prefill.studentId))
-  ) {
-    return (
-      <main className="mx-auto max-w-lg px-4 py-16">
-        <EmptyState
-          headingLevel={1}
-          title="You've already completed this interview"
-          description="Thanks — your responses have been recorded and there's nothing more to do here. You can close this tab."
-        />
-      </main>
-    );
+  // Integration links carry the student id, so we can show retake limits up
+  // front: all attempts used, or still inside the cooldown after the last one.
+  // Ordinary links have no identity here — that check happens on form submit.
+  if (prefill?.studentId) {
+    const eligibility = await attemptEligibility(interview.id, {
+      externalStudentId: prefill.studentId,
+    });
+    if (!eligibility.allowed) {
+      const cooldownMinutes = eligibility.readyInMinutes ?? 0;
+      return (
+        <main className="mx-auto max-w-lg px-4 py-16">
+          <EmptyState
+            headingLevel={1}
+            title={
+              eligibility.reason === "cooldown"
+                ? "Just a short wait before your next attempt"
+                : "You've completed all your attempts"
+            }
+            description={
+              eligibility.reason === "cooldown"
+                ? `You just finished an attempt. You can retake this interview in about ${cooldownMinutes} minute${
+                    cooldownMinutes === 1 ? "" : "s"
+                  } — please come back then.`
+                : `Thanks — you've used all ${eligibility.maxAttempts} attempts for this interview. Your responses have been recorded and there's nothing more to do here.`
+            }
+          />
+        </main>
+      );
+    }
   }
 
   return (

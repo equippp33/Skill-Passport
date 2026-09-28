@@ -74,6 +74,14 @@ export const ADD_DECLINE_MAX_WORDS = 3;
  */
 export const ADD_MAX_ANSWER_MS = 3000;
 
+/**
+ * The multi-part opening asks the next bit (hobbies, then location) after each
+ * is answered, mic still recording. If the candidate stays silent on a bit this
+ * long, move on to the next bit rather than stalling the interview at the start.
+ * Cancelled the moment they start speaking (see the partial-transcript effect).
+ */
+export const OPENING_BIT_WAIT_MS = 8000;
+
 export const SILENCE_CHECK_IN_SECONDS = 15;
 export const SILENCE_WARN_SECONDS = 30;
 export const SILENCE_SKIP_SECONDS = 60;

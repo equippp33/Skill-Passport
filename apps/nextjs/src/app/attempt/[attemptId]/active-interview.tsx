@@ -38,6 +38,7 @@ import {
   ADD_WAIT_MS,
   ADD_DECLINE_MAX_WORDS,
   ADD_MAX_ANSWER_MS,
+  OPENING_BIT_WAIT_MS,
 } from "./constants";
 
 interface TurnView {
@@ -73,6 +74,7 @@ export function ActiveInterview({
   fillerUrls,
   checkUrl,
   addUrl,
+  openingBitUrls,
   m,
   languageCode,
 }: {
@@ -90,6 +92,8 @@ export function ActiveInterview({
   checkUrl: string;
   /** "Would you like to add anything?" prompt, played on the first answer pause. */
   addUrl: string;
+  /** The opening turn's 2nd/3rd bits (hobbies, location), played in sequence. */
+  openingBitUrls: string[];
   m: Messages;
   /** BCP-47 code of the session language, for correct text rendering. */
   languageCode: string;
@@ -121,12 +125,12 @@ export function ActiveInterview({
   const fillerRef = useRef<HTMLAudioElement | null>(null);
   const lastFillerRef = useRef(-1);
   useEffect(() => {
-    for (const url of fillerUrls) {
+    for (const url of [...fillerUrls, ...openingBitUrls]) {
       const warm = new Audio();
       warm.preload = "auto";
       warm.src = url;
     }
-  }, [fillerUrls]);
+  }, [fillerUrls, openingBitUrls]);
   const playFiller = useCallback(() => {
     const el = fillerRef.current;
     const count = fillerUrls.length;
@@ -483,6 +487,10 @@ export function ActiveInterview({
   // offer on answers that were already long enough.
   const speechStartRef = useRef<number | null>(null);
   const speechEndRef = useRef<number | null>(null);
+  // Multi-part opening state (probe turn only): how many bits have been answered
+  // so far, and the running combined introduction across them.
+  const openingStepRef = useRef(0);
+  const openingTranscriptRef = useRef("");
 
   const clearAddTimer = useCallback(() => {
     if (addTimerRef.current) {
@@ -496,6 +504,8 @@ export function ActiveInterview({
     pendingAnswerRef.current = "";
     speechStartRef.current = null;
     speechEndRef.current = null;
+    openingStepRef.current = 0;
+    openingTranscriptRef.current = "";
     clearAddTimer();
   }, [clearAddTimer]);
 
@@ -803,8 +813,14 @@ export function ActiveInterview({
   // On the first pause of an answer we invite the candidate to add more before
   // moving on, keeping the mic open. Ask-state refs + reset live above `poll`.
   const addRef = useRef<HTMLAudioElement | null>(null);
+  // One element whose src is swapped to the next opening bit clip (hobbies, then
+  // location), same pattern as the filler element.
+  const openingRef = useRef<HTMLAudioElement | null>(null);
   // streaming.rearm, reached via a ref because `streaming` is defined below.
   const streamRearmRef = useRef<() => void>(() => undefined);
+  // advanceOpening, reached via a ref so the silence-fallback timer can call the
+  // latest version without a definition-order cycle.
+  const advanceOpeningRef = useRef<(text: string) => void>(() => undefined);
 
   /** Play "would you like to add anything?" — own element, mutes mic while on. */
   const playAdd = useCallback(() => {
@@ -817,6 +833,23 @@ export function ActiveInterview({
       // Best-effort — if it can't play, the silence timer still advances us.
     }
   }, []);
+
+  /** Play the Nth opening bit clip (mutes the mic while it plays). */
+  const playOpeningBit = useCallback(
+    (index: number) => {
+      const el = openingRef.current;
+      const url = openingBitUrls[index];
+      if (!el || !url) return;
+      try {
+        el.src = url;
+        el.currentTime = 0;
+        void el.play().catch(() => undefined);
+      } catch {
+        // Best-effort — a blocked clip just means the bit is skipped silently.
+      }
+    },
+    [openingBitUrls],
+  );
 
   /**
    * Actually submit the answer: stop the video (kept for the archive) and send
@@ -838,10 +871,48 @@ export function ActiveInterview({
   );
 
   /**
+   * Advance the multi-part opening turn.
+   *
+   * Fold this bit's answer into the running introduction, then EITHER ask the
+   * next bit (hobbies → location) with the mic still recording, OR — after the
+   * last bit — submit the whole combined introduction as the opening answer. A
+   * silence-fallback timer moves things on if a bit goes unanswered, so the
+   * interview never stalls at the very start.
+   */
+  const advanceOpening = useCallback(
+    (text: string) => {
+      const combined = text
+        ? `${openingTranscriptRef.current} ${text}`.trim()
+        : openingTranscriptRef.current;
+      openingTranscriptRef.current = combined;
+
+      const step = openingStepRef.current;
+      if (step < openingBitUrls.length) {
+        openingStepRef.current = step + 1;
+        playOpeningBit(step);
+        streamRearmRef.current();
+        clearAddTimer();
+        addTimerRef.current = setTimeout(
+          () => advanceOpeningRef.current(""),
+          OPENING_BIT_WAIT_MS,
+        );
+        return;
+      }
+      clearAddTimer();
+      void finalizeStreamedAnswer(combined);
+    },
+    [openingBitUrls.length, playOpeningBit, clearAddTimer, finalizeStreamedAnswer],
+  );
+  useEffect(() => {
+    advanceOpeningRef.current = advanceOpening;
+  }, [advanceOpening]);
+
+  /**
    * Streaming path: Sarvam signalled end-of-turn with the whole transcript.
    *
-   * We don't submit on the first pause. Instead we invite the candidate to add
-   * anything — the mic stays open — so they are never cut off mid-thought:
+   * The opening turn is asked in bits — accumulate and ask the next one. For a
+   * normal answer we don't submit on the first pause; instead we invite the
+   * candidate to add anything — the mic stays open — so they are never cut off:
    *   1st pause → stash the answer, play "would you like to add anything?",
    *               re-arm the stream, and start a short silence timer.
    *   2nd pause → a brief reply ("no", "that's all") is a decline, so submit
@@ -856,6 +927,14 @@ export function ActiveInterview({
       if (submittedTurnRef.current === active.turnNumber) return;
       const text = transcript.trim();
       if (!text) return;
+
+      // The opening turn: fold this bit in and ask the next (or submit the
+      // combined intro after the last bit). No "add anything?" here.
+      if (active.kind === "language_probe") {
+        clearAddTimer();
+        advanceOpening(text);
+        return;
+      }
 
       // First pause: only offer to add if the answer was SHORT — otherwise they
       // clearly said their piece, so submit without nagging.
@@ -888,7 +967,7 @@ export function ActiveInterview({
           : `${pendingAnswerRef.current} ${text}`.trim();
       await finalizeStreamedAnswer(answer);
     },
-    [playAdd, clearAddTimer, finalizeStreamedAnswer],
+    [playAdd, clearAddTimer, finalizeStreamedAnswer, advanceOpening],
   );
 
   /* ------------------------------ tap / voice controls ----------------------- */
@@ -1217,6 +1296,15 @@ export function ActiveInterview({
       <audio
         ref={addRef}
         src={addUrl}
+        preload="auto"
+        className="hidden"
+        onPlay={() => setSpeaking(true)}
+        onEnded={() => setSpeaking(false)}
+        onPause={() => setSpeaking(false)}
+      />
+      {/* Opening bits (hobbies, then location); src swapped per bit. */}
+      <audio
+        ref={openingRef}
         preload="auto"
         className="hidden"
         onPlay={() => setSpeaking(true)}
