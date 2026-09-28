@@ -1326,7 +1326,17 @@ export function ActiveInterview({
         preload="auto"
         className="hidden"
         onPlay={() => setSpeaking(true)}
-        onEnded={() => setSpeaking(false)}
+        onEnded={() => {
+          setSpeaking(false);
+          // Only NOW has the prompt finished — start the silence-fallback here so
+          // the candidate gets the full window to answer this bit. (The timer set
+          // in advanceOpening is a backstop for a clip that never plays.)
+          clearAddTimer();
+          addTimerRef.current = setTimeout(
+            () => advanceOpeningRef.current(""),
+            OPENING_BIT_WAIT_MS,
+          );
+        }}
         onPause={() => setSpeaking(false)}
       />
 

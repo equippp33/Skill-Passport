@@ -80,7 +80,7 @@ export const ADD_MAX_ANSWER_MS = 3000;
  * long, move on to the next bit rather than stalling the interview at the start.
  * Cancelled the moment they start speaking (see the partial-transcript effect).
  */
-export const OPENING_BIT_WAIT_MS = 8000;
+export const OPENING_BIT_WAIT_MS = 10000;
 
 export const SILENCE_CHECK_IN_SECONDS = 15;
 export const SILENCE_WARN_SECONDS = 30;
