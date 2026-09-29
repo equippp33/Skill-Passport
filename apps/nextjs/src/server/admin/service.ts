@@ -283,6 +283,65 @@ export async function getAttemptForAdmin(
   return rows[0] ?? null;
 }
 
+export interface AttemptTab {
+  attemptId: string;
+  /** 1-based, oldest first. */
+  attemptNumber: number;
+  status: string;
+  overallScore: number | null;
+  createdAt: Date;
+  completedAt: Date | null;
+  isCurrent: boolean;
+}
+
+/**
+ * A candidate's attempts at the SAME interview, oldest first, so the report page
+ * can offer them as tabs. Identity is the partner student id when present, else
+ * email — the same key retakes are counted by. Scoped to the admin's own
+ * interview. Returns [] when there is only one (no tabs needed).
+ */
+export async function getCandidateAttemptTabs(
+  adminId: string,
+  attempt: InterviewAttempt,
+): Promise<AttemptTab[]> {
+  const studentId = attempt.externalStudentId?.trim() || null;
+  const email = attempt.candidateEmail?.trim() || null;
+  if (!studentId && !email) return [];
+
+  const identity = studentId
+    ? eq(interviewAttemptsTable.externalStudentId, studentId)
+    : eq(interviewAttemptsTable.candidateEmail, email!);
+
+  const rows = await db
+    .select({
+      attemptId: interviewAttemptsTable.id,
+      status: interviewAttemptsTable.status,
+      overallScore: interviewAttemptsTable.overallScore,
+      createdAt: interviewAttemptsTable.createdAt,
+      completedAt: interviewAttemptsTable.completedAt,
+    })
+    .from(interviewAttemptsTable)
+    .innerJoin(
+      interviewsTable,
+      eq(interviewAttemptsTable.interviewId, interviewsTable.id),
+    )
+    .where(
+      and(
+        eq(interviewAttemptsTable.interviewId, attempt.interviewId),
+        identity,
+        eq(interviewsTable.createdByUserId, adminId),
+      ),
+    )
+    .orderBy(asc(interviewAttemptsTable.createdAt));
+
+  if (rows.length <= 1) return [];
+  return rows.map((r, i) => ({
+    ...r,
+    attemptNumber: i + 1,
+    isCurrent: r.attemptId === attempt.id,
+  }));
+}
+
 export interface AdminStats {
   interviews: number;
   openInterviews: number;

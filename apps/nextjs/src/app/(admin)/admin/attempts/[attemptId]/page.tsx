@@ -6,6 +6,7 @@ import { AttemptReport } from "~/components/attempt-report";
 import { Alert } from "~/components/ui";
 import {
   getAttemptForAdmin,
+  getCandidateAttemptTabs,
   getClipDurations,
   requireAdmin,
 } from "~/server/admin/service";
@@ -40,12 +41,14 @@ export default async function AdminAttemptPage({
   if (!found) notFound();
 
   const { attempt, interview } = found;
-  const [turns, clipDurations, appOrigin] = await Promise.all([
+  const [turns, clipDurations, appOrigin, attemptTabs] = await Promise.all([
     getTurns(attempt.id),
     getClipDurations(attempt.id),
     appUrl(),
+    getCandidateAttemptTabs(admin.id, attempt),
   ]);
   const m = uiMessages();
+  const fromQuery = from ? `?from=${encodeURIComponent(from)}` : "";
 
   return (
     <>
@@ -113,6 +116,47 @@ export default async function AdminAttemptPage({
         <p className="mt-1 hidden text-sm text-content-muted print:block">
           {interview.title} · report generated {formatDate(new Date())}
         </p>
+
+        {/* Retakes: this candidate has more than one attempt. Each is its own
+            report + recordings; the tabs switch between them (oldest first). */}
+        {attemptTabs.length > 1 ? (
+          <div
+            data-print-hide
+            className="mt-4 flex flex-wrap gap-2 border-b border-border-subtle pb-3"
+          >
+            {attemptTabs.map((tab) => (
+              <Link
+                key={tab.attemptId}
+                href={`/admin/attempts/${tab.attemptId}${fromQuery}`}
+                aria-current={tab.isCurrent ? "page" : undefined}
+                className={
+                  tab.isCurrent
+                    ? "rounded-full bg-accent px-3 py-1.5 text-sm font-medium text-accent-contrast"
+                    : "rounded-full border border-border-subtle bg-surface px-3 py-1.5 text-sm font-medium text-content-muted transition-colors hover:bg-surface-muted"
+                }
+              >
+                Attempt {tab.attemptNumber}
+                <span
+                  className={
+                    tab.isCurrent
+                      ? "ml-1.5 text-accent-contrast/70"
+                      : "ml-1.5 text-content-muted/70"
+                  }
+                >
+                  {tab.status === "completed"
+                    ? tab.overallScore !== null
+                      ? `${(tab.overallScore / 10).toFixed(1)}/10`
+                      : "done"
+                    : tab.status === "in_progress" || tab.status === "processing"
+                      ? "in progress"
+                      : tab.status === "failed"
+                        ? "failed"
+                        : "not started"}
+                </span>
+              </Link>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       {attempt.status !== "completed" ? (
