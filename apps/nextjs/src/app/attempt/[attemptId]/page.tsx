@@ -112,7 +112,6 @@ export default async function AttemptPage({
         initialAttemptStatus={attempt.status}
         fillerUrls={fillerUrls}
         checkUrl={`/api/check/${languageKey}?s=${speaker}`}
-        addUrl={`/api/add/${languageKey}?s=${speaker}`}
         openingBitUrls={openingBitUrls}
         openingBitTexts={[...OPENING_BIT_PROMPTS_BY_KEY[languageKey]]}
         initialTurn={

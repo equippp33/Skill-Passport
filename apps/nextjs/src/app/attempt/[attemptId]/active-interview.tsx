@@ -35,9 +35,6 @@ import {
   SILENCE_ADVANCE_SECONDS,
   SILENCE_WARN_SECONDS,
   SILENCE_SKIP_SECONDS,
-  ADD_WAIT_MS,
-  ADD_DECLINE_MAX_WORDS,
-  ADD_MAX_ANSWER_MS,
   OPENING_BIT_WAIT_MS,
 } from "./constants";
 
@@ -73,7 +70,6 @@ export function ActiveInterview({
   initialAttemptStatus,
   fillerUrls,
   checkUrl,
-  addUrl,
   openingBitUrls,
   openingBitTexts,
   m,
@@ -91,8 +87,6 @@ export function ActiveInterview({
   fillerUrls: string[];
   /** "Did you understand the question?" check-in, played after a long silence. */
   checkUrl: string;
-  /** "Would you like to add anything?" prompt, played on the first answer pause. */
-  addUrl: string;
   /** The opening turn's 2nd/3rd bits (hobbies, location), played in sequence. */
   openingBitUrls: string[];
   /** On-screen text for those same bits, shown as each one is spoken. */
@@ -482,20 +476,10 @@ export function ActiveInterview({
   // than the whole messages object.
   const genericError = m.errors.generic;
 
-  // "Add anything?" ask-state: whether we've offered on the current answer, the
-  // answer stashed before the offer, and the fallback silence timer. `poll`
-  // resets these when a turn (re)arms so each answer starts fresh; the offer
-  // logic itself lives with the streaming handler below.
-  const addAskedRef = useRef(false);
-  const pendingAnswerRef = useRef("");
+  // The opening bit's silence-fallback timer, and the multi-part opening state
+  // (probe turn only): how many bits have been answered and the running combined
+  // introduction. `poll` resets these when a turn (re)arms.
   const addTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // When the candidate first and last had partial speech on THIS answer — the
-  // span between them is how long they actually spoke, used to skip the "add?"
-  // offer on answers that were already long enough.
-  const speechStartRef = useRef<number | null>(null);
-  const speechEndRef = useRef<number | null>(null);
-  // Multi-part opening state (probe turn only): how many bits have been answered
-  // so far, and the running combined introduction across them.
   const openingStepRef = useRef(0);
   const openingTranscriptRef = useRef("");
 
@@ -507,10 +491,6 @@ export function ActiveInterview({
   }, []);
 
   const resetAddState = useCallback(() => {
-    addAskedRef.current = false;
-    pendingAnswerRef.current = "";
-    speechStartRef.current = null;
-    speechEndRef.current = null;
     openingStepRef.current = 0;
     openingTranscriptRef.current = "";
     setOpeningBitText(null);
@@ -816,31 +796,18 @@ export function ActiveInterview({
     submitCurrentAnswerRef.current = () => void handleNext();
   }, [handleNext]);
 
-  /* --------------------------- "add anything?" flow -------------------------- */
+  /* ------------------------------ opening bits ------------------------------ */
 
-  // On the first pause of an answer we invite the candidate to add more before
-  // moving on, keeping the mic open. Ask-state refs + reset live above `poll`.
-  const addRef = useRef<HTMLAudioElement | null>(null);
   // One element whose src is swapped to the next opening bit clip (hobbies, then
   // location), same pattern as the filler element.
   const openingRef = useRef<HTMLAudioElement | null>(null);
-  // streaming.rearm, reached via a ref because `streaming` is defined below.
+  // streaming.rearm and streaming.getTranscript, reached via refs because
+  // `streaming` is defined below.
   const streamRearmRef = useRef<() => void>(() => undefined);
+  const getTranscriptRef = useRef<() => string>(() => "");
   // advanceOpening, reached via a ref so the silence-fallback timer can call the
   // latest version without a definition-order cycle.
   const advanceOpeningRef = useRef<(text: string) => void>(() => undefined);
-
-  /** Play "would you like to add anything?" — own element, mutes mic while on. */
-  const playAdd = useCallback(() => {
-    const el = addRef.current;
-    if (!el) return;
-    try {
-      el.currentTime = 0;
-      void el.play().catch(() => undefined);
-    } catch {
-      // Best-effort — if it can't play, the silence timer still advances us.
-    }
-  }, []);
 
   /** Play the Nth opening bit clip (mutes the mic while it plays). */
   const playOpeningBit = useCallback(
@@ -922,69 +889,6 @@ export function ActiveInterview({
     advanceOpeningRef.current = advanceOpening;
   }, [advanceOpening]);
 
-  /**
-   * Streaming path: Sarvam signalled end-of-turn with the whole transcript.
-   *
-   * The opening turn is asked in bits — accumulate and ask the next one. For a
-   * normal answer we don't submit on the first pause; instead we invite the
-   * candidate to add anything — the mic stays open — so they are never cut off:
-   *   1st pause → stash the answer, play "would you like to add anything?",
-   *               re-arm the stream, and start a short silence timer.
-   *   2nd pause → a brief reply ("no", "that's all") is a decline, so submit
-   *               the stashed answer; anything longer is appended and submitted.
-   *   silence   → the timer submits the stashed answer on its own.
-   * Empty transcript means we only heard noise, so keep waiting.
-   */
-  const handleStreamedTurn = useCallback(
-    async (transcript: string) => {
-      const active = turnRef.current;
-      if (!active) return;
-      if (submittedTurnRef.current === active.turnNumber) return;
-      const text = transcript.trim();
-      if (!text) return;
-
-      // The opening turn: fold this bit in and ask the next (or submit the
-      // combined intro after the last bit). No "add anything?" here.
-      if (active.kind === "language_probe") {
-        clearAddTimer();
-        advanceOpening(text);
-        return;
-      }
-
-      // First pause: only offer to add if the answer was SHORT — otherwise they
-      // clearly said their piece, so submit without nagging.
-      if (!addAskedRef.current) {
-        const spokenMs =
-          speechStartRef.current !== null && speechEndRef.current !== null
-            ? speechEndRef.current - speechStartRef.current
-            : 0;
-        if (spokenMs >= ADD_MAX_ANSWER_MS) {
-          await finalizeStreamedAnswer(text);
-          return;
-        }
-        addAskedRef.current = true;
-        pendingAnswerRef.current = text;
-        playAdd();
-        streamRearmRef.current();
-        clearAddTimer();
-        addTimerRef.current = setTimeout(() => {
-          void finalizeStreamedAnswer(pendingAnswerRef.current);
-        }, ADD_WAIT_MS);
-        return;
-      }
-
-      // Their reply to the offer: a few words is a decline; more is a real add.
-      clearAddTimer();
-      const wordCount = text.split(/\s+/).filter(Boolean).length;
-      const answer =
-        wordCount <= ADD_DECLINE_MAX_WORDS
-          ? pendingAnswerRef.current
-          : `${pendingAnswerRef.current} ${text}`.trim();
-      await finalizeStreamedAnswer(answer);
-    },
-    [playAdd, clearAddTimer, finalizeStreamedAnswer, advanceOpening],
-  );
-
   /* ------------------------------ tap / voice controls ----------------------- */
 
   /** Play the "did you understand the question?" check-in (own element). */
@@ -1044,6 +948,45 @@ export function ActiveInterview({
     [playCheckIn, autoSkip],
   );
 
+  /**
+   * The candidate taps "Next" when they are done.
+   *
+   * This is now the ONLY way a turn advances — the VAD no longer auto-submits on
+   * a pause, so stray noise can never move the interview on. Streaming: submit
+   * whatever has been transcribed so far (or, on the opening turn, move to the
+   * next bit); nothing heard at all is treated as a skip. Batch fallback: stop,
+   * transcribe, submit.
+   */
+  const handleAdvance = useCallback(() => {
+    const active = turnRef.current;
+    if (!active || isBusy) return;
+    if (submittedTurnRef.current === active.turnNumber) return;
+
+    if (!streamingOn) {
+      void handleNext();
+      return;
+    }
+    const text = getTranscriptRef.current().trim();
+    if (active.kind === "language_probe") {
+      clearAddTimer();
+      advanceOpening(text);
+      return;
+    }
+    if (!text) {
+      void autoSkip();
+      return;
+    }
+    void finalizeStreamedAnswer(text);
+  }, [
+    isBusy,
+    streamingOn,
+    handleNext,
+    clearAddTimer,
+    advanceOpening,
+    autoSkip,
+    finalizeStreamedAnswer,
+  ]);
+
   /* ---------------------------- finished speaking ---------------------------- */
 
   /**
@@ -1064,9 +1007,10 @@ export function ActiveInterview({
     speaking,
     silenceSeconds: SILENCE_ADVANCE_SECONDS,
     minSpeechSeconds: MIN_ANSWER_SECONDS,
-    // They spoke, then went quiet — send the answer.
-    onSilence: () => void handleNext(),
-    // They have said nothing — check in, then countdown, then skip.
+    // No auto-submit on a pause any more — the candidate taps "Next" when done,
+    // so stray noise can't advance the interview. The no-answer ladder (check-in
+    // then a long skip backstop) still runs so a silent screen isn't permanent.
+    onSilence: () => undefined,
     noAnswerStages: NO_ANSWER_STAGES,
     onNoAnswerStage: (i) => handleSilenceStage(i),
   });
@@ -1082,30 +1026,26 @@ export function ActiveInterview({
     relayUrl,
     // Mute the mic upstream while the interviewer's own clip plays.
     speaking,
-    onFinalTurn: (transcript) => void handleStreamedTurn(transcript),
+    // No auto-advance on a pause — the transcript is read on demand when the
+    // candidate taps "Next" (see handleAdvance / getTranscript).
+    onFinalTurn: () => undefined,
     onFailed: () => setStreamFailed(true),
-    // Same silence ladder as the batch path — check in, countdown, skip.
+    // The no-answer ladder still runs — check in, then a long skip backstop.
     noAnswerStages: NO_ANSWER_STAGES,
     onSilenceStage: (i) => handleSilenceStage(i),
   });
 
-  // Let handleStreamedTurn re-arm the stream after the "add?" ask without a
-  // definition-order cycle (it's declared above `streaming`).
+  // Reach streaming.rearm / streaming.getTranscript from handlers declared above
+  // `streaming` without a definition-order cycle.
   useEffect(() => {
     streamRearmRef.current = streaming.rearm;
-  }, [streaming.rearm]);
+    getTranscriptRef.current = streaming.getTranscript;
+  }, [streaming.rearm, streaming.getTranscript]);
 
-  // Track how long the candidate is actually speaking (first partial → last
-  // partial), and while the "add anything?" offer is open, cancel the fallback
-  // timer the instant they start speaking again — their addition is coming, and
-  // only their next real pause should end the turn. Without the cancel the fixed
-  // timer fires mid-sentence and cuts them off.
+  // The opening bit's silence-fallback must not fire while the candidate is
+  // speaking — cancel it the moment a partial transcript appears.
   useEffect(() => {
-    if (!streaming.partial) return;
-    const now = Date.now();
-    if (speechStartRef.current === null) speechStartRef.current = now;
-    speechEndRef.current = now;
-    if (addTimerRef.current) clearAddTimer();
+    if (streaming.partial && addTimerRef.current) clearAddTimer();
   }, [streaming.partial, clearAddTimer]);
 
   // Elapsed silence (candidate has said nothing yet), from whichever detector
@@ -1310,16 +1250,6 @@ export function ActiveInterview({
         onEnded={() => setSpeaking(false)}
         onPause={() => setSpeaking(false)}
       />
-      {/* "Would you like to add anything?" — first pause of an answer. */}
-      <audio
-        ref={addRef}
-        src={addUrl}
-        preload="auto"
-        className="hidden"
-        onPlay={() => setSpeaking(true)}
-        onEnded={() => setSpeaking(false)}
-        onPause={() => setSpeaking(false)}
-      />
       {/* Opening bits (hobbies, then location); src swapped per bit. */}
       <audio
         ref={openingRef}
@@ -1484,7 +1414,7 @@ export function ActiveInterview({
               </Button>
             </div>
           ) : recorder.isRecording ? (
-            <div className="flex flex-col items-center gap-1">
+            <div className="flex flex-col items-center gap-3">
               {/* You're being heard — live bars of the candidate's own voice. */}
               <Waveform
                 stream={recorder.stream}
@@ -1505,6 +1435,16 @@ export function ActiveInterview({
                     : m.interview.keepSpeaking}
                 </p>
               )}
+              {/* The candidate advances when THEY are done — nothing moves on by
+                  itself, so stray noise can't skip ahead. Disabled while the
+                  interviewer is still speaking the question/bit. */}
+              <Button
+                size="lg"
+                onClick={handleAdvance}
+                disabled={speaking || isBusy}
+              >
+                {m.interview.next}
+              </Button>
             </div>
           ) : null}
         </div>

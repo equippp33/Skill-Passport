@@ -120,11 +120,21 @@ export function useStreamingStt({
    * the next pause fire `onFinalTurn` again with only what they add next.
    */
   rearm: () => void;
+  /**
+   * The whole answer heard so far on this turn (stitched finals + the live
+   * partial), read on demand. The manual "Next" button uses this to submit
+   * exactly what has been said when the candidate decides they are done, rather
+   * than relying on the VAD to guess the end.
+   */
+  getTranscript: () => string;
 } {
   const [partial, setPartial] = useState("");
   const [connected, setConnected] = useState(false);
   const [silentSeconds, setSilentSeconds] = useState<number | null>(null);
   const rearmRef = useRef<() => void>(() => undefined);
+  // The stitched answer, kept in a ref so the button can read it without a
+  // re-render on every partial.
+  const transcriptRef = useRef("");
 
   const onFinalTurnRef = useRef(onFinalTurn);
   const onSpeechStartRef = useRef(onSpeechStart);
@@ -175,12 +185,12 @@ export function useStreamingStt({
       onFinalTurnRef.current(finals.join(" ").replace(/\s+/g, " ").trim());
     };
 
-    // Re-arm for the "add?" flow: allow another fire, and drop the finals so the
-    // NEXT fire carries only what they say from here on (their addition), not a
-    // repeat of the answer just submitted.
+    // Re-arm: allow another fire and drop the finals so the NEXT stretch of
+    // speech is captured on its own (used to move between the opening bits).
     rearmRef.current = () => {
       firedTurn = false;
       finals.length = 0;
+      transcriptRef.current = "";
       setPartial("");
     };
 
@@ -237,11 +247,18 @@ export function useStreamingStt({
               onSpeechStartRef.current?.();
               break;
             case "transcript.partial":
-              if (typeof msg.text === "string") setPartial(msg.text);
+              if (typeof msg.text === "string") {
+                setPartial(msg.text);
+                transcriptRef.current = [...finals, msg.text]
+                  .join(" ")
+                  .replace(/\s+/g, " ")
+                  .trim();
+              }
               break;
             case "transcript.final":
               if (msg.text && msg.text.trim()) finals.push(msg.text.trim());
               setPartial("");
+              transcriptRef.current = finals.join(" ").replace(/\s+/g, " ").trim();
               break;
             case "vad.speech_end":
               // End the turn only if they stay quiet — a pause for thought
@@ -347,5 +364,6 @@ export function useStreamingStt({
     connected,
     silentSeconds,
     rearm: () => rearmRef.current(),
+    getTranscript: () => transcriptRef.current,
   };
 }

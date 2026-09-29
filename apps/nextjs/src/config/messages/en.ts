@@ -129,7 +129,7 @@ export const en = {
     reRecord: "Re-record",
     next: "Next question",
     finish: "Finish assessment",
-    keepSpeaking: "Keep speaking — this moves on by itself when you stop.",
+    keepSpeaking: "Take your time — tap Next when you're done.",
     waitingForAnswer: "Listening — start speaking whenever you're ready.",
     skippingIn:
       "Skipping this question in {seconds}s — start speaking to continue.",
