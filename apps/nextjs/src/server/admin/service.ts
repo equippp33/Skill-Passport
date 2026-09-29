@@ -182,10 +182,61 @@ export async function getInterviewForAdmin(
   const attempts = await db.query.interviewAttemptsTable.findMany({
     where: eq(interviewAttemptsTable.interviewId, interview.id),
     orderBy: desc(interviewAttemptsTable.createdAt),
-    limit: 500,
+    // High cap, not 500: a candidate can now RETAKE (up to 3 attempts), so rows
+    // far outnumber people. A 500 cap ordered by newest silently dropped older
+    // COMPLETED attempts out of the window as fresh in-progress ones arrived —
+    // which is exactly why the completed count appeared to shrink. Load enough
+    // that the per-candidate collapse below sees every attempt.
+    // ponytail: fine to a few thousand candidates; page + aggregate if it grows.
+    limit: 5000,
   });
 
   return { interview, attempts };
+}
+
+/** Rank a status so a candidate's "best" attempt wins the collapse below. */
+const ATTEMPT_STATUS_RANK: Record<string, number> = {
+  completed: 5,
+  processing: 4,
+  in_progress: 3,
+  failed: 2,
+  not_started: 1,
+};
+
+/** How a candidate is identified across their retakes. */
+function candidateKey(a: InterviewAttempt): string {
+  return (
+    a.externalStudentId?.trim() ||
+    a.candidateEmail?.trim().toLowerCase() ||
+    a.id
+  );
+}
+
+/**
+ * Collapse an interview's attempts to ONE per candidate.
+ *
+ * With retakes, one person has several attempts, which double-counted them
+ * (shown in both "in progress" and "completed") and made "completed" jitter.
+ * Keep each candidate's BEST attempt — completed beats in-progress beats
+ * not-started, newest breaks ties — so counts are per-person and, once someone
+ * has finished, they stay "completed" even while a retake is under way.
+ */
+function collapseByCandidate(attempts: InterviewAttempt[]): InterviewAttempt[] {
+  const best = new Map<string, InterviewAttempt>();
+  for (const a of attempts) {
+    const key = candidateKey(a);
+    const cur = best.get(key);
+    if (!cur) {
+      best.set(key, a);
+      continue;
+    }
+    const rank = ATTEMPT_STATUS_RANK[a.status] ?? 0;
+    const curRank = ATTEMPT_STATUS_RANK[cur.status] ?? 0;
+    if (rank > curRank || (rank === curRank && a.createdAt > cur.createdAt)) {
+      best.set(key, a);
+    }
+  }
+  return [...best.values()];
 }
 
 export async function setInterviewOpen(
@@ -304,7 +355,9 @@ export async function getInterviewDetails(
   const found = await getInterviewForAdmin(adminId, interviewId);
   if (!found) return null;
 
-  const { interview, attempts } = found;
+  const { interview } = found;
+  // One card + one count per candidate, not per attempt (retakes make several).
+  const attempts = collapseByCandidate(found.attempts);
   const attemptIds = attempts.map((a) => a.id);
   const isDev = env.NODE_ENV === "development";
   const [
