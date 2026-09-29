@@ -295,11 +295,12 @@ export function contextBlock(ctx: InterviewContext): string {
     ...(ctx.priorAttempts
       ? [
           ``,
-          `This candidate has taken this assessment BEFORE. Here is what they said`,
-          `last time. Use it as background so you know them and can judge growth,`,
-          `and do NOT ask a question they have already answered word-for-word —`,
-          `vary it or go deeper. Do not read this back to them or quiz them on it:`,
-          untrusted("EARLIER ATTEMPT", ctx.priorAttempts),
+          `This candidate has taken this assessment BEFORE — one or more earlier`,
+          `attempts are shown below, oldest first. Use them as background so you`,
+          `know them and can judge growth across attempts, and do NOT ask a`,
+          `question they have already answered word-for-word — vary it or go`,
+          `deeper. Do not read this back to them or quiz them on it:`,
+          untrusted("EARLIER ATTEMPTS", ctx.priorAttempts),
         ]
       : []),
     ...(ctx.candidateIntroduction

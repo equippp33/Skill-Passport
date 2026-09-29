@@ -15,6 +15,14 @@ export class ProviderError extends Error {
   readonly retryable: boolean;
   readonly userMessage: string;
   readonly status?: number;
+  /**
+   * The provider was REACHED but its reply was unusable (empty, non-JSON, or
+   * failed schema validation) — a content quirk, not an outage. Callers use this
+   * to avoid tripping the Sarvam circuit breaker on a one-off bad response:
+   * disabling a healthy provider for minutes over a format hiccup only pushes
+   * load onto the fallback.
+   */
+  readonly contentError: boolean;
 
   constructor(opts: {
     provider: "sarvam" | "openai";
@@ -22,6 +30,7 @@ export class ProviderError extends Error {
     userMessage: string;
     retryable: boolean;
     status?: number;
+    contentError?: boolean;
   }) {
     super(opts.message);
     this.name = "ProviderError";
@@ -29,6 +38,7 @@ export class ProviderError extends Error {
     this.retryable = opts.retryable;
     this.userMessage = opts.userMessage;
     this.status = opts.status;
+    this.contentError = opts.contentError ?? false;
   }
 }
 

@@ -26,6 +26,20 @@ const FILTERS: { key: Group; label: string }[] = [
 
 type Sort = "recent" | "score_desc" | "score_asc" | "name";
 
+/** Stable per-day key from a date, in the viewer's own timezone. */
+function dayKey(d: Date): string {
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+/** Human date header for a day group, e.g. "29 September 2026". */
+function dayLabel(d: Date): string {
+  return d.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
 export function CandidateGrid({
   attempts,
   statusLabels,
@@ -78,6 +92,21 @@ export function CandidateGrid({
     });
     return list;
   }, [attempts, query, group, sort]);
+
+  // Gallery view: when sorted by most-recent, break the list into day sections
+  // (newest day first) with a date header, the way a photo gallery groups by
+  // date. Other sorts (name/score) stay a single flat grid.
+  const sections = useMemo(() => {
+    if (sort !== "recent") return null;
+    const out: { key: string; label: string; items: AttemptSummary[] }[] = [];
+    for (const a of shown) {
+      const key = dayKey(a.createdAt);
+      const last = out[out.length - 1];
+      if (last && last.key === key) last.items.push(a);
+      else out.push({ key, label: dayLabel(a.createdAt), items: [a] });
+    }
+    return out;
+  }, [shown, sort]);
 
   if (attempts.length === 0) {
     return (
@@ -153,6 +182,29 @@ export function CandidateGrid({
         <p className="rounded-xl border border-border-subtle bg-surface p-8 text-center text-sm text-content-muted">
           No candidates match.
         </p>
+      ) : sections ? (
+        <div className="space-y-8">
+          {sections.map((s) => (
+            <div key={s.key} className="space-y-3">
+              <h3 className="border-b border-border-subtle pb-1.5 text-sm font-semibold">
+                {s.label}{" "}
+                <span className="font-normal text-content-muted">
+                  ({s.items.length})
+                </span>
+              </h3>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                {s.items.map((attempt) => (
+                  <CandidateCard
+                    key={attempt.id}
+                    attempt={attempt}
+                    statusLabel={statusLabels[attempt.status] ?? attempt.status}
+                    returnTo={returnTo}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {shown.map((attempt) => (

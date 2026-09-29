@@ -236,6 +236,7 @@ export async function requestStructuredViaSarvam<T>(args: {
         userMessage:
           "We could not read the interviewer response. Please try again.",
         retryable: true,
+        contentError: true,
       });
     }
 
@@ -249,6 +250,7 @@ export async function requestStructuredViaSarvam<T>(args: {
         userMessage:
           "We could not read the interviewer response. Please try again.",
         retryable: true,
+        contentError: true,
       });
     }
 
@@ -265,6 +267,7 @@ export async function requestStructuredViaSarvam<T>(args: {
         userMessage:
           "We could not read the interviewer response. Please try again.",
         retryable: true,
+        contentError: true,
       });
     }
     return result.data;

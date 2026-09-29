@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, inArray, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, ne, or, sql } from "drizzle-orm";
 
 import { db } from "~/server/db";
 import { withUsageScope } from "~/server/interview/usage";
@@ -206,53 +206,80 @@ async function buildContext(
 
 /** How much of each prior answer to carry over — enough for gist, not the lot. */
 const PRIOR_ANSWER_CHARS = 300;
+/** Safety cap on how many earlier attempts to fold in (retake limit is 3). */
+const MAX_PRIOR_ATTEMPTS = 3;
 
 /**
- * A compact digest of this candidate's most recent EARLIER completed attempt at
- * the SAME interview, matched by email. Null for first-timers. Best-effort:
- * any failure just means no prior context, never a broken interview.
+ * A digest of ALL this candidate's EARLIER completed attempts at the SAME
+ * interview, oldest first so progression reads in order. Matched by partner
+ * student id when present (how a retake is identified), falling back to email
+ * for ordinary links. Null for first-timers. Best-effort: any failure just
+ * means no prior context, never a broken interview.
  */
 async function priorAttemptsContext(
   attempt: InterviewAttempt,
 ): Promise<string | null> {
-  const email = attempt.candidateEmail?.trim();
-  if (!email) return null;
+  const studentId = attempt.externalStudentId?.trim() || null;
+  const email = attempt.candidateEmail?.trim() || null;
+  if (!studentId && !email) return null;
+
+  // Same identity a retake is counted by, so the prior attempts are found.
+  const sameCandidate = studentId
+    ? eq(interviewAttemptsTable.externalStudentId, studentId)
+    : eq(interviewAttemptsTable.candidateEmail, email!);
 
   try {
-    const prior = await db.query.interviewAttemptsTable.findFirst({
+    const priors = await db.query.interviewAttemptsTable.findMany({
       where: and(
-        eq(interviewAttemptsTable.candidateEmail, email),
+        sameCandidate,
         eq(interviewAttemptsTable.interviewId, attempt.interviewId),
         ne(interviewAttemptsTable.id, attempt.id),
         eq(interviewAttemptsTable.status, "completed"),
       ),
-      orderBy: desc(interviewAttemptsTable.completedAt),
+      orderBy: asc(interviewAttemptsTable.completedAt),
     });
-    if (!prior) return null;
+    if (priors.length === 0) return null;
+    // Defensive cap; keep the most recent ones if there are somehow more.
+    const kept = priors.slice(-MAX_PRIOR_ATTEMPTS);
 
+    // One query for every prior turn, then grouped per attempt.
     const turns = await db.query.interviewTurnsTable.findMany({
       where: and(
-        eq(interviewTurnsTable.attemptId, prior.id),
+        inArray(
+          interviewTurnsTable.attemptId,
+          kept.map((p) => p.id),
+        ),
         eq(interviewTurnsTable.kind, "skill"),
       ),
       orderBy: asc(interviewTurnsTable.turnNumber),
     });
+    const turnsByAttempt = new Map<string, typeof turns>();
+    for (const t of turns) {
+      const list = turnsByAttempt.get(t.attemptId) ?? [];
+      list.push(t);
+      turnsByAttempt.set(t.attemptId, list);
+    }
 
-    const lines = turns
-      .filter((t) => t.answerTranscript?.trim())
-      .map(
-        (t) =>
-          `Q: ${t.question}\nA: ${t
-            .answerTranscript!.trim()
-            .slice(0, PRIOR_ANSWER_CHARS)}`,
-      );
-    if (lines.length === 0) return null;
+    const blocks = kept
+      .map((prior, i) => {
+        const lines = (turnsByAttempt.get(prior.id) ?? [])
+          .filter((t) => t.answerTranscript?.trim())
+          .map(
+            (t) =>
+              `Q: ${t.question}\nA: ${t
+                .answerTranscript!.trim()
+                .slice(0, PRIOR_ANSWER_CHARS)}`,
+          );
+        if (lines.length === 0) return null;
+        const score =
+          prior.overallScore !== null
+            ? `overall ${prior.overallScore}/100`
+            : "not scored";
+        return [`Attempt ${i + 1} (${score}):`, ...lines].join("\n");
+      })
+      .filter((b): b is string => b !== null);
 
-    const header =
-      prior.overallScore !== null
-        ? `Previous overall score: ${prior.overallScore}/100.`
-        : `Took this assessment before (not scored).`;
-    return [header, ...lines].join("\n\n");
+    return blocks.length > 0 ? blocks.join("\n\n") : null;
   } catch (error) {
     console.error(
       `[attempt] prior-attempts lookup failed: ${

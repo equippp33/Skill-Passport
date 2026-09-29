@@ -340,13 +340,20 @@ async function requestStructured<T>(args: {
       return result;
     } catch (error) {
       if (!env.OPENAI_API_KEY) throw error;
-      sarvamOpenUntil = Date.now() + SARVAM_BREAKER_COOLDOWN_MS; // trip it
+      // A CONTENT quirk (off-format reply) means Sarvam is up — fall back for
+      // THIS call only, but keep the breaker closed so the next call still tries
+      // Sarvam. Opening it here disables a healthy provider for minutes and
+      // dumps every call onto the fallback (which may itself be rate-limited).
+      // Only a real outage (timeout / network / 5xx / auth) trips the breaker.
+      const contentError =
+        error instanceof ProviderError && error.contentError;
+      if (!contentError) {
+        sarvamOpenUntil = Date.now() + SARVAM_BREAKER_COOLDOWN_MS; // trip it
+      }
       console.warn(
-        `[llm] sarvam ${args.schemaName} failed; skipping sarvam for ${
-          SARVAM_BREAKER_COOLDOWN_MS / 1000
-        }s, using openai: ${
-          error instanceof Error ? error.message : "unknown"
-        }`,
+        `[llm] sarvam ${args.schemaName} failed (${
+          contentError ? "content quirk, breaker kept closed" : "outage, breaker open"
+        }); using openai: ${error instanceof Error ? error.message : "unknown"}`,
       );
       return openaiFallback();
     }
@@ -497,10 +504,16 @@ export async function classifyUtterance(args: {
       required: ["intent"],
       additionalProperties: false,
     },
-    validator: z.object({ intent: z.enum(["answer", "doubt"]) }),
+    // Tolerant on purpose: the model sometimes replies "Answer", "doubt.", etc.
+    // A strict enum rejected those and — because a rejection reads as a provider
+    // failure — tripped the Sarvam breaker over a capital letter. Take a plain
+    // string and normalise below instead.
+    validator: z.object({ intent: z.string() }),
     kind: "conversation",
   });
-  return result.intent;
+  // Anything mentioning "doubt" is a doubt; everything else is an answer (the
+  // safe default — a real answer is never sent back for a re-ask).
+  return /doubt/i.test(result.intent) ? "doubt" : "answer";
 }
 
 /**
