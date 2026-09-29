@@ -394,6 +394,51 @@ async function toNativeScript(
   return transliterateToNative(text, ctx.language.code);
 }
 
+/** Indian scripts (Devanagari … Malayalam) — used to detect a drifted evaluation. */
+const INDIC_SCRIPT = /[ऀ-ൿ]/;
+
+/**
+ * Translate a stretch of text into English. Focused, single-purpose call — used
+ * only to rescue the rare evaluation the model writes in the interview language
+ * despite being told (twice) to keep reviewer notes in English.
+ */
+async function translateToEnglish(text: string): Promise<string> {
+  const result = await requestStructured({
+    instructions: [
+      "Translate the given text into natural, fluent English.",
+      "Keep the meaning and tone. Output ONLY the translation, nothing else.",
+    ].join(" "),
+    input: text,
+    schemaName: "english_translation",
+    jsonSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The English translation." },
+      },
+      required: ["text"],
+      additionalProperties: false,
+    },
+    validator: z.object({ text: z.string() }),
+    kind: "conversation",
+  });
+  return result.text.trim() || text;
+}
+
+/**
+ * Guarantee an evaluation is in English. The prompt AND the schema both say to
+ * write it in English, yet the model still occasionally answers in the interview
+ * language — reviewer notes must be English regardless, so if an Indian script
+ * slips through, translate it. Best-effort: a non-English note beats none.
+ */
+async function ensureEnglishEvaluation(text: string): Promise<string> {
+  if (!text || !INDIC_SCRIPT.test(text)) return text;
+  try {
+    return await translateToEnglish(text);
+  } catch {
+    return text;
+  }
+}
+
 /**
  * Generate a fresh question for a given skill and turn, WITHOUT needing the
  * previous answer.
@@ -678,6 +723,10 @@ export async function evaluateAnswerAndGetNextQuestion(args: {
     kind: scoreOnly ? "analysis" : "conversation",
   });
 
+  // Reviewer notes must be English even if the model drifted into the interview
+  // language (it sometimes does, despite the prompt + schema both saying so).
+  evaluation.evaluation = await ensureEnglishEvaluation(evaluation.evaluation);
+
   // The question budget and completion are enforced server-side: never let the
   // model overrun the configured count or end the interview early.
   // Scoring only: the caller wants marks, not a question, and must not be
@@ -813,6 +862,9 @@ export async function scoreAndMaybeFollowUp(args: {
 
   return {
     ...evaluation,
+    // Reviewer notes must be English even if the model drifted into the
+    // interview language.
+    evaluation: await ensureEnglishEvaluation(evaluation.evaluation),
     nextQuestion: evaluation.nextQuestion
       ? await toNativeScript(ctx, evaluation.nextQuestion)
       : null,
