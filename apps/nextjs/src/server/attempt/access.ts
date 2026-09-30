@@ -2,7 +2,7 @@ import "server-only";
 
 import { timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { db } from "~/server/db";
 import { interviewAttemptsTable, interviewsTable } from "~/server/db/schema";
@@ -178,6 +178,44 @@ export async function attemptEligibility(
     attemptsUsed,
     maxAttempts: MAX_ATTEMPTS_PER_CANDIDATE,
   };
+}
+
+/**
+ * The candidate's most-recent UNFINISHED attempt at this interview, or null.
+ *
+ * Lets a student who left mid-interview pick up where they stopped instead of
+ * starting over — no matter how long ago they left (client's call: always
+ * resume). Matched on the SAME identity as the retake cap — partner student id
+ * when present, else email — so it works even without the `sp_attempt` cookie (a
+ * new device, cleared cookies, or after it expired), which is the only other way
+ * back to a live attempt. With no identity to key on, returns null (cookie-only
+ * resume still applies).
+ */
+export async function resumableAttemptFor(
+  interviewId: string,
+  candidate: { externalStudentId?: string | null; email?: string | null },
+): Promise<InterviewAttempt | null> {
+  const studentId = candidate.externalStudentId?.trim() || null;
+  const email = candidate.email?.trim() || null;
+  if (!studentId && !email) return null;
+
+  const identity = studentId
+    ? eq(interviewAttemptsTable.externalStudentId, studentId)
+    : eq(interviewAttemptsTable.candidateEmail, email!);
+
+  const found = await db.query.interviewAttemptsTable.findFirst({
+    where: and(
+      eq(interviewAttemptsTable.interviewId, interviewId),
+      identity,
+      inArray(interviewAttemptsTable.status, [
+        "not_started",
+        "in_progress",
+        "processing",
+      ]),
+    ),
+    orderBy: desc(interviewAttemptsTable.updatedAt),
+  });
+  return found ?? null;
 }
 
 /** The interview behind a share link, or null if the token is wrong/closed. */

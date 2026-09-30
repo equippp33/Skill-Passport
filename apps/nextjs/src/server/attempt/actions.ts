@@ -8,6 +8,7 @@ import {
   getAttemptForCandidate,
   getInterviewByPublicToken,
   MAX_ATTEMPTS_PER_CANDIDATE,
+  resumableAttemptFor,
   setAttemptCookie,
 } from "./access";
 import { candidateDetailsSchema } from "~/server/interview/validation";
@@ -60,6 +61,20 @@ export async function beginAttemptAction(
       }
     }
     return { error: null, fieldErrors };
+  }
+
+  // Resume before anything else: if this candidate has an unfinished attempt,
+  // take them back INTO it rather than starting fresh. Matched on identity, so it
+  // works even without the cookie (new device / cleared cookies). Outranks the
+  // retake cap — an unfinished run is not a new retry. `redirect` throws, so it
+  // must stay outside any try/catch.
+  const resumable = await resumableAttemptFor(interview.id, {
+    externalStudentId: parsed.data.studentId,
+    email: parsed.data.email,
+  });
+  if (resumable) {
+    await setAttemptCookie(resumable.accessToken);
+    redirect(`/attempt/${resumable.id}`);
   }
 
   // Retake limits: at most a few attempts per candidate, with a cooldown after
