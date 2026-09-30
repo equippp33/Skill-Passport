@@ -13,7 +13,14 @@ import {
   interviewsTable,
   usersTable,
 } from "~/server/db/schema";
-import type { Interview, InterviewAttempt } from "~/server/db/schema";
+import type {
+  Interview,
+  InterviewAttempt,
+  InterviewTurn,
+} from "~/server/db/schema";
+import { aggregateSkillScores } from "~/lib/scoring";
+import { WORK_SKILLS } from "~/config/work-skills";
+import type { WorkSkillId } from "~/config/work-skills";
 import type { InterviewDetails } from "./dto";
 import { formatInr, interviewCost, wasMetered } from "~/config/pricing";
 import { env } from "~/env";
@@ -294,19 +301,34 @@ export interface AttemptTab {
   isCurrent: boolean;
 }
 
+/** One skill's score across every attempt, aligned to `attempts` order. */
+export interface SkillComparisonRow {
+  skillId: WorkSkillId;
+  label: string;
+  /** 0-10 per attempt (same order as `attempts`), null where not assessed. */
+  scores: (number | null)[];
+}
+
+export interface CandidateAttempts {
+  attempts: AttemptTab[];
+  /** Per-skill score matrix for the side-by-side comparison. */
+  skills: SkillComparisonRow[];
+}
+
 /**
- * A candidate's attempts at the SAME interview, oldest first, so the report page
- * can offer them as tabs. Identity is the partner student id when present, else
- * email — the same key retakes are counted by. Scoped to the admin's own
- * interview. Returns [] when there is only one (no tabs needed).
+ * A candidate's attempts at the SAME interview, oldest first — for the report's
+ * tab bar AND the side-by-side score comparison. Identity is the partner student
+ * id when present, else email (the same key retakes are counted by). Scoped to
+ * the admin's own interview. Returns null when there is only one attempt (no
+ * tabs, no comparison needed).
  */
-export async function getCandidateAttemptTabs(
+export async function getCandidateAttempts(
   adminId: string,
   attempt: InterviewAttempt,
-): Promise<AttemptTab[]> {
+): Promise<CandidateAttempts | null> {
   const studentId = attempt.externalStudentId?.trim() || null;
   const email = attempt.candidateEmail?.trim() || null;
-  if (!studentId && !email) return [];
+  if (!studentId && !email) return null;
 
   const identity = studentId
     ? eq(interviewAttemptsTable.externalStudentId, studentId)
@@ -334,12 +356,39 @@ export async function getCandidateAttemptTabs(
     )
     .orderBy(asc(interviewAttemptsTable.createdAt));
 
-  if (rows.length <= 1) return [];
-  return rows.map((r, i) => ({
+  if (rows.length <= 1) return null;
+
+  const attempts: AttemptTab[] = rows.map((r, i) => ({
     ...r,
     attemptNumber: i + 1,
     isCurrent: r.attemptId === attempt.id,
   }));
+
+  // Per-attempt per-skill scores, using the SAME aggregation the report uses so
+  // the comparison matches each attempt's own report exactly.
+  const ids = attempts.map((a) => a.attemptId);
+  const turns = await db.query.interviewTurnsTable.findMany({
+    where: inArray(interviewTurnsTable.attemptId, ids),
+  });
+  const turnsByAttempt = new Map<string, InterviewTurn[]>();
+  for (const t of turns) {
+    const list = turnsByAttempt.get(t.attemptId) ?? [];
+    list.push(t);
+    turnsByAttempt.set(t.attemptId, list);
+  }
+  const scoreByAttempt = new Map<string, Map<WorkSkillId, number | null>>();
+  for (const id of ids) {
+    const agg = aggregateSkillScores(turnsByAttempt.get(id) ?? []);
+    scoreByAttempt.set(id, new Map(agg.map((s) => [s.skillId, s.score])));
+  }
+
+  const skills: SkillComparisonRow[] = WORK_SKILLS.map((skill) => ({
+    skillId: skill.id,
+    label: skill.label,
+    scores: ids.map((id) => scoreByAttempt.get(id)?.get(skill.id) ?? null),
+  }));
+
+  return { attempts, skills };
 }
 
 export interface AdminStats {

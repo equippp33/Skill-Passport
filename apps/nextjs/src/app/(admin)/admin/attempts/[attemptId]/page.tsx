@@ -6,10 +6,11 @@ import { AttemptReport } from "~/components/attempt-report";
 import { Alert } from "~/components/ui";
 import {
   getAttemptForAdmin,
-  getCandidateAttemptTabs,
+  getCandidateAttempts,
   getClipDurations,
   requireAdmin,
 } from "~/server/admin/service";
+import { AttemptComparison } from "./attempt-comparison";
 import { getTurns } from "~/server/attempt/service";
 import { uiMessages } from "~/server/language";
 import { uuidSchema } from "~/server/interview/validation";
@@ -41,12 +42,14 @@ export default async function AdminAttemptPage({
   if (!found) notFound();
 
   const { attempt, interview } = found;
-  const [turns, clipDurations, appOrigin, attemptTabs] = await Promise.all([
-    getTurns(attempt.id),
-    getClipDurations(attempt.id),
-    appUrl(),
-    getCandidateAttemptTabs(admin.id, attempt),
-  ]);
+  const [turns, clipDurations, appOrigin, candidateAttempts] = await Promise.all(
+    [
+      getTurns(attempt.id),
+      getClipDurations(attempt.id),
+      appUrl(),
+      getCandidateAttempts(admin.id, attempt),
+    ],
+  );
   const m = uiMessages();
   const fromQuery = from ? `?from=${encodeURIComponent(from)}` : "";
 
@@ -119,12 +122,12 @@ export default async function AdminAttemptPage({
 
         {/* Retakes: this candidate has more than one attempt. Each is its own
             report + recordings; the tabs switch between them (oldest first). */}
-        {attemptTabs.length > 1 ? (
+        {candidateAttempts ? (
           <div
             data-print-hide
             className="mt-4 flex flex-wrap gap-2 border-b border-border-subtle pb-3"
           >
-            {attemptTabs.map((tab) => (
+            {candidateAttempts.attempts.map((tab) => (
               <Link
                 key={tab.attemptId}
                 href={`/admin/attempts/${tab.attemptId}${fromQuery}`}
@@ -158,6 +161,13 @@ export default async function AdminAttemptPage({
           </div>
         ) : null}
       </div>
+
+      {candidateAttempts ? (
+        <AttemptComparison
+          attempts={candidateAttempts.attempts}
+          skills={candidateAttempts.skills}
+        />
+      ) : null}
 
       {attempt.status !== "completed" ? (
         <Alert tone="warning">
