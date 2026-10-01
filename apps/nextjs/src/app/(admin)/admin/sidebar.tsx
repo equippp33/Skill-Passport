@@ -35,6 +35,7 @@ export function AdminSidebar({
         key={item.href}
         href={item.href}
         aria-current={active ? "page" : undefined}
+        title={item.label}
         className={cn(
           "flex min-h-9 items-center justify-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors lg:justify-start",
           active
@@ -43,7 +44,11 @@ export function AdminSidebar({
         )}
       >
         <Icon name={item.icon} className="size-4 shrink-0" />
-        <span>{item.label}</span>
+        {/* Mobile: always shown. Desktop: hidden on the collapsed rail, revealed
+            when the sidebar (the `group`) is hovered. */}
+        <span className="whitespace-nowrap lg:hidden lg:group-hover:inline">
+          {item.label}
+        </span>
       </Link>
     );
   });
@@ -59,7 +64,7 @@ export function AdminSidebar({
   return (
     <aside
       aria-label="Admin navigation"
-      className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-border-subtle bg-surface lg:flex"
+      className="group fixed inset-y-0 left-0 z-30 hidden w-16 flex-col overflow-hidden border-r border-border-subtle bg-surface transition-[width] duration-200 ease-out hover:w-60 hover:shadow-[var(--shadow-raised)] lg:flex"
     >
       <Link href="/admin" className="px-4 py-4">
         <Brand />

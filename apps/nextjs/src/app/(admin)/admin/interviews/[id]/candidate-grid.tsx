@@ -26,6 +26,9 @@ const FILTERS: { key: Group; label: string }[] = [
 
 type Sort = "recent" | "score_desc" | "score_asc" | "name";
 
+/** Retake filter: everyone, only those who did a 2nd attempt, only a 3rd. */
+type AttemptsFilter = "all" | "2plus" | "3plus";
+
 /** Stable per-day key from a date, in the viewer's own timezone. */
 function dayKey(d: Date): string {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
@@ -53,6 +56,7 @@ export function CandidateGrid({
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<Group>("all");
   const [sort, setSort] = useState<Sort>("recent");
+  const [attemptsFilter, setAttemptsFilter] = useState<AttemptsFilter>("all");
 
   const counts = useMemo(() => {
     const c: Record<Group, number> = {
@@ -70,6 +74,8 @@ export function CandidateGrid({
     const q = query.trim().toLowerCase();
     let list = attempts.filter((a) => {
       if (group !== "all" && groupOf(a.status) !== group) return false;
+      if (attemptsFilter === "2plus" && a.attemptCount < 2) return false;
+      if (attemptsFilter === "3plus" && a.attemptCount < 3) return false;
       if (!q) return true;
       return (
         a.candidateName.toLowerCase().includes(q) ||
@@ -91,7 +97,7 @@ export function CandidateGrid({
       }
     });
     return list;
-  }, [attempts, query, group, sort]);
+  }, [attempts, query, group, sort, attemptsFilter]);
 
   // Gallery view: when sorted by most-recent, break the list into day sections
   // (newest day first) with a date header, the way a photo gallery groups by
@@ -138,6 +144,16 @@ export function CandidateGrid({
             aria-label="Search candidates"
             className="h-10 w-64 max-w-full"
           />
+          <Select
+            value={attemptsFilter}
+            onChange={(e) => setAttemptsFilter(e.target.value as AttemptsFilter)}
+            aria-label="Filter by number of attempts"
+            className="h-10 w-auto"
+          >
+            <option value="all">All attempts</option>
+            <option value="2plus">Did a 2nd attempt</option>
+            <option value="3plus">Did a 3rd attempt</option>
+          </Select>
           <Select
             value={sort}
             onChange={(e) => setSort(e.target.value as Sort)}

@@ -150,11 +150,16 @@ export async function createGeneralInterview(
 export async function listInterviews(
   adminId: string,
 ): Promise<InterviewWithCounts[]> {
+  // Counts are PER CANDIDATE (a person, by student id → email → attempt id),
+  // not per attempt — matching the detail page, which collapses retakes to one
+  // card per candidate. Counting raw attempts here made the list say "1705 /
+  // 360" while the detail page said "895 / 332" for the same interview.
+  const candidateKey = sql`coalesce(${interviewAttemptsTable.externalStudentId}, lower(${interviewAttemptsTable.candidateEmail}), ${interviewAttemptsTable.id}::text)`;
   const rows = await db
     .select({
       interview: interviewsTable,
-      attemptCount: sql<number>`count(${interviewAttemptsTable.id})::int`,
-      completedCount: sql<number>`count(*) filter (where ${interviewAttemptsTable.status} = 'completed')::int`,
+      attemptCount: sql<number>`count(distinct ${candidateKey})::int`,
+      completedCount: sql<number>`count(distinct ${candidateKey}) filter (where ${interviewAttemptsTable.status} = 'completed')::int`,
     })
     .from(interviewsTable)
     .leftJoin(
@@ -354,7 +359,15 @@ export async function getCandidateAttempts(
         eq(interviewsTable.createdByUserId, adminId),
       ),
     )
-    .orderBy(asc(interviewAttemptsTable.createdAt));
+    // Order by when each attempt was FINISHED, not created — a candidate often
+    // starts several in quick succession and completes them out of that order
+    // (resume, retries). `completedAt` is immutable (unlike updatedAt, which a
+    // resend bumps); an unfinished attempt falls back to its start time.
+    .orderBy(
+      asc(
+        sql`coalesce(${interviewAttemptsTable.completedAt}, ${interviewAttemptsTable.createdAt})`,
+      ),
+    );
 
   if (rows.length <= 1) return null;
 
@@ -467,6 +480,13 @@ export async function getInterviewDetails(
   // One card + one count per candidate, not per attempt (retakes make several).
   const attempts = collapseByCandidate(found.attempts);
   const attemptIds = attempts.map((a) => a.id);
+  // How many attempts each candidate made — for the per-card badge and the
+  // "did a 2nd / 3rd attempt" filter. Counted over ALL attempts, before collapse.
+  const attemptCounts = new Map<string, number>();
+  for (const a of found.attempts) {
+    const k = candidateKey(a);
+    attemptCounts.set(k, (attemptCounts.get(k) ?? 0) + 1);
+  }
   const isDev = env.NODE_ENV === "development";
   const [
     spokenByAttempt,
@@ -594,6 +614,7 @@ export async function getInterviewDetails(
       spokenLanguages: spokenByAttempt.get(attempt.id) ?? [],
       overallScore: attempt.overallScore,
       awayCount: attempt.awayCount,
+      attemptCount: attemptCounts.get(candidateKey(attempt)) ?? 1,
       // Null in production, and null when the meter did not cover this
       // interview — see `wasMetered`. A zero would be a claim that it was free.
       devCost: readingFor(attempt).cost,

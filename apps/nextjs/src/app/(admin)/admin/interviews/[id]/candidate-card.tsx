@@ -101,6 +101,13 @@ export function CandidateCard({
           {statusLabel}
         </span>
 
+        {/* Retake marker — only when they took it more than once. */}
+        {attempt.attemptCount > 1 ? (
+          <span className="absolute right-2 bottom-2 rounded-md bg-accent/85 px-2 py-1 text-xs font-semibold text-accent-contrast backdrop-blur-sm">
+            {attempt.attemptCount} attempts
+          </span>
+        ) : null}
+
         {/*
          * What this interview cost to run. Development only — the server
          * sends `devCost` as null in production, so this renders nothing

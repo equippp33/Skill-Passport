@@ -1,4 +1,5 @@
 import type { AttemptTab, SkillComparisonRow } from "~/server/admin/service";
+import { formatDate } from "~/lib/utils";
 
 /** Same colour bands as the report: green good, amber middling, red weak. */
 function tone(score: number | null): string {
@@ -76,7 +77,7 @@ export function AttemptComparison({
             {skills.map((row) => (
               <tr
                 key={row.skillId}
-                className="border-b border-border-subtle/60 last:border-0"
+                className="border-b border-border-subtle/60"
               >
                 <td className="py-2 pr-3">{row.label}</td>
                 {row.scores.map((s, i) => (
@@ -89,6 +90,17 @@ export function AttemptComparison({
                 ))}
               </tr>
             ))}
+            <tr>
+              <td className="py-2 pr-3 text-xs text-content-muted">Completed</td>
+              {attempts.map((a) => (
+                <td
+                  key={a.attemptId}
+                  className="px-3 py-2 text-center text-xs text-content-muted"
+                >
+                  {a.completedAt ? formatDate(a.completedAt) : "—"}
+                </td>
+              ))}
+            </tr>
           </tbody>
         </table>
       </div>

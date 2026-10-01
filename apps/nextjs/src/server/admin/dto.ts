@@ -31,6 +31,8 @@ export interface AttemptSummary {
   spokenLanguages: { code: string; label: string; turns: number }[];
   overallScore: number | null;
   awayCount: number;
+  /** How many attempts this candidate made at this interview (1 = no retake). */
+  attemptCount: number;
   /**
    * What this interview cost to run — development only, null in production and
    * null for any interview the meter did not cover.

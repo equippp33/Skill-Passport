@@ -29,10 +29,10 @@ export default async function AdminAttemptPage({
   searchParams,
 }: {
   params: Promise<{ attemptId: string }>;
-  searchParams: Promise<{ from?: string }>;
+  searchParams: Promise<{ from?: string; view?: string }>;
 }) {
   const { attemptId: raw } = await params;
-  const { from } = await searchParams;
+  const { from, view } = await searchParams;
   const admin = await requireAdmin("/admin");
 
   const parsed = uuidSchema.safeParse(raw);
@@ -52,6 +52,9 @@ export default async function AdminAttemptPage({
   );
   const m = uiMessages();
   const fromQuery = from ? `?from=${encodeURIComponent(from)}` : "";
+  const fromParam = from ? `&from=${encodeURIComponent(from)}` : "";
+  // The "Compare" tab is a view of THIS page, toggled by ?view=compare.
+  const comparing = view === "compare" && candidateAttempts !== null;
 
   return (
     <>
@@ -127,62 +130,80 @@ export default async function AdminAttemptPage({
             data-print-hide
             className="mt-4 flex flex-wrap gap-2 border-b border-border-subtle pb-3"
           >
-            {candidateAttempts.attempts.map((tab) => (
-              <Link
-                key={tab.attemptId}
-                href={`/admin/attempts/${tab.attemptId}${fromQuery}`}
-                aria-current={tab.isCurrent ? "page" : undefined}
-                className={
-                  tab.isCurrent
-                    ? "rounded-full bg-accent px-3 py-1.5 text-sm font-medium text-accent-contrast"
-                    : "rounded-full border border-border-subtle bg-surface px-3 py-1.5 text-sm font-medium text-content-muted transition-colors hover:bg-surface-muted"
-                }
-              >
-                Attempt {tab.attemptNumber}
-                <span
+            {candidateAttempts.attempts.map((tab) => {
+              const active = tab.isCurrent && !comparing;
+              return (
+                <Link
+                  key={tab.attemptId}
+                  href={`/admin/attempts/${tab.attemptId}${fromQuery}`}
+                  aria-current={active ? "page" : undefined}
                   className={
-                    tab.isCurrent
-                      ? "ml-1.5 text-accent-contrast/70"
-                      : "ml-1.5 text-content-muted/70"
+                    active
+                      ? "rounded-full bg-accent px-3 py-1.5 text-sm font-medium text-accent-contrast"
+                      : "rounded-full border border-border-subtle bg-surface px-3 py-1.5 text-sm font-medium text-content-muted transition-colors hover:bg-surface-muted"
                   }
                 >
-                  {tab.status === "completed"
-                    ? tab.overallScore !== null
-                      ? `${(tab.overallScore / 10).toFixed(1)}/10`
-                      : "done"
-                    : tab.status === "in_progress" || tab.status === "processing"
-                      ? "in progress"
-                      : tab.status === "failed"
-                        ? "failed"
-                        : "not started"}
-                </span>
-              </Link>
-            ))}
+                  Attempt {tab.attemptNumber}
+                  <span
+                    className={
+                      active
+                        ? "ml-1.5 text-accent-contrast/70"
+                        : "ml-1.5 text-content-muted/70"
+                    }
+                  >
+                    {tab.status === "completed"
+                      ? tab.overallScore !== null
+                        ? `${(tab.overallScore / 10).toFixed(1)}/10`
+                        : "done"
+                      : tab.status === "in_progress" ||
+                          tab.status === "processing"
+                        ? "in progress"
+                        : tab.status === "failed"
+                          ? "failed"
+                          : "not started"}
+                  </span>
+                </Link>
+              );
+            })}
+            {/* The side-by-side comparison, as its own tab. */}
+            <Link
+              href={`/admin/attempts/${attempt.id}?view=compare${fromParam}`}
+              aria-current={comparing ? "page" : undefined}
+              className={
+                comparing
+                  ? "rounded-full bg-accent px-3 py-1.5 text-sm font-medium text-accent-contrast"
+                  : "rounded-full border border-border-subtle bg-surface px-3 py-1.5 text-sm font-medium text-content-muted transition-colors hover:bg-surface-muted"
+              }
+            >
+              Compare
+            </Link>
           </div>
         ) : null}
       </div>
 
-      {candidateAttempts ? (
+      {comparing ? (
         <AttemptComparison
           attempts={candidateAttempts.attempts}
           skills={candidateAttempts.skills}
         />
       ) : null}
 
-      {attempt.status !== "completed" ? (
+      {!comparing && attempt.status !== "completed" ? (
         <Alert tone="warning">
           This attempt is not finished yet, so the report is partial.
         </Alert>
       ) : null}
 
-      <AttemptReport
-        attempt={attempt}
-        turns={turns}
-        clipDurations={clipDurations}
-        appOrigin={appOrigin}
-        m={m}
-        showCandidate
-      />
+      {!comparing ? (
+        <AttemptReport
+          attempt={attempt}
+          turns={turns}
+          clipDurations={clipDurations}
+          appOrigin={appOrigin}
+          m={m}
+          showCandidate
+        />
+      ) : null}
     </>
   );
 }
