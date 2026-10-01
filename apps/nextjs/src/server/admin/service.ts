@@ -483,10 +483,37 @@ export async function getInterviewDetails(
   // How many attempts each candidate made — for the per-card badge and the
   // "did a 2nd / 3rd attempt" filter. Counted over ALL attempts, before collapse.
   const attemptCounts = new Map<string, number>();
+  const attemptsByCandidate = new Map<string, InterviewAttempt[]>();
   for (const a of found.attempts) {
     const k = candidateKey(a);
     attemptCounts.set(k, (attemptCounts.get(k) ?? 0) + 1);
+    const list = attemptsByCandidate.get(k) ?? [];
+    list.push(a);
+    attemptsByCandidate.set(k, list);
   }
+
+  // Every candidate with 2+ attempts, each attempt oldest-first by when it
+  // FINISHED (not created — retakes complete out of creation order). Powers the
+  // "Retake comparison" table so reviewers can scan how repeat scores held up.
+  const finishedAt = (a: InterviewAttempt) =>
+    (a.completedAt ?? a.createdAt).getTime();
+  const repeatComparison = [...attemptsByCandidate.values()]
+    .filter((list) => list.length >= 2)
+    .map((list) => {
+      const ordered = [...list].sort((a, b) => finishedAt(a) - finishedAt(b));
+      const latest = ordered[ordered.length - 1]!;
+      return {
+        reportAttemptId: latest.id,
+        candidateName: latest.candidateName,
+        candidateEmail: latest.candidateEmail,
+        attempts: ordered.map((a) => ({
+          overallScore: a.overallScore === null ? null : a.overallScore / 10,
+          status: a.status,
+        })),
+      };
+    })
+    .sort((a, b) => a.candidateName.localeCompare(b.candidateName));
+
   const isDev = env.NODE_ENV === "development";
   const [
     spokenByAttempt,
@@ -603,6 +630,7 @@ export async function getInterviewDetails(
     isOpen: interview.isOpen,
     createdAt: interview.createdAt,
     devCosts,
+    repeatComparison,
     attempts: attempts.map((attempt) => ({
       id: attempt.id,
       candidateName: attempt.candidateName,

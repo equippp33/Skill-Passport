@@ -60,6 +60,16 @@ export interface AttemptSummary {
   createdAt: Date;
 }
 
+/** One repeat candidate's attempts, oldest first, for the retake-comparison table. */
+export interface RepeatCandidate {
+  /** Attempt to open when the row is clicked (their latest). */
+  reportAttemptId: string;
+  candidateName: string;
+  candidateEmail: string | null;
+  /** Overall score (0-10) per attempt, oldest first; null if that run was unscored. */
+  attempts: { overallScore: number | null; status: string }[];
+}
+
 export interface InterviewDetails {
   id: string;
   title: string;
@@ -69,6 +79,8 @@ export interface InterviewDetails {
   isOpen: boolean;
   createdAt: Date;
   attempts: AttemptSummary[];
+  /** Every candidate with 2+ attempts, for the retake-comparison table. */
+  repeatComparison?: RepeatCandidate[];
   /**
    * What every interview under this link has cost, split by provider —
    * development only, absent in production.

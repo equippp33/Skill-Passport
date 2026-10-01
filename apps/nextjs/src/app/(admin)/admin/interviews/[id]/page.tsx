@@ -12,6 +12,7 @@ import { formatDate } from "~/lib/utils";
 import { OpenToggle } from "../../open-toggle";
 import { ShareLink } from "../../share-link";
 import { CandidateGrid } from "./candidate-grid";
+import { CandidateSection } from "./candidate-section";
 
 export const metadata: Metadata = { title: "Interview" };
 export const dynamic = "force-dynamic";
@@ -138,11 +139,16 @@ export default async function InterviewDetailPage({
         ) : null}
       </section>
 
-      <CandidateGrid
-        attempts={details.attempts}
-        statusLabels={statusLabels}
+      <CandidateSection
+        comparison={details.repeatComparison ?? []}
         returnTo={`/admin/interviews/${details.id}`}
-      />
+      >
+        <CandidateGrid
+          attempts={details.attempts}
+          statusLabels={statusLabels}
+          returnTo={`/admin/interviews/${details.id}`}
+        />
+      </CandidateSection>
     </div>
   );
 }
