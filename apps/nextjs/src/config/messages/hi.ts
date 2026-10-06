@@ -50,7 +50,7 @@ export const hi: Messages = {
     newInterview: "नया मूल्यांकन शुरू करें",
     emptyTitle: "अभी तक कोई मूल्यांकन नहीं",
     emptyBody:
-      "अपना पहला मूल्यांकन शुरू करें। इसमें दस कार्य कौशल्य जाँचे जाते हैं, एक बार में एक सवाल।",
+      "अपना पहला मूल्यांकन शुरू करें। इसमें कार्य कौशल्य जाँचे जाते हैं, एक बार में एक सवाल।",
     statusLabel: "स्थिति",
     scoreLabel: "अंक",
     questions: "सवाल",
@@ -69,7 +69,7 @@ export const hi: Messages = {
       "एक बार में एक सवाल। सुनें, बोलकर जवाब दें, फिर अगला दबाएँ।",
     duration: "लगभग {minutes} मिनट",
     skillsCovered:
-      "इसमें भरोसेमंदी, टीम वर्क और संवाद जैसे दस कार्य कौशल्य जाँचे जाते हैं।",
+      "इसमें भरोसेमंदी, टीम वर्क और संवाद जैसे कार्य कौशल्य जाँचे जाते हैं।",
     answerLimit:
       "हर जवाब ज़्यादा से ज़्यादा {seconds} सेकंड का हो सकता है। सवाल पढ़े जाने के बाद रिकॉर्डिंग अपने आप शुरू हो जाती है।",
     microphone:
@@ -141,8 +141,10 @@ export const hi: Messages = {
     reRecord: "दोबारा रिकॉर्ड करें",
     next: "अगला सवाल",
     finish: "मूल्यांकन पूरा करें",
-    keepSpeaking: "बोलते रहिए — आपके रुकते ही यह अपने आप आगे बढ़ जाएगा।",
+    keepSpeaking: "आराम से बोलिए — हो जाए तो Next दबाइए।",
     waitingForAnswer: "सुन रहे हैं — जब तैयार हों तब बोलना शुरू करें।",
+    skippingIn:
+      "यह सवाल {seconds} सेकंड में छोड़ दिया जाएगा — जारी रखने के लिए बोलना शुरू करें।",
     advancingIn: "{seconds} में आगे बढ़ रहे हैं…",
     introduction: "परिचय",
     chooseLanguageTitle: "आप किस भाषा में आगे बढ़ना चाहेंगे?",
@@ -163,6 +165,9 @@ export const hi: Messages = {
       "बस हो ही गया…",
     ],
     savingRecordings: "आपकी रिकॉर्डिंग सहेजी जा रही है — बस हो गया…",
+    submittingInterview: "आपका इंटरव्यू भेजा जा रहा है",
+    submittingHint: "बस एक पल — हम सब कुछ सहेज रहे हैं।",
+    savingProgress: "आपके जवाब सहेजे जा रहे हैं — {total} में से {done}",
     processingHint:
       "आपका जवाब लिखा और जाँचा जा रहा है। इसमें कुछ सेकंड लगते हैं — यह पेज खुला रखें।",
     errorTitle: "कुछ गड़बड़ हो गई",
@@ -185,7 +190,7 @@ export const hi: Messages = {
     noStrengths: "कोई खास मज़बूत पक्ष नहीं मिला।",
     noImprovements: "कोई खास सुधार नहीं सुझाया गया।",
     skillBreakdown: "कौशल्यवार अंक",
-    skillBreakdownHint: "सभी दस कार्य कौशल्य, हर एक १० में से।",
+    skillBreakdownHint: "सभी कार्य कौशल्य, हर एक १० में से।",
     notAssessed: "जाँचा नहीं गया",
     questionBreakdown: "सवालवार विवरण",
     yourAnswer: "आपका जवाब",
@@ -204,14 +209,15 @@ export const hi: Messages = {
   },
 
   skills: {
+    work_readiness: "काम के लिए तैयारी और आकांक्षाएँ",
     reliability: "भरोसेमंदी",
     responsibility: "ज़िम्मेदारी",
     following_instructions: "निर्देशों का पालन",
     attention_to_detail: "बारीकियों पर ध्यान",
     communication: "संवाद",
     teamwork: "टीम वर्क",
-    problem_solving: "सोच और समस्या समाधान",
-    learning_adaptability: "सीखना और ढलना",
+    problem_solving: "समस्या समाधान",
+    learning_adaptability: "ढलना",
     initiative: "पहल",
     customer_orientation: "ग्राहक के प्रति रवैया",
   },

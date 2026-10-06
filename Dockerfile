@@ -55,6 +55,15 @@ ENV NEXT_BUILD=1
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
+# NEXT_PUBLIC_* are inlined into the browser bundle at build time — they must be
+# present HERE, not just at runtime, or the client ships with them undefined
+# (streaming silently off). Coolify passes these as build args when the matching
+# env vars are marked "Build Variable / available at buildtime".
+ARG NEXT_PUBLIC_STT_STREAMING
+ARG NEXT_PUBLIC_STT_RELAY_URL
+ENV NEXT_PUBLIC_STT_STREAMING=$NEXT_PUBLIC_STT_STREAMING
+ENV NEXT_PUBLIC_STT_RELAY_URL=$NEXT_PUBLIC_STT_RELAY_URL
+
 RUN pnpm --filter @skill-passport/nextjs exec next build
 
 

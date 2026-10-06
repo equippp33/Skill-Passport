@@ -2,65 +2,79 @@
  * What one interview costs to run, in rupees.
  *
  * Development only. This is a running-cost readout for whoever is building the
- * thing, not an invoice — the real numbers come off the provider dashboards,
- * and this exists so a change that triples the token count is visible the same
- * afternoon rather than at the end of the month.
+ * thing, not an invoice — it exists so a change that triples the token count or
+ * the clip count is visible the same afternoon rather than at the end of the
+ * month.
  *
- * ---------------------------------------------------------------------------
- * THE RATES BELOW ARE ESTIMATES. Check them against an actual bill before
- * quoting any of this to a customer. Provider pricing changes, differs per
- * account and per plan, and none of it is discoverable from the API.
- * ---------------------------------------------------------------------------
+ * The rates below are the providers' published list prices, checked on
+ * 23 September 2026:
  *
- * Each counter is stored in the unit its provider bills in — see the usage
- * columns on `interview_attempts` — so the conversion happens here and only
- * here.
+ *   Sarvam   https://docs.sarvam.ai/api/getting-started/pricing
+ *   OpenAI   https://developers.openai.com/api/docs/pricing
+ *
+ * They are still list prices. A negotiated contract, a promotional credit or a
+ * plan change will move them, so treat a total here as the right order of
+ * magnitude and the comparison between two interviews as exact.
  */
 
-/** Rupees per US dollar. Only OpenAI is billed in dollars. */
+/** Rupees per US dollar. Only OpenAI bills in dollars. */
 const USD_TO_INR = 88;
 
-/**
- * OpenAI `gpt-4.1` list pricing, per million tokens.
- *
- * Only charged when `AI_PROVIDER=openai`; the default is Sarvam.
- */
+/* ------------------------------- Sarvam ---------------------------------- */
+
+/** Speech to text: ₹30 per hour, billed per second. */
+const SARVAM_STT_INR_PER_MINUTE = 30 / 60;
+
+/** `bulbul:v3`: ₹30 per 10,000 characters, rounded to the nearest character. */
+const SARVAM_TTS_INR_PER_CHAR = 30 / 10_000;
+
+/** `sarvam-105b`, per million tokens. Both variants price the same. */
+const SARVAM_INPUT_INR_PER_MTOK = 29.28;
+const SARVAM_OUTPUT_INR_PER_MTOK = 73.2;
+
+/* ------------------------------- OpenAI ---------------------------------- */
+
+/** `gpt-4.1` standard processing, per million tokens, in USD. */
 const OPENAI_INPUT_USD_PER_MTOK = 2.0;
 const OPENAI_OUTPUT_USD_PER_MTOK = 8.0;
 
 /**
- * Sarvam, in rupees.
+ * What an interview used.
  *
- * The least certain numbers here — Sarvam prices in credits and the rate per
- * credit depends on the plan. Treat the total as an order of magnitude until
- * someone reconciles it against a statement.
+ * Speech-to-text is counted in MINUTES OF AUDIO rather than requests, because
+ * that is how Sarvam bills it — and because the streaming path does not make
+ * requests at all, it holds a socket open. The minutes come from the recorded
+ * answer clips, which are measured by the browser and stored either way, so
+ * this stays correct whichever transcription path ran.
  */
-const SARVAM_INPUT_INR_PER_MTOK = 60;
-const SARVAM_OUTPUT_INR_PER_MTOK = 240;
-/** Speech-to-text, per request. Each answer segment is one request. */
-const SARVAM_STT_INR_PER_REQUEST = 0.3;
-/** Text-to-speech, per 1,000 characters synthesised. */
-const SARVAM_TTS_INR_PER_KCHAR = 1.5;
-
-/** The counters as they come off an attempt row. */
 export interface InterviewUsage {
-  sttRequests: number;
+  sttMinutes: number;
   ttsCharacters: number;
   llmInputTokens: number;
   llmOutputTokens: number;
 }
 
+export interface CostBreakdown {
+  stt: number;
+  tts: number;
+  llm: number;
+  total: number;
+}
+
 /**
- * Total rupees for one interview.
+ * Rupees for one interview, split by leg.
  *
- * `provider` decides which model rates apply, because the brain is the part
- * that actually moves the number — STT and TTS are Sarvam either way.
+ * `provider` decides which model rates apply. Speech is Sarvam either way —
+ * only the brain moves.
  */
-export function interviewCostInr(
+export function interviewCost(
   usage: InterviewUsage,
   provider: "sarvam" | "openai",
-): number {
-  const brain =
+): CostBreakdown {
+  const stt = usage.sttMinutes * SARVAM_STT_INR_PER_MINUTE;
+  const tts = usage.ttsCharacters * SARVAM_TTS_INR_PER_CHAR;
+
+  const llm =
     provider === "openai"
       ? ((usage.llmInputTokens * OPENAI_INPUT_USD_PER_MTOK +
           usage.llmOutputTokens * OPENAI_OUTPUT_USD_PER_MTOK) /
@@ -70,32 +84,28 @@ export function interviewCostInr(
           usage.llmOutputTokens * SARVAM_OUTPUT_INR_PER_MTOK) /
         1_000_000;
 
-  const stt = usage.sttRequests * SARVAM_STT_INR_PER_REQUEST;
-  const tts = (usage.ttsCharacters / 1000) * SARVAM_TTS_INR_PER_KCHAR;
-
-  return brain + stt + tts;
+  return { stt, tts, llm, total: stt + tts + llm };
 }
 
 /**
- * Formatted for a badge: `₹2.14`.
+ * Whether the meter was running for this interview.
  *
- * Two decimals throughout. One interview costs single-digit rupees, so
- * rounding to whole rupees would show most of them as ₹2 and hide exactly the
- * differences this is meant to expose.
+ * Every interview synthesises at least its opening question, so a run with no
+ * TTS characters was never metered — it predates the counters, or predates one
+ * of the legs being instrumented. Those must read as "unknown", never as
+ * ₹0.00: a zero is a claim that an interview was free, and showing one next to
+ * a completed interview is how a readout like this stops being believed.
+ */
+export function wasMetered(usage: { ttsCharacters: number }): boolean {
+  return usage.ttsCharacters > 0;
+}
+
+/**
+ * Formatted for a badge: `₹12.30`.
+ *
+ * Two decimals throughout. One interview costs tens of rupees, so rounding to
+ * whole ones would hide exactly the differences this is meant to expose.
  */
 export function formatInr(amount: number): string {
   return `₹${amount.toFixed(2)}`;
-}
-
-/**
- * Whether the meter was actually running for this interview.
- *
- * Every interview synthesises at least its opener, so a run with zero TTS
- * characters did not have a meter on it at all — it predates the counters, or
- * predates one of the legs being instrumented. Those must read as "unknown",
- * never as ₹0.00: a zero is a claim that an interview was free, and showing
- * one next to a completed interview is how this readout loses its usefulness.
- */
-export function wasMetered(usage: InterviewUsage): boolean {
-  return usage.ttsCharacters > 0;
 }

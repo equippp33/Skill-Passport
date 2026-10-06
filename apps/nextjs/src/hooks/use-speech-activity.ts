@@ -37,105 +37,70 @@ import { useEffect, useRef, useState } from "react";
 // Too low and room static counts as talking and the answer never ends. 0.013
 // sits above a quiet room's floor (~0.005) while catching soft speech. Raise
 // toward 0.02 only if static is holding answers open on real mics.
-const SPEECH_RMS_THRESHOLD = 0.013;
+/**
+ * The FLOOR for the speech threshold — it never drops below this even in a
+ * silent room, so faint hiss is never mistaken for a voice.
+ */
+const SPEECH_RMS_FLOOR = 0.008;
+
+/**
+ * The CEILING for it — even a loud room never demands more than this, so the
+ * candidate is not forced to shout to be heard.
+ */
+const SPEECH_RMS_CEILING = 0.06;
+
+/**
+ * Speech must beat the measured room noise by this factor. A fan or background
+ * chatter sits at the noise floor; a real voice is several times louder, so
+ * requiring 2.5× the ambient level is what separates the two — and it adapts
+ * per room instead of guessing one number that works nowhere.
+ */
+const NOISE_MULTIPLIER = 2.5;
 
 /** How often the level is sampled. Fine enough for a 1s countdown. */
 const SAMPLE_INTERVAL_MS = 200;
 
 /**
- * Level at which we accept that somebody said something, at some point.
+ * Net voiced time before we believe the candidate is actually answering.
  *
- * A far lower bar than `SPEECH_RMS_THRESHOLD`, and deliberately so: the two
- * questions are different. "Are they still talking?" has to be strict, because
- * room noise creeping over the line holds an answer open for ever. "Did anyone
- * speak at all during this whole recording?" has to be generous, because
- * getting it wrong throws away a real answer — a soft speaker on a laptop mic
- * with gain control off never gets near 0.013, and the first version of this
- * check failed them on the opening question with "check your microphone".
- *
- * Sitting just above a quiet room's floor (~0.005) is safe here only because
- * of the count below: hiss does not sustain, speech does.
+ * Built up while a real voice is present and decayed twice as fast during
+ * silence, so a cough, a knock, or an intermittent bit of noise can never
+ * accumulate to this — only genuine, sustained speech does. Until it is
+ * reached, nothing auto-submits and the "take your time" nudge still fires.
  */
-const PRESENCE_RMS_THRESHOLD = 0.008;
-
-/**
- * How many samples above that before it counts as speech.
- *
- * Six, at 200ms each — a little over a second of energy, spread anywhere
- * across the answer. One stray sample is a door, a click, a chair. Nobody
- * answers a question in under a second, and nothing in a quiet room sustains
- * for one.
- */
-const PRESENCE_SAMPLES = 6;
-
-/**
- * One rung of the "they have not said anything yet" ladder.
- *
- * `at` is seconds of candidate silence, not wall clock — time spent listening
- * to the interviewer say a previous rung does not count.
- */
-export interface SilenceStage {
-  id: string;
-  at: number;
-  /** The rung that stops waiting and moves the interview on. Exactly one. */
-  final?: boolean;
-}
+const VOICE_ARM_MS = 1000;
 
 export function useSpeechActivity({
   stream,
   active,
+  speaking = false,
   silenceSeconds,
   minSpeechSeconds,
-  paused,
   noAnswerStages,
-  onStage,
-  onSpeechChange,
+  onNoAnswerStage,
   onSilence,
 }: {
   /** The live microphone stream. Null while devices are not open. */
   stream: MediaStream | null;
   /** Only watch while an answer is actually being recorded. */
   active: boolean;
+  /**
+   * True while the INTERVIEWER is speaking (question, filler, nudge). Detection
+   * pauses so the clip bleeding into the mic is never mistaken for an answer.
+   */
+  speaking?: boolean;
   /** Silence this long after speech ends triggers `onSilence`. */
   silenceSeconds: number;
   /** Never fire before the answer is at least this long. */
   minSpeechSeconds: number;
   /**
-   * Freeze the clock, and stop listening, while the interviewer is talking.
-   *
-   * The microphone stays open through a filler so the candidate can cut in,
-   * which means the interviewer's own voice reaches this analyser. Without
-   * this, saying "take your time" out loud would read as the candidate
-   * speaking, and the seconds spent saying it would eat the very patience it
-   * was offering.
+   * When the candidate has said nothing, escalate through these thresholds (in
+   * seconds, ascending): `onNoAnswerStage(i)` fires once as each is crossed.
+   * The caller decides what each stage does — nudge, repeat, then move on — so
+   * a silent candidate is coaxed rather than left in dead air.
    */
-  paused: boolean;
-  /**
-   * What to do, and when, while the candidate has not said a word.
-   *
-   * A ladder rather than a single deadline: reassure, then offer the question
-   * more simply, then let them off the hook. Someone who has frozen is not
-   * helped by the same question again, and is not helped by silence either.
-   *
-   * Ordered by `at`, with exactly one `final` rung — that one submits, so the
-   * interview is never stuck waiting on somebody who has gone quiet. The
-   * recording still goes to the transcriber, which is more sensitive than this
-   * gate, and a truly empty one is skipped server-side.
-   */
-  noAnswerStages: SilenceStage[];
-  /** Called as each rung is reached, with its id. */
-  onStage: (id: string) => void;
-  /**
-   * Whether a word has been heard yet in this answer — `false` when watching
-   * starts, `true` the first time the level clears the speech threshold.
-   *
-   * The one honest answer to "did this person say anything?". The transcriber
-   * cannot be asked: handed near-silence it invents plausible speech, and an
-   * interview once ran eight questions deep on "Okay, so" hallucinated from an
-   * empty room. This is measured from the microphone, so it cannot be
-   * imagined.
-   */
-  onSpeechChange: (heard: boolean) => void;
+  noAnswerStages: number[];
+  onNoAnswerStage: (index: number) => void;
   onSilence: () => void;
 }): { secondsRemaining: number | null; noAnswerIn: number | null } {
   /**
@@ -154,29 +119,16 @@ export function useSpeechActivity({
   useEffect(() => {
     onSilenceRef.current = onSilence;
   }, [onSilence]);
-
-  const onStageRef = useRef(onStage);
+  const onNoAnswerStageRef = useRef(onNoAnswerStage);
   useEffect(() => {
-    onStageRef.current = onStage;
-  }, [onStage]);
-
-  const onSpeechChangeRef = useRef(onSpeechChange);
+    onNoAnswerStageRef.current = onNoAnswerStage;
+  }, [onNoAnswerStage]);
+  // Read inside the sampling loop rather than being an effect dependency, so
+  // the interviewer starting to speak does not tear down and rebuild the graph.
+  const speakingRef = useRef(speaking);
   useEffect(() => {
-    onSpeechChangeRef.current = onSpeechChange;
-  }, [onSpeechChange]);
-
-  const stagesRef = useRef(noAnswerStages);
-  useEffect(() => {
-    stagesRef.current = noAnswerStages;
-  }, [noAnswerStages]);
-
-  /** Rungs already announced for this answer. */
-  const doneRef = useRef<Set<string>>(new Set());
-
-  const pausedRef = useRef(paused);
-  useEffect(() => {
-    pausedRef.current = paused;
-  }, [paused]);
+    speakingRef.current = speaking;
+  }, [speaking]);
 
   useEffect(() => {
     if (!active || !stream) return;
@@ -195,6 +147,11 @@ export function useSpeechActivity({
       // Analysis is an enhancement; the Next button still works without it.
       return;
     }
+    // Autoplay policy can hand back a SUSPENDED context. A suspended analyser
+    // returns pure silence, so `spoken` never becomes true and the no-answer
+    // ladder fires on a timer while the candidate is actually talking — the
+    // "why is it nudging me mid-answer" bug. Resuming makes detection real.
+    void context.resume().catch(() => undefined);
 
     const source = context.createMediaStreamSource(stream);
     const analyser = context.createAnalyser();
@@ -209,29 +166,23 @@ export function useSpeechActivity({
     doneRef.current = new Set();
     const startedAt = Date.now();
     let lastVoiceAt = Date.now();
-    let lastTickAt = Date.now();
-    /** How long the clock has stood still while the interviewer spoke. */
-    let pausedMs = 0;
+    // What this room's own noise is measuring right now. Learned from the quiet
+    // moments and used to set the bar speech has to clear, so a noisy room and
+    // a silent one both work without a hand-tuned number.
+    let noiseFloor = 0.02;
+    // Net voiced time: ramps up on real speech, decays faster on silence, so a
+    // blip of noise never accumulates into "they answered".
+    let voicedMs = 0;
     let spoken = false;
     let fired = false;
-    /** Samples above the presence bar, and whether they have added up yet. */
-    let loudSamples = 0;
-    let heard = false;
-    // Each answer starts from "nothing heard".
-    onSpeechChangeRef.current(false);
+    const firedStages = new Set<number>();
 
     const timer = setInterval(() => {
-      const now = Date.now();
-      const sinceTick = now - lastTickAt;
-      lastTickAt = now;
-
-      // Deaf and stopped while the interviewer talks. `lastVoiceAt` moves with
-      // the clock so a candidate mid-answer does not lose their pause either.
-      if (pausedRef.current) {
-        pausedMs += sinceTick;
-        lastVoiceAt = now;
-        return;
-      }
+      // The interviewer is talking (question replay, filler, "take your time"):
+      // do not listen. The clip leaks into the mic, and counting it as the
+      // candidate answering was auto-submitting empty answers. Pause in place —
+      // the timers and `spoken` survive so nothing resets underneath them.
+      if (speakingRef.current) return;
 
       analyser.getByteTimeDomainData(samples);
 
@@ -242,6 +193,14 @@ export function useSpeechActivity({
         sum += centred * centred;
       }
       const rms = Math.sqrt(sum / samples.length);
+      const now = Date.now();
+
+      // The bar speech has to clear: well above the measured room noise, but
+      // clamped so a quiet room is not deaf and a loud one needs no shouting.
+      const threshold = Math.min(
+        SPEECH_RMS_CEILING,
+        Math.max(SPEECH_RMS_FLOOR, noiseFloor * NOISE_MULTIPLIER),
+      );
 
       // One assignment per tick, so a stale countdown left over from the
       // previous answer is corrected on the first sample of this one.
@@ -249,63 +208,46 @@ export function useSpeechActivity({
       let remaining: number | null = null;
       let waiting: number | null = null;
 
-      // Counted separately from `spoken`, and on a lower bar — see
-      // `PRESENCE_RMS_THRESHOLD`. This only ever decides whether the recording
-      // is worth transcribing at all.
-      if (!heard && rms >= PRESENCE_RMS_THRESHOLD) {
-        loudSamples += 1;
-        if (loudSamples >= PRESENCE_SAMPLES) {
-          heard = true;
-          onSpeechChangeRef.current(true);
-        }
-      }
-
-      if (rms >= SPEECH_RMS_THRESHOLD) {
+      if (rms >= threshold) {
+        voicedMs = Math.min(VOICE_ARM_MS, voicedMs + SAMPLE_INTERVAL_MS);
         lastVoiceAt = now;
-        spoken = true;
-      } else if (spoken && now - startedAt >= minSpeechSeconds * 1000) {
-        // They spoke and have now gone quiet — the normal end of an answer.
-        const silentMs = now - lastVoiceAt;
-        const left = Math.ceil((silenceSeconds * 1000 - silentMs) / 1000);
+        // Latches once enough real voice has accumulated; a single loud sample
+        // (cough, knock, static) never gets there.
+        if (voicedMs >= VOICE_ARM_MS) spoken = true;
+      } else {
+        // Learn the ambient level from the quiet stretches only.
+        noiseFloor = noiseFloor * 0.9 + rms * 0.1;
+        // Decay twice as fast as it builds, so intermittent noise cannot creep
+        // up to the arm threshold between gaps.
+        voicedMs = Math.max(0, voicedMs - SAMPLE_INTERVAL_MS * 2);
 
-        if (left <= 0) {
-          if (fired) return;
-          fired = true;
-          clearInterval(timer);
-          setSecondsRemaining(null);
-          setNoAnswerIn(null);
-          onSilenceRef.current();
-          return;
-        }
-        remaining = left;
-      } else if (!spoken) {
-        // Not a word yet. Climb the ladder: reassure, offer it more simply,
-        // then move on. Each rung fires once.
-        const waited = now - startedAt - pausedMs;
-
-        const due = stagesRef.current.find(
-          (stage) =>
-            stage.at * 1000 <= waited && !doneRef.current.has(stage.id),
-        );
-        if (due) {
-          doneRef.current.add(due.id);
-          if (due.final) {
+        if (spoken && now - startedAt >= minSpeechSeconds * 1000) {
+          // They spoke and have now gone quiet — the normal end of an answer.
+          const silentMs = now - lastVoiceAt;
+          const left = Math.ceil((silenceSeconds * 1000 - silentMs) / 1000);
+          if (left <= 0) {
             if (fired) return;
             fired = true;
             clearInterval(timer);
             setSecondsRemaining(null);
             setNoAnswerIn(null);
-            onStageRef.current(due.id);
             onSilenceRef.current();
             return;
           }
-          onStageRef.current(due.id);
+          remaining = left;
+        } else if (!spoken) {
+          // Not a word yet — escalate through the nudge stages. Each fires
+          // once; the caller nudges, then repeats. There is NO auto-submit and
+          // NO auto-skip here: a silent candidate is coaxed, never moved on.
+          const elapsedMs = now - startedAt;
+          for (let i = 0; i < noAnswerStages.length; i += 1) {
+            if (elapsedMs >= noAnswerStages[i]! * 1000 && !firedStages.has(i)) {
+              firedStages.add(i);
+              onNoAnswerStageRef.current(i);
+            }
+          }
+          waiting = Math.round(elapsedMs / 1000);
         }
-
-        const last = stagesRef.current[stagesRef.current.length - 1];
-        waiting = last
-          ? Math.max(0, Math.ceil((last.at * 1000 - waited) / 1000))
-          : null;
       }
 
       setSecondsRemaining(remaining);
@@ -318,7 +260,7 @@ export function useSpeechActivity({
       analyser.disconnect();
       void context.close().catch(() => undefined);
     };
-  }, [stream, active, silenceSeconds, minSpeechSeconds]);
+  }, [stream, active, silenceSeconds, minSpeechSeconds, noAnswerStages]);
 
   // Guarded rather than cleared: while nothing is being watched there is no
   // countdown, whatever the last sample happened to leave behind.

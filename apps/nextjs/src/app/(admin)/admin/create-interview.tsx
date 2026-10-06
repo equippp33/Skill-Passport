@@ -5,36 +5,24 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Alert, Button } from "~/components/ui";
-import { WORK_SKILLS } from "~/config/work-skills";
-import type { WorkSkillId } from "~/config/work-skills";
 import { createInterviewAction } from "~/server/admin/actions";
 
 /**
  * Create an interview.
  *
- * The only choice is which skills may get a follow-up: for a ticked skill the
- * interviewer can ask one extra "dig deeper" question when the answer warrants
- * it. Everything else about the interview is fixed.
+ * There is nothing to configure. Every interview covers the same workplace
+ * skills, picks up the candidate's language from how they answer, and decides
+ * a follow-up from each answer on its own — so this is just a button.
  */
 export function CreateInterview() {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [followUps, setFollowUps] = useState<Set<WorkSkillId>>(new Set());
-
-  function toggle(id: WorkSkillId) {
-    setFollowUps((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
 
   function create() {
     setError(null);
     startTransition(async () => {
-      const result = await createInterviewAction([...followUps]);
+      const result = await createInterviewAction();
       if (!result.ok) {
         setError(result.error);
         return;
@@ -56,39 +44,13 @@ export function CreateInterview() {
             Your next interview starts here
           </h2>
           <p className="mt-0.5 max-w-lg text-sm leading-snug text-content-muted">
-            Create a link, invite candidates, and get a structured view of ten
+            Create a link, invite candidates, and get a structured view of their
             workplace skills.
           </p>
         </div>
       </div>
 
-      <fieldset>
-        <legend className="text-sm font-medium">
-          Allow follow-up questions on
-        </legend>
-        <p className="mt-0.5 text-xs text-content-muted">
-          For a ticked skill the interviewer may ask one deeper follow-up when
-          the answer is substantial. Leave all unticked for none.
-        </p>
-        <div className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-          {WORK_SKILLS.map((skill) => (
-            <label
-              key={skill.id}
-              className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border-subtle bg-surface px-3 py-1.5 text-sm transition-colors hover:bg-surface-muted"
-            >
-              <input
-                type="checkbox"
-                checked={followUps.has(skill.id)}
-                onChange={() => toggle(skill.id)}
-                className="size-4 shrink-0 cursor-pointer accent-accent"
-              />
-              <span>{skill.label}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-
-      <div className="flex items-center gap-3">
+      <div>
         <Button
           size="lg"
           disabled={pending}
@@ -98,11 +60,6 @@ export function CreateInterview() {
           <Icon name="plus" />
           {pending ? "Creating…" : "Create interview"}
         </Button>
-        <span className="text-sm text-content-muted">
-          {followUps.size === 0
-            ? "No follow-ups"
-            : `Follow-ups on ${followUps.size} skill${followUps.size === 1 ? "" : "s"}`}
-        </span>
       </div>
     </div>
   );

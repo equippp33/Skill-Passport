@@ -1,4 +1,5 @@
 import "server-only";
+import { recordUsage } from "~/server/interview/usage";
 
 import OpenAI from "openai";
 import { z } from "zod";
@@ -10,11 +11,13 @@ import { timed } from "./timing";
 import { recordUsage } from "~/server/interview/usage";
 import { requestStructuredViaSarvam } from "./sarvam-chat";
 import type { SarvamChatKind } from "./sarvam-chat";
+import { transliterateToNative } from "./sarvam";
 import {
   contextBlock,
   frameworkBlock,
   historyBlock,
   interviewerRules,
+  questionStyleBlock,
   skillBlock,
   untrusted,
 } from "./openai-prompts";
@@ -288,9 +291,8 @@ async function requestStructured<T>(args: {
         },
       });
       raw = response.output_text;
-      // Exact counts from the provider rather than an estimate from the
-      // prompt length: reasoning and cached tokens are billed differently and
-      // only the response knows the real figures.
+      // Billed tokens, straight from the response. Free to read, and the only
+      // honest source — a token count estimated from characters is not one.
       recordUsage({
         llmRequests: 1,
         llmInputTokens: response.usage?.input_tokens ?? 0,
@@ -359,13 +361,20 @@ async function requestStructured<T>(args: {
       return result;
     } catch (error) {
       if (!env.OPENAI_API_KEY) throw error;
-      sarvamOpenUntil = Date.now() + SARVAM_BREAKER_COOLDOWN_MS; // trip it
+      // A CONTENT quirk (off-format reply) means Sarvam is up — fall back for
+      // THIS call only, but keep the breaker closed so the next call still tries
+      // Sarvam. Opening it here disables a healthy provider for minutes and
+      // dumps every call onto the fallback (which may itself be rate-limited).
+      // Only a real outage (timeout / network / 5xx / auth) trips the breaker.
+      const contentError =
+        error instanceof ProviderError && error.contentError;
+      if (!contentError) {
+        sarvamOpenUntil = Date.now() + SARVAM_BREAKER_COOLDOWN_MS; // trip it
+      }
       console.warn(
-        `[llm] sarvam ${args.schemaName} failed; skipping sarvam for ${
-          SARVAM_BREAKER_COOLDOWN_MS / 1000
-        }s, using openai: ${
-          error instanceof Error ? error.message : "unknown"
-        }`,
+        `[llm] sarvam ${args.schemaName} failed (${
+          contentError ? "content quirk, breaker kept closed" : "outage, breaker open"
+        }); using openai: ${error instanceof Error ? error.message : "unknown"}`,
       );
       return openaiFallback();
     }
@@ -383,6 +392,72 @@ export interface GeneratedQuestion {
   question: string;
   /** English rendering, or null when the interview is already in English. */
   translation: string | null;
+}
+
+/**
+ * Backstop the "zero Latin" rule the chat model keeps breaking.
+ *
+ * However firmly the prompt forbids it, `sarvam-105b` still leaves everyday
+ * English words in Latin inside a native-script question ("...deadline చాలా
+ * tight గా..."), which a candidate who only reads Telugu cannot follow. Sarvam
+ * transliteration fixes it deterministically (design→డిజైన్) where instructions
+ * can't. No-op for English and for already-clean text, so it only costs a call
+ * when there is genuinely Latin to convert. Applied to every spoken question the
+ * model produces — opening, follow-up, translated, and repeat.
+ */
+async function toNativeScript(
+  ctx: InterviewContext,
+  text: string,
+): Promise<string> {
+  if (!text || ctx.language.promptName === "English" || !/[a-z]/i.test(text)) {
+    return text;
+  }
+  return transliterateToNative(text, ctx.language.code);
+}
+
+/** Indian scripts (Devanagari … Malayalam) — used to detect a drifted evaluation. */
+const INDIC_SCRIPT = /[ऀ-ൿ]/;
+
+/**
+ * Translate a stretch of text into English. Focused, single-purpose call — used
+ * only to rescue the rare evaluation the model writes in the interview language
+ * despite being told (twice) to keep reviewer notes in English.
+ */
+async function translateToEnglish(text: string): Promise<string> {
+  const result = await requestStructured({
+    instructions: [
+      "Translate the given text into natural, fluent English.",
+      "Keep the meaning and tone. Output ONLY the translation, nothing else.",
+    ].join(" "),
+    input: text,
+    schemaName: "english_translation",
+    jsonSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The English translation." },
+      },
+      required: ["text"],
+      additionalProperties: false,
+    },
+    validator: z.object({ text: z.string() }),
+    kind: "conversation",
+  });
+  return result.text.trim() || text;
+}
+
+/**
+ * Guarantee an evaluation is in English. The prompt AND the schema both say to
+ * write it in English, yet the model still occasionally answers in the interview
+ * language — reviewer notes must be English regardless, so if an Indian script
+ * slips through, translate it. Best-effort: a non-English note beats none.
+ */
+async function ensureEnglishEvaluation(text: string): Promise<string> {
+  if (!text || !INDIC_SCRIPT.test(text)) return text;
+  try {
+    return await translateToEnglish(text);
+  } catch {
+    return text;
+  }
 }
 
 /**
@@ -618,6 +693,8 @@ export async function generateQuestion(args: {
       "",
       skillBlock(skill),
       "",
+      questionStyleBlock(skill, ctx),
+      "",
       isFirst
         ? `This is the START of the interview and question 1 of ${ctx.questionCount}.`
         : `This is question ${turnNumber} of ${ctx.questionCount}. It moves on to a new skill.`,
@@ -642,7 +719,119 @@ export async function generateQuestion(args: {
       retryable: true,
     });
   }
-  return { question, translation: normaliseTranslation(ctx, result) };
+  return {
+    question: await toNativeScript(ctx, question),
+    translation: normaliseTranslation(ctx, result),
+  };
+}
+
+/**
+ * Is this utterance an ANSWER, or a DOUBT the interviewer should respond to?
+ *
+ * A real interviewer never scores "sorry, can you say that again?" or "what do
+ * you mean?" as the answer — they respond and re-ask. This replaces the old
+ * fixed phrase list with the model's judgment, so any phrasing of a doubt, in
+ * any language, is caught rather than only the ones someone thought to list.
+ *
+ * Deliberately tiny and on the "conversation" (fast) model: it runs on the
+ * candidate's critical path, before we decide whether to score or re-ask.
+ */
+export async function classifyUtterance(args: {
+  question: string;
+  transcript: string;
+  /** Interview language, so the model reads the question in context. */
+  languageName: string;
+}): Promise<"answer" | "doubt"> {
+  const result = await requestStructured({
+    instructions: [
+      "You triage ONE thing a candidate said in a spoken interview.",
+      "Decide whether it ANSWERS the interviewer's question, or is a DOUBT",
+      "raised INSTEAD of answering: a request to repeat, 'I didn't understand',",
+      "'I don't know' / 'no idea', asking what to say or for the answer, asking",
+      "a question back, OR mere",
+      "filler with no substance — 'okay', 'um', 'hmm', a false start, or",
+      "near-silence that says nothing about the question. All of those are a",
+      "DOUBT (the candidate needs the question again), not an answer.",
+      "A brief but GENUINE attempt to answer — even vague or partial — is an",
+      "ANSWER. When it is a real attempt, choose answer.",
+      "Return intent only.",
+    ].join(" "),
+    input: [
+      `Interviewer asked (in ${args.languageName}): ${args.question}`,
+      `Candidate said: ${untrusted("CANDIDATE", args.transcript)}`,
+    ].join("\n"),
+    schemaName: "utterance_intent",
+    jsonSchema: {
+      type: "object",
+      properties: { intent: { type: "string", enum: ["answer", "doubt"] } },
+      required: ["intent"],
+      additionalProperties: false,
+    },
+    // Tolerant on purpose: the model sometimes replies "Answer", "doubt.", etc.
+    // A strict enum rejected those and — because a rejection reads as a provider
+    // failure — tripped the Sarvam breaker over a capital letter. Take a plain
+    // string and normalise below instead.
+    validator: z.object({ intent: z.string() }),
+    kind: "conversation",
+  });
+  // Anything mentioning "doubt" is a doubt; everything else is an answer (the
+  // safe default — a real answer is never sent back for a re-ask).
+  return /doubt/i.test(result.intent) ? "doubt" : "answer";
+}
+
+/**
+ * A short SPOKEN reply to a candidate's doubt — never written to the screen.
+ *
+ * The candidate asked something instead of answering ("what does this word
+ * mean?", "I couldn't follow"), or said nothing usable. A real interviewer
+ * answers that out loud and leaves the question standing. This produces only
+ * the line to speak; the question text on screen never changes.
+ */
+export async function generateDoubtResponse(args: {
+  question: string;
+  doubtTranscript: string;
+  /** Interview language — the reply is spoken in it, in its own script. */
+  languageName: string;
+  /** BCP-47 code, for the transliteration backstop on the spoken reply. */
+  languageCode: string;
+}): Promise<string> {
+  const result = await requestStructured({
+    instructions: [
+      "You are a warm, patient interviewer. The candidate did NOT answer your",
+      "question — they raised a doubt about it. Reply BRIEFLY, as words spoken",
+      `aloud, in ${args.languageName} written in that language's OWN script`,
+      "(never Latin letters). If they did not understand a particular word,",
+      "explain THAT word in simple everyday terms. If they could not follow,",
+      "restate the question's meaning simply. If they said nothing meaningful,",
+      "gently encourage them. Always end by inviting them to answer. One or two",
+      "short sentences. NEVER answer the question for them or give an example",
+      "answer.",
+    ].join(" "),
+    input: [
+      `Your question was: ${args.question}`,
+      `The candidate said: ${untrusted("CANDIDATE", args.doubtTranscript)}`,
+    ].join("\n"),
+    schemaName: "doubt_reply",
+    jsonSchema: {
+      type: "object",
+      properties: { reply: { type: "string" } },
+      required: ["reply"],
+      additionalProperties: false,
+    },
+    validator: z.object({ reply: z.string() }),
+    kind: "conversation",
+  });
+  const reply = result.reply.trim();
+  if (!reply) {
+    throw new ProviderError({
+      provider: "openai",
+      message: "empty doubt reply",
+      userMessage: "We could not prepare a reply. Please try again.",
+      retryable: true,
+    });
+  }
+  if (args.languageName === "English" || !/[a-z]/i.test(reply)) return reply;
+  return transliterateToNative(reply, args.languageCode);
 }
 
 /**
@@ -752,6 +941,10 @@ export async function evaluateAnswerAndGetNextQuestion(args: {
     kind: scoreOnly ? "analysis" : "conversation",
   });
 
+  // Reviewer notes must be English even if the model drifted into the interview
+  // language (it sometimes does, despite the prompt + schema both saying so).
+  evaluation.evaluation = await ensureEnglishEvaluation(evaluation.evaluation);
+
   // The question budget and completion are enforced server-side: never let the
   // model overrun the configured count or end the interview early.
   // Scoring only: the caller wants marks, not a question, and must not be
@@ -782,7 +975,11 @@ export async function evaluateAnswerAndGetNextQuestion(args: {
       retryable: true,
     });
   }
-  return { ...evaluation, interviewComplete: false };
+  return {
+    ...evaluation,
+    nextQuestion: await toNativeScript(ctx, evaluation.nextQuestion),
+    interviewComplete: false,
+  };
 }
 
 /**
@@ -801,6 +998,13 @@ export async function scoreAndMaybeFollowUp(args: {
   answerTranscript: string;
   /** 1-based skill number, for "question N of …" framing only. */
   skillNumber: number;
+  /**
+   * Insist on a follow-up. Used to guarantee a minimum per interview: the
+   * caller has decided this answer MUST be probed, so the model asks one unless
+   * the answer is genuinely empty / a skip / a flat refusal. Otherwise the model
+   * is free to return null.
+   */
+  force?: boolean;
 }): Promise<TurnEvaluation> {
   const {
     ctx,
@@ -809,7 +1013,43 @@ export async function scoreAndMaybeFollowUp(args: {
     currentQuestion,
     answerTranscript,
     skillNumber,
+    force = false,
   } = args;
+
+  // The follow-up instruction: normally "probe only when it rescues a thin
+  // answer"; when forced, "ask one that digs into what they said, unless there
+  // is nothing to build on".
+  const followUpInstruction = force
+    ? [
+        `Score this answer for ${currentSkill.label} only, then ask ONE`,
+        `follow-up on the SAME skill that digs into something SPECIFIC the`,
+        `candidate just said — a concrete example, or the next step they would`,
+        `take. Write it in ${ctx.language.promptName} (English rendering in`,
+        `questionTranslation).`,
+        `Set nextQuestion to null ONLY if the answer was empty, a skip, or a`,
+        `flat refusal with nothing to build on — otherwise you MUST ask one.`,
+        `Never a hollow "is there anything you'd like to add?".`,
+        `Set interviewComplete to false.`,
+      ]
+    : [
+        `Score this answer for ${currentSkill.label} only, then decide whether ONE`,
+        `follow-up on the SAME skill is truly needed. DEFAULT TO null — most`,
+        `answers get NO follow-up. A good interview probes only now and then, not`,
+        `after every answer. When you do ask one, write it in`,
+        `${ctx.language.promptName} (English rendering in questionTranslation).`,
+        `- Ask a follow-up ONLY to rescue a GENUINE attempt that is too short or`,
+        `  vague to score fairly — a one-word or one-line answer that clearly has`,
+        `  more behind it. Give them a single chance to show the skill: a concrete`,
+        `  example, or the next step they would take.`,
+        `- ALSO ask a follow-up when the candidate said the SCENARIO does not apply`,
+        `  to them ("I don't cook") — re-frame the SAME skill in a situation they`,
+        `  CAN relate to, drawing on their introduction. That is not a low answer.`,
+        `- Return null for everything else — a clear or reasonably complete answer,`,
+        `  a strong answer, or an empty / off-topic / refusal / "I don't know" /`,
+        `  skip. Never follow up just because you can, and never a hollow "is there`,
+        `  anything you'd like to add?".`,
+        `Set interviewComplete to false.`,
+      ];
 
   const evaluation = await requestStructured({
     instructions: interviewerRules(ctx),
@@ -830,16 +1070,7 @@ export async function scoreAndMaybeFollowUp(args: {
         answerTranscript,
       )}`,
       "",
-      `Score this answer for ${currentSkill.label} only.`,
-      `Then decide whether ONE follow-up on the SAME skill is worth asking:`,
-      `- If the answer was substantial and specific — a real example with more`,
-      `  to explore — put a single follow-up in nextQuestion that refers to`,
-      `  something the candidate actually said and probes deeper, written in`,
-      `  ${ctx.language.promptName}, with its English rendering in`,
-      `  questionTranslation.`,
-      `- If the answer was thin, vague, evasive, or already complete, set`,
-      `  nextQuestion to null. Never invent a follow-up just to have one.`,
-      `Set interviewComplete to false.`,
+      ...followUpInstruction,
     ].join("\n"),
     schemaName: "interview_turn",
     jsonSchema: TURN_JSON_SCHEMA,
@@ -847,7 +1078,16 @@ export async function scoreAndMaybeFollowUp(args: {
     kind: "conversation",
   });
 
-  return { ...evaluation, interviewComplete: false };
+  return {
+    ...evaluation,
+    // Reviewer notes must be English even if the model drifted into the
+    // interview language.
+    evaluation: await ensureEnglishEvaluation(evaluation.evaluation),
+    nextQuestion: evaluation.nextQuestion
+      ? await toNativeScript(ctx, evaluation.nextQuestion)
+      : null,
+    interviewComplete: false,
+  };
 }
 
 /** Final report for the reviewer, written in English. */
@@ -929,17 +1169,20 @@ export async function translateQuestion(
 ): Promise<GeneratedQuestion> {
   const result = await requestStructured({
     instructions: [
-      "You translate interview questions between languages.",
-      "Preserve the meaning and the scenario exactly.",
-      "Do not answer it, shorten it, or ask anything different.",
-      // Same register rule as `interviewerRules`. Without it the re-ask
-      // after a language switch came back in formal, literary language
-      // while every other question in the interview was conversational.
-      "Write SPOKEN language, the way people actually talk at work — not",
-      "literary, news-reader or textbook language. Keep ordinary workplace",
-      "words in English inside the sentence (customer, team, manager, shift,",
-      "problem, handle, solve), as people really speak. Prefer the English",
-      "verb with the local helper verb over the formal native verb.",
+      "You translate an interview question into the target language, keeping the",
+      "meaning and scenario exactly — do not answer it, shorten it, or change it.",
+      // Same register as `interviewerRules`: casual and code-mixed, NOT the
+      // formal/literary translation the model reaches for by default.
+      "Write CASUAL, SPOKEN language, the way people actually talk day to day —",
+      "never formal, literary, news-reader or textbook language.",
+      "Mix in the everyday ENGLISH words people naturally use (career, job,",
+      "salary, team, deadline, project, manager), but write each one in the",
+      "TARGET LANGUAGE'S OWN SCRIPT, transliterated by sound — e.g. Telugu",
+      "career→కెరీర్, job→జాబ్, salary→సాలరీ. Prefer the English verb with the",
+      "local helper verb over the formal native verb.",
+      "HARD RULE: for any non-Latin target language the finished question",
+      "contains ZERO Latin letters (a-z) — transliterate every English word.",
+      "Only if the target language IS English do you leave it as plain English.",
       "Return only the translation.",
     ].join(" "),
     input: [
@@ -971,9 +1214,68 @@ export async function translateQuestion(
 
   const english = result.questionTranslation.trim();
   return {
-    question: translated,
+    question: await toNativeScript(ctx, translated),
     translation:
       ctx.language.promptName === "English" || english === translated
+        ? null
+        : english || null,
+  };
+}
+
+/**
+ * Re-ask a question the candidate did not catch — the SAME question, said
+ * again more simply.
+ *
+ * For "can you repeat that?" / "I didn't understand". It must never answer the
+ * question, hint at an answer, or drift to a different one — only restate what
+ * was asked, in plainer words.
+ */
+export async function rephraseQuestionSimpler(
+  ctx: InterviewContext,
+  question: string,
+): Promise<GeneratedQuestion> {
+  const result = await requestStructured({
+    instructions: [
+      "The candidate did not catch an interview question and asked for it",
+      `again. Say the SAME question again in ${ctx.language.promptName}, shorter`,
+      "and simpler, the way a person would rephrase when someone did not hear.",
+      "NEVER answer it, give an example answer, hint at what to say, or ask a",
+      "different question — only restate what was asked, more clearly.",
+      "Write SPOKEN language, keeping ordinary workplace words in English",
+      "(customer, team, manager, shift). One short sentence. Return only that.",
+    ].join(" "),
+    input: [
+      `Target language: ${ctx.language.promptName}.`,
+      "",
+      "Question to restate more simply:",
+      untrusted("QUESTION", question),
+      "",
+      `Put the ${ctx.language.promptName} version in "question".`,
+      ctx.language.promptName === "English"
+        ? 'Leave "questionTranslation" as an empty string.'
+        : 'Put a plain English rendering in "questionTranslation".',
+    ].join("\n"),
+    schemaName: "translated_question",
+    jsonSchema: TRANSLATED_QUESTION_JSON_SCHEMA,
+    validator: translatedQuestionSchema,
+    kind: "conversation",
+  });
+
+  const restated = result.question.trim();
+  if (!restated) {
+    throw new ProviderError({
+      provider: "openai",
+      message: "openai returned an empty re-ask",
+      userMessage: "We could not repeat the question. Please try again.",
+      retryable: true,
+    });
+  }
+
+  const english = result.questionTranslation.trim();
+  return {
+    question: await toNativeScript(ctx, restated),
+    translation:
+      ctx.language.promptName === "English" || english === restated
         ? null
         : english || null,
   };

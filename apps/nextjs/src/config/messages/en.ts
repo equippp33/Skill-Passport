@@ -68,7 +68,7 @@ export const en = {
       "One question at a time. Listen, answer out loud, then press Next.",
     duration: "about {minutes} minutes",
     skillsCovered:
-      "It assesses ten workplace skills, such as reliability, teamwork and communication.",
+      "It assesses core workplace skills, such as reliability, teamwork and communication.",
     answerLimit:
       "Each answer can be up to {seconds} seconds. Recording starts on its own once the question has been read out.",
     microphone:
@@ -141,8 +141,10 @@ export const en = {
     reRecord: "Re-record",
     next: "Next question",
     finish: "Finish assessment",
-    keepSpeaking: "Keep speaking — this moves on by itself when you stop.",
+    keepSpeaking: "Take your time — tap Next when you're done.",
     waitingForAnswer: "Listening — start speaking whenever you're ready.",
+    skippingIn:
+      "Skipping this question in {seconds}s — start speaking to continue.",
     advancingIn: "Moving on in {seconds}…",
     introduction: "Introduction",
     chooseLanguageTitle: "Which language would you like to continue in?",
@@ -170,6 +172,9 @@ export const en = {
       "Almost there…",
     ],
     savingRecordings: "Saving your recordings — nearly done…",
+    submittingInterview: "Submitting your interview",
+    submittingHint: "Hold on a moment — we are saving everything.",
+    savingProgress: "Saving your answers — {done} of {total}",
     processingHint:
       "Transcribing and evaluating your answer. This usually takes a few seconds — keep this tab open.",
     errorTitle: "Something went wrong",
@@ -192,7 +197,7 @@ export const en = {
     noStrengths: "No specific strengths were identified.",
     noImprovements: "No specific improvements were identified.",
     skillBreakdown: "Skill scores",
-    skillBreakdownHint: "All ten workplace skills, scored out of 10.",
+    skillBreakdownHint: "Every workplace skill, scored out of 10.",
     notAssessed: "Not assessed",
     questionBreakdown: "Question breakdown",
     yourAnswer: "Your answer",
@@ -211,14 +216,15 @@ export const en = {
   },
 
   skills: {
+    work_readiness: "Work Readiness & Aspirations",
     reliability: "Reliability",
     responsibility: "Responsibility",
     following_instructions: "Following Instructions",
     attention_to_detail: "Attention to Detail",
     communication: "Communication",
     teamwork: "Teamwork",
-    problem_solving: "Thinking and Problem Solving",
-    learning_adaptability: "Learning and Adaptability",
+    problem_solving: "Problem Solving",
+    learning_adaptability: "Adaptability",
     initiative: "Initiative",
     customer_orientation: "Customer Orientation",
   } satisfies Record<WorkSkillId, string>,

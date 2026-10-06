@@ -15,7 +15,7 @@ export function AuthShell({
   return (
     <main lang={lang} className="grid min-h-dvh lg:grid-cols-[1.05fr_1fr]">
       <section className="auth-story relative hidden flex-col justify-between overflow-hidden border-r border-border-subtle p-12 lg:flex xl:p-16">
-        <Brand />
+        <Brand className="self-start" />
         <div className="relative z-10 my-12 max-w-lg">
           <span className="eyebrow">
             <Icon name="spark" className="size-4" /> {m.app.tagline}
@@ -25,7 +25,7 @@ export function AuthShell({
           </h2>
           <div className="mt-10 rounded-2xl border border-white bg-white/90 p-6 shadow-[var(--shadow-raised)]">
             <div className="flex items-center gap-3">
-              <BrandMark className="size-12" />
+              <BrandMark className="h-8 w-auto" />
               <div>
                 <p className="font-semibold">{m.dashboard.assessmentName}</p>
                 <p className="mt-1 text-sm text-content-muted">

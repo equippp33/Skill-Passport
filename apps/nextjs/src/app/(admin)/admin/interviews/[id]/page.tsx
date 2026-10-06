@@ -13,6 +13,7 @@ import { env } from "~/env";
 import { OpenToggle } from "../../open-toggle";
 import { ShareLink } from "../../share-link";
 import { CandidateGrid } from "./candidate-grid";
+import { CandidateSection } from "./candidate-section";
 
 export const metadata: Metadata = { title: "Interview" };
 export const dynamic = "force-dynamic";
@@ -66,30 +67,58 @@ export default async function InterviewDetailPage({
               {details.questionCount} skill questions · created{" "}
               {formatDate(details.createdAt)}
             </p>
+
             {/*
-             * Development only: what this link has cost so far.
+             * What this link has cost so far, by provider. Development only —
+             * the server omits `devCosts` entirely in production, so this
+             * renders nothing there.
              *
-             * The counts are shown beside the total on purpose — a figure
-             * covering four runs out of seven reads as the whole bill unless
-             * it says otherwise, and the unmetered ones are interviews that
-             * predate the counters, not free ones.
+             * The counts sit beside the total on purpose: a figure covering
+             * four runs out of seven reads as the whole bill unless it says
+             * otherwise, and the unmetered ones are interviews that predate
+             * the counters, not free ones.
              */}
-            {details.devCostTotal ? (
-              <p className="mt-1 text-sm">
-                <span
-                  className="font-semibold tabular-nums"
-                  title="Estimated — rates in config/pricing.ts are unverified"
-                >
-                  {details.devCostTotal.total}
-                </span>
-                <span className="text-content-muted">
-                  {" "}
-                  across {details.devCostTotal.metered} metered interview
-                  {details.devCostTotal.metered === 1 ? "" : "s"}
-                  {details.devCostTotal.unmetered > 0
-                    ? ` · ${details.devCostTotal.unmetered} not metered`
-                    : ""}
-                </span>
+            {details.devCosts ? (
+              <div className="mt-3 inline-flex flex-wrap items-stretch gap-px overflow-hidden rounded-lg border border-border-subtle bg-border-subtle text-sm">
+                {[
+                  [details.devCosts.modelLabel, details.devCosts.openai],
+                  ["TTS", details.devCosts.tts],
+                  ["STT", details.devCosts.stt],
+                ].map(([label, value]) => (
+                  <div key={label} className="bg-surface px-3 py-1.5">
+                    <div className="text-[11px] tracking-wide text-content-muted uppercase">
+                      {label}
+                    </div>
+                    <div className="font-semibold tabular-nums">{value}</div>
+                  </div>
+                ))}
+                <div className="bg-accent-soft px-3 py-1.5">
+                  <div className="text-[11px] tracking-wide text-content-muted uppercase">
+                    Total
+                  </div>
+                  <div
+                    className="font-semibold text-accent tabular-nums"
+                    title={
+                      details.devCosts.hasFloor
+                        ? "A floor: some interviews predate the meter, so their model usage is missing and the real total is higher"
+                        : "Estimated from provider list prices — see config/pricing.ts"
+                    }
+                  >
+                    {details.devCosts.hasFloor ? "≥" : ""}
+                    {details.devCosts.total}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {details.devCosts ? (
+              <p className="mt-1 text-xs text-content-muted">
+                {details.devCosts.metered} interview
+                {details.devCosts.metered === 1 ? "" : "s"} fully metered
+                {details.devCosts.unmetered > 0
+                  ? ` · ${details.devCosts.unmetered} priced from stored questions and answers only, so the model share is missing and the real total is higher`
+                  : ""}
+                . Realtime STT is billed per second of audio, so the WebSocket
+                itself costs nothing beyond the STT line.
               </p>
             ) : null}
           </div>
@@ -111,13 +140,16 @@ export default async function InterviewDetailPage({
         ) : null}
       </section>
 
-      <CandidateGrid
-        attempts={details.attempts}
-        statusLabels={statusLabels}
-        interviewId={details.id}
-        isDev={env.NODE_ENV === "development"}
+      <CandidateSection
+        comparison={details.repeatComparison ?? []}
         returnTo={`/admin/interviews/${details.id}`}
-      />
+      >
+        <CandidateGrid
+          attempts={details.attempts}
+          statusLabels={statusLabels}
+          returnTo={`/admin/interviews/${details.id}`}
+        />
+      </CandidateSection>
     </div>
   );
 }

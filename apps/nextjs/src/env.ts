@@ -44,6 +44,28 @@ export const env = createEnv({
       .transform((v) => v?.replace(/\/+$/, "")),
 
     /**
+     * Student-integration endpoint (`POST /api/integrations/attempts`).
+     *
+     * A partner site posts a student's details and gets back a pre-filled
+     * start link for our interview. Both are optional so the app boots
+     * without them; the endpoint returns 503 until both are set.
+     *  - `INTEGRATION_API_KEY`: the shared bearer the partner sends. Guards
+     *    the endpoint from being called by anyone.
+     *  - `INTEGRATION_INTERVIEW_TOKEN`: the public token of the ONE interview
+     *    (room) every integrated student joins.
+     */
+    INTEGRATION_API_KEY: z.string().min(16).optional(),
+    INTEGRATION_INTERVIEW_TOKEN: z.string().min(1).optional(),
+    /**
+     * Where a finished student's result is POSTed, and the bearer to send with
+     * it — both supplied by the partner. Optional: with no URL set, nothing is
+     * posted (results still live in our own reports). The key is sent as
+     * `Authorization: Bearer <key>` if present.
+     */
+    INTEGRATION_RESULT_WEBHOOK_URL: z.string().url().optional(),
+    INTEGRATION_RESULT_WEBHOOK_KEY: z.string().min(1).optional(),
+
+    /**
      * Which provider runs the interview "brain" — question generation,
      * follow-ups, answer evaluation and the closing report.
      *
@@ -104,8 +126,13 @@ export const env = createEnv({
     // --- Sarvam (speech-to-text + text-to-speech + chat) ---
     SARVAM_API_KEY: z.string().min(1),
     SARVAM_STT_MODEL: z.string().min(1).default("saaras:v3"),
+    /** Realtime streaming STT model used by the WebSocket relay. */
+    SARVAM_STT_REALTIME_MODEL: z
+      .string()
+      .min(1)
+      .default("saaras:v3-realtime"),
     SARVAM_TTS_MODEL: z.string().min(1).default("bulbul:v3"),
-    SARVAM_TTS_SPEAKER: z.string().min(1).default("shubh"),
+    SARVAM_TTS_SPEAKER: z.string().min(1).default("suhani"),
     /**
      * Live conversational turns: questions, follow-ups and re-asks. Chosen
      * for latency over depth — it sits on the candidate's critical path.
@@ -133,8 +160,29 @@ export const env = createEnv({
     CLOUDFLARE_R2_PUBLIC_URL: z.string().url().optional(),
   },
 
-  client: {},
-  experimental__runtimeEnv: {},
+  client: {
+    /**
+     * Turns on realtime streaming STT (mic → relay → Sarvam). "1" to enable.
+     * Off by default: the app falls back to the record-then-transcribe flow, so
+     * it still works with no relay running. Enable once the relay is up and
+     * `NEXT_PUBLIC_STT_RELAY_URL` is set.
+     */
+    NEXT_PUBLIC_STT_STREAMING: z.enum(["0", "1"]).default("0"),
+    /**
+     * WebSocket origin of the STT relay — e.g. `ws://localhost:3001` in dev,
+     * `wss://your-host` in production (a `/stt-stream` route proxied to the
+     * relay process). No trailing slash; the `/stt-stream` path is added by the
+     * client.
+     */
+    NEXT_PUBLIC_STT_RELAY_URL: z
+      .string()
+      .optional()
+      .transform((v) => v?.replace(/\/+$/, "")),
+  },
+  experimental__runtimeEnv: {
+    NEXT_PUBLIC_STT_STREAMING: process.env.NEXT_PUBLIC_STT_STREAMING,
+    NEXT_PUBLIC_STT_RELAY_URL: process.env.NEXT_PUBLIC_STT_RELAY_URL,
+  },
 
   emptyStringAsUndefined: true,
   /**

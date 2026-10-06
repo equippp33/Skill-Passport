@@ -3,7 +3,11 @@ import type { Metadata } from "next";
 import { Card, CardContent, EmptyState } from "~/components/ui";
 import { CandidateSplit } from "~/components/candidate-split";
 import { CameraPreview } from "~/components/camera-preview";
-import { getInterviewByPublicToken } from "~/server/attempt/access";
+import {
+  attemptEligibility,
+  getInterviewByPublicToken,
+} from "~/server/attempt/access";
+import { decodePrefill } from "~/server/integrations/prefill";
 import { StartForm } from "./start-form";
 
 export const metadata: Metadata = { title: "Start your interview" };
@@ -24,10 +28,14 @@ export const dynamic = "force-dynamic";
  */
 export default async function CandidateLandingPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string }>;
+  searchParams: Promise<{ p?: string }>;
 }) {
   const { token } = await params;
+  const { p } = await searchParams;
+  const prefill = decodePrefill(p);
   const interview = await getInterviewByPublicToken(token);
 
   if (!interview) {
@@ -40,6 +48,37 @@ export default async function CandidateLandingPage({
         />
       </main>
     );
+  }
+
+  // Integration links carry the student id, so we can show retake limits up
+  // front: all attempts used, or still inside the cooldown after the last one.
+  // Ordinary links have no identity here — that check happens on form submit.
+  if (prefill?.studentId) {
+    const eligibility = await attemptEligibility(interview.id, {
+      externalStudentId: prefill.studentId,
+    });
+    if (!eligibility.allowed) {
+      const cooldownMinutes = eligibility.readyInMinutes ?? 0;
+      return (
+        <main className="mx-auto max-w-lg px-4 py-16">
+          <EmptyState
+            headingLevel={1}
+            title={
+              eligibility.reason === "cooldown"
+                ? "Just a short wait before your next attempt"
+                : "You've completed all your attempts"
+            }
+            description={
+              eligibility.reason === "cooldown"
+                ? `You just finished an attempt. You can retake this interview in about ${cooldownMinutes} minute${
+                    cooldownMinutes === 1 ? "" : "s"
+                  } — please come back then.`
+                : `Thanks — you've used all ${eligibility.maxAttempts} attempts for this interview. Your responses have been recorded and there's nothing more to do here.`
+            }
+          />
+        </main>
+      );
+    }
   }
 
   return (
@@ -67,7 +106,7 @@ export default async function CandidateLandingPage({
 
         <Card className="min-w-0">
           <CardContent className="space-y-4 pt-5">
-            <StartForm token={token} />
+            <StartForm token={token} initial={prefill} />
 
             <p className="text-xs leading-relaxed text-content-muted">
               The interview is spoken. Find a quiet, well-lit spot and have your

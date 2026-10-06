@@ -1,0 +1,1 @@
+ALTER TABLE "interview_attempts" ADD COLUMN "candidate_course" text;

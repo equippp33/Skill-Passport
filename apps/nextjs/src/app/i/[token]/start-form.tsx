@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 
 import { Alert, Button, FieldError, Input, Label } from "~/components/ui";
 import { PHONE_DIGITS, normalisePhoneInput } from "~/lib/phone";
+import { SELECTABLE_INTERVIEW_LANGUAGES } from "~/config/languages";
 import { beginAttemptAction } from "~/server/attempt/actions";
 import type { CandidateFormState } from "~/server/attempt/actions";
 
@@ -26,14 +27,35 @@ function SubmitButton() {
 }
 
 /**
+ * Details a partner site may pre-fill (via the integration link's `?p=` blob).
+ * Language is never here — the candidate always chooses it themselves below.
+ */
+interface StartPrefill {
+  name?: string;
+  email?: string;
+  phone?: string;
+  course?: string;
+  studentId?: string;
+}
+
+/**
  * Candidate details, collected before an attempt exists.
  *
  * The public token is bound into the action here rather than posted as a
  * form field, so the browser cannot point this submission at a different
- * interview.
+ * interview. `initial` pre-fills the fields when the candidate arrived through
+ * an integration link; every field stays editable so they can correct it.
  */
-export function StartForm({ token }: { token: string }) {
-  const [phone, setPhone] = useState("");
+export function StartForm({
+  token,
+  initial,
+}: {
+  token: string;
+  initial?: StartPrefill | null;
+}) {
+  const [phone, setPhone] = useState(
+    initial?.phone ? normalisePhoneInput(initial.phone) : "",
+  );
   const [state, formAction] = useActionState(
     beginAttemptAction.bind(null, token),
     initialState,
@@ -43,6 +65,11 @@ export function StartForm({ token }: { token: string }) {
     <form action={formAction} className="space-y-3" noValidate>
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
 
+      {/* Partner student id, carried straight through — not shown or editable. */}
+      {initial?.studentId ? (
+        <input type="hidden" name="studentId" value={initial.studentId} />
+      ) : null}
+
       <div>
         <Label htmlFor="name">Your full name</Label>
         <Input
@@ -50,6 +77,7 @@ export function StartForm({ token }: { token: string }) {
           name="name"
           autoComplete="name"
           maxLength={120}
+          defaultValue={initial?.name ?? undefined}
           required
           className="min-h-11"
           aria-invalid={state.fieldErrors?.name ? true : undefined}
@@ -57,6 +85,58 @@ export function StartForm({ token }: { token: string }) {
         />
         <span id="name-error">
           <FieldError>{state.fieldErrors?.name}</FieldError>
+        </span>
+      </div>
+
+      <div>
+        <Label htmlFor="course">
+          Course{" "}
+          <span className="font-normal text-content-muted">(optional)</span>
+        </Label>
+        <Input
+          id="course"
+          name="course"
+          maxLength={120}
+          defaultValue={initial?.course ?? undefined}
+          className="min-h-11"
+          placeholder="e.g. Accounting, Nursing, ITI Electrician"
+          aria-invalid={state.fieldErrors?.course ? true : undefined}
+          aria-describedby="course-error"
+        />
+        <span id="course-error">
+          <FieldError>{state.fieldErrors?.course}</FieldError>
+        </span>
+      </div>
+
+      <div>
+        <Label htmlFor="language">Interview language</Label>
+        {/* Chosen once, here, and fixed for the whole interview — every
+            question is asked and spoken in it, and there is no switching
+            mid-way. Native names so a candidate finds their own language. */}
+        <select
+          id="language"
+          name="language"
+          defaultValue=""
+          required
+          className="min-h-11 w-full rounded-lg border border-border-subtle bg-surface px-3 text-sm"
+          aria-invalid={state.fieldErrors?.language ? true : undefined}
+          aria-describedby="language-hint language-error"
+        >
+          <option value="" disabled>
+            Choose your language…
+          </option>
+          {SELECTABLE_INTERVIEW_LANGUAGES.map((lang) => (
+            <option key={lang.key} value={lang.key}>
+              {lang.displayName} · {lang.promptName}
+            </option>
+          ))}
+        </select>
+        <p id="language-hint" className="mt-1 text-xs text-content-muted">
+          The whole interview will be in this language. Pick the one you speak
+          most comfortably.
+        </p>
+        <span id="language-error">
+          <FieldError>{state.fieldErrors?.language}</FieldError>
         </span>
       </div>
 
@@ -71,6 +151,7 @@ export function StartForm({ token }: { token: string }) {
           type="email"
           autoComplete="email"
           maxLength={255}
+          defaultValue={initial?.email ?? undefined}
           className="min-h-11"
           aria-invalid={state.fieldErrors?.email ? true : undefined}
           aria-describedby="email-error"

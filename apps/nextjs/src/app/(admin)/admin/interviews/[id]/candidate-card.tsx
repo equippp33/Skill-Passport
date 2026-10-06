@@ -118,30 +118,69 @@ export function CandidateCard({
             </div>
           )}
 
-          {/* Status, always visible. */}
-          <span className="absolute top-2 left-2 inline-flex items-center gap-1.5 rounded-md bg-black/55 px-2 py-1 text-xs font-medium text-white/90 backdrop-blur-sm">
-            <span
-              aria-hidden
-              className={`size-1.5 rounded-full ${
-                attempt.status === "completed"
-                  ? "bg-success"
-                  : attempt.status === "failed"
-                    ? "bg-danger"
-                    : attempt.status === "not_started"
-                      ? "bg-white/60"
-                      : "bg-warning"
-              }`}
-            />
-            {statusLabel}
-          </span>
+        {/* Status, always visible. */}
+        <span className="absolute top-2 left-2 inline-flex items-center gap-1.5 rounded-md bg-black/55 px-2 py-1 text-xs font-medium text-white/90 backdrop-blur-sm">
+          <span
+            aria-hidden
+            className={`size-1.5 rounded-full ${
+              attempt.status === "completed"
+                ? "bg-success"
+                : attempt.status === "failed"
+                  ? "bg-danger"
+                  : attempt.status === "not_started"
+                    ? "bg-white/60"
+                    : "bg-warning"
+            }`}
+          />
+          {statusLabel}
+        </span>
 
-          {/* Score, always overlapped on the thumbnail when it exists. */}
-          {score !== null ? (
-            <span className="absolute top-2 right-2 rounded-md bg-black/70 px-2 py-1 text-sm font-semibold text-white tabular-nums backdrop-blur-sm">
-              {score}
-              <span className="text-white/60">/100</span>
-            </span>
-          ) : null}
+        {/* Retake marker — only when they took it more than once. */}
+        {attempt.attemptCount > 1 ? (
+          <span className="absolute right-2 bottom-2 rounded-md bg-accent/85 px-2 py-1 text-xs font-semibold text-accent-contrast backdrop-blur-sm">
+            {attempt.attemptCount} attempts
+          </span>
+        ) : null}
+
+        {/*
+         * What this interview cost to run. Development only — the server
+         * sends `devCost` as null in production, so this renders nothing
+         * there without the component needing to know the environment.
+         *
+         * An interview the meter did not cover shows a dash rather than
+         * ₹0.00: a zero next to a completed interview is a claim that it was
+         * free, and that is how a readout like this stops being believed.
+         */}
+        {attempt.devCost !== undefined ? (
+          <span
+            title={
+              attempt.devCost
+                ? `${attempt.devCostParts ?? "Estimated provider cost"}${
+                    attempt.devCostIsFloor
+                      ? " — speech only; model usage was not recorded for this interview, so the real cost is higher"
+                      : ""
+                  }`
+                : "No usage recorded for this interview"
+            }
+            className={`absolute bottom-2 left-2 rounded-md px-2 py-1 text-xs font-semibold tabular-nums backdrop-blur-sm ${
+              attempt.devCost
+                ? "bg-black/70 text-white"
+                : "bg-black/45 text-white/50"
+            }`}
+          >
+            {attempt.devCost
+              ? `${attempt.devCostIsFloor ? "≥" : ""}${attempt.devCost}`
+              : "₹—"}
+          </span>
+        ) : null}
+
+        {/* Score, always overlapped on the thumbnail when it exists. */}
+        {score !== null ? (
+          <span className="absolute top-2 right-2 rounded-md bg-black/70 px-2 py-1 text-sm font-semibold text-white tabular-nums backdrop-blur-sm">
+            {(score / 10).toFixed(1)}
+            <span className="text-white/60">/10</span>
+          </span>
+        ) : null}
 
           {/* Hover: vignette + who it is. */}
           <div className="pointer-events-none absolute inset-0 flex items-end bg-linear-to-t from-black/85 via-black/25 to-transparent p-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100">

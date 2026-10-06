@@ -2,7 +2,7 @@ import "server-only";
 
 import { timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { db } from "~/server/db";
 import { interviewAttemptsTable, interviewsTable } from "~/server/db/schema";
@@ -88,6 +88,134 @@ export async function getAttemptForCandidate(
   if (!tokensMatch(found.attempt.accessToken, token)) return null;
 
   return found;
+}
+
+/** A candidate may retake the same interview a few times, with a cooldown. */
+export const MAX_ATTEMPTS_PER_CANDIDATE = 3;
+export const ATTEMPT_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
+
+export interface AttemptEligibility {
+  allowed: boolean;
+  /** Why not, when `allowed` is false. */
+  reason?: "max_reached" | "cooldown";
+  /** Completed attempts so far for this candidate on this interview. */
+  attemptsUsed: number;
+  maxAttempts: number;
+  /** When the candidate may retake, for the cooldown case. */
+  readyAt?: Date;
+  /** Whole minutes until they may retake (>=1), for the cooldown case. */
+  readyInMinutes?: number;
+}
+
+/**
+ * Whether a candidate may (re)take this interview.
+ *
+ * A candidate — a partner student by `externalStudentId`, or an ordinary
+ * candidate by email — gets up to {@link MAX_ATTEMPTS_PER_CANDIDATE} COMPLETED
+ * attempts, and must wait {@link ATTEMPT_COOLDOWN_MS} after finishing one before
+ * starting the next. Only completed attempts count: an abandoned or failed run
+ * never burns a retry. With no identity to key on (an ordinary link where no
+ * email was given) we cannot count, so we do not gate.
+ */
+export async function attemptEligibility(
+  interviewId: string,
+  candidate: { externalStudentId?: string | null; email?: string | null },
+): Promise<AttemptEligibility> {
+  const studentId = candidate.externalStudentId?.trim() || null;
+  const email = candidate.email?.trim().toLowerCase() || null;
+
+  if (!studentId && !email) {
+    return {
+      allowed: true,
+      attemptsUsed: 0,
+      maxAttempts: MAX_ATTEMPTS_PER_CANDIDATE,
+    };
+  }
+
+  // Key on the student id when present (integration links), else the email.
+  const identity = studentId
+    ? eq(interviewAttemptsTable.externalStudentId, studentId)
+    : eq(interviewAttemptsTable.candidateEmail, email!);
+
+  const completed = await db.query.interviewAttemptsTable.findMany({
+    where: and(
+      eq(interviewAttemptsTable.interviewId, interviewId),
+      identity,
+      eq(interviewAttemptsTable.status, "completed"),
+    ),
+    columns: { completedAt: true },
+    orderBy: desc(interviewAttemptsTable.completedAt),
+  });
+
+  const attemptsUsed = completed.length;
+  if (attemptsUsed >= MAX_ATTEMPTS_PER_CANDIDATE) {
+    return {
+      allowed: false,
+      reason: "max_reached",
+      attemptsUsed,
+      maxAttempts: MAX_ATTEMPTS_PER_CANDIDATE,
+    };
+  }
+
+  const latest = completed[0]?.completedAt ?? null;
+  if (latest) {
+    const readyAt = new Date(latest.getTime() + ATTEMPT_COOLDOWN_MS);
+    const remainingMs = readyAt.getTime() - Date.now();
+    if (remainingMs > 0) {
+      return {
+        allowed: false,
+        reason: "cooldown",
+        attemptsUsed,
+        maxAttempts: MAX_ATTEMPTS_PER_CANDIDATE,
+        readyAt,
+        readyInMinutes: Math.max(1, Math.ceil(remainingMs / 60_000)),
+      };
+    }
+  }
+
+  return {
+    allowed: true,
+    attemptsUsed,
+    maxAttempts: MAX_ATTEMPTS_PER_CANDIDATE,
+  };
+}
+
+/**
+ * The candidate's most-recent UNFINISHED attempt at this interview, or null.
+ *
+ * Lets a student who left mid-interview pick up where they stopped instead of
+ * starting over — no matter how long ago they left (client's call: always
+ * resume). Matched on the SAME identity as the retake cap — partner student id
+ * when present, else email — so it works even without the `sp_attempt` cookie (a
+ * new device, cleared cookies, or after it expired), which is the only other way
+ * back to a live attempt. With no identity to key on, returns null (cookie-only
+ * resume still applies).
+ */
+export async function resumableAttemptFor(
+  interviewId: string,
+  candidate: { externalStudentId?: string | null; email?: string | null },
+): Promise<InterviewAttempt | null> {
+  const studentId = candidate.externalStudentId?.trim() || null;
+  const email = candidate.email?.trim() || null;
+  if (!studentId && !email) return null;
+
+  const identity = studentId
+    ? eq(interviewAttemptsTable.externalStudentId, studentId)
+    : eq(interviewAttemptsTable.candidateEmail, email!);
+
+  const found = await db.query.interviewAttemptsTable.findFirst({
+    where: and(
+      eq(interviewAttemptsTable.interviewId, interviewId),
+      identity,
+      inArray(interviewAttemptsTable.status, [
+        "not_started",
+        "in_progress",
+        "processing",
+      ]),
+    ),
+    orderBy: desc(interviewAttemptsTable.updatedAt),
+  });
+  return found ?? null;
 }
 
 /** The interview behind a share link, or null if the token is wrong/closed. */

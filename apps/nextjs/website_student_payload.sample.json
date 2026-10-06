@@ -1,0 +1,86 @@
+{
+  "student_uuid": "8f2c41d6-7b0a-4e59-9a3d-1c6f0b2e4d17",
+  "account_uuid": "3b91e7a4-5c28-4f6b-8d10-9e7a2c4b6f83",
+  "erp_student_uuid": "11111111-2222-3333-4444-555555555555",
+  "training_provider": "midc",
+
+  "phone": "7559200446",
+  "phone_verified_at": "2026-09-23T10:41:02+00:00",
+  "account_status": "active",
+  "profile_completed_at": "2026-09-23T11:07:55+00:00",
+  "created_at": "2026-09-23T10:41:02+00:00",
+  "updated_at": "2026-09-23T11:07:55+00:00",
+
+  "first_name": "Aabed",
+  "middle_name": "Ansar",
+  "last_name": "Pathan",
+  "full_name": "Aabed Ansar Pathan",
+  "dob": "2002-10-14",
+  "gender": "Male",
+  "email": "abedpathan1451@example.com",
+
+  "father_first": "Ansar",
+  "father_middle": null,
+  "father_last": "Pathan",
+  "father_phone": "9876500001",
+  "mother_first": null,
+  "mother_middle": null,
+  "mother_last": null,
+  "mother_phone": null,
+  "guardian_first": "Ansar",
+  "guardian_middle": null,
+  "guardian_last": "Pathan",
+  "guardian_phone": "9876500001",
+
+  "addr_line": "12 MG Road",
+  "addr_city": "chh. Sambhajinagar",
+  "addr_state": "Maharashtra",
+  "addr_pincode": "431001",
+
+  "religion": "Muslim",
+  "caste": "Do not want to declare",
+  "sub_caste": null,
+  "nationality": "Indian",
+  "mother_tongue": "Marathi",
+  "blood_group": "O+",
+
+  "qualification": "12th Pass",
+  "qualification_type": "Regular",
+  "college_name": "Govt. Polytechnic",
+  "stream_department": "Electrical",
+  "college_year": "Passed",
+  "college_address": "Chhatrapati Sambhajinagar",
+  "employment_status": "Not working",
+
+  "physical_disabilities": "None",
+  "allergies": "None",
+  "has_learning_needs": "No",
+
+  "aadhaar_last4": "0492",
+  "aadhaar_consent_version": "aadhaar-v1",
+  "aadhaar_consented_at": "2026-09-23T11:02:31+00:00",
+
+  "resume": {
+    "name": "aabed_pathan_cv.pdf",
+    "uploaded_at": "2026-09-23T11:05:10+00:00",
+    "download_url": "https://pathsaathi-website-docs.s3.ap-south-2.amazonaws.com/resumes/...?X-Amz-Expires=300&...",
+    "download_url_expires_in_seconds": 300
+  },
+
+  "training_record": {
+    "course": "Industrial Electrician",
+    "batch": "Batch4_F_Industrial Electrician_CSN",
+    "centre": "Skill Development Centre, Chatrapati Sambhajinagar",
+    "enrolment_no": "EN30302653106",
+    "checked_at": "2026-09-23T10:42:18+00:00"
+  },
+
+  "centre_supplied_fields": [
+    "first_name", "middle_name", "last_name", "dob", "gender", "email",
+    "father_first", "father_last", "addr_line", "addr_city", "addr_state",
+    "addr_pincode", "religion", "caste", "nationality", "mother_tongue",
+    "blood_group", "qualification", "qualification_type", "college_name",
+    "stream_department", "college_year", "college_address", "employment_status",
+    "physical_disabilities", "allergies"
+  ]
+}

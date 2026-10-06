@@ -17,8 +17,10 @@ import { CameraPreview } from "~/components/camera-preview";
 import { t } from "~/config/messages";
 import type { Messages } from "~/config/messages";
 import { useAnswerRecorder } from "~/hooks/use-answer-recorder";
-import { startAttemptAction } from "~/server/attempt/actions";
-import type { PickableLanguage } from "./language-picker";
+import {
+  prewarmAttemptAction,
+  startAttemptAction,
+} from "~/server/attempt/actions";
 import { MAX_ANSWER_SECONDS } from "./constants";
 
 /**
@@ -93,6 +95,12 @@ export function Instructions({
   // its own stream, so holding the camera past here is a needless red light.
   const releaseDevices = recorder.release;
   useEffect(() => releaseDevices, [releaseDevices]);
+
+  // Prepare the first question in the background while they read and test their
+  // device, so the interview starts with no wait. Fire once, best-effort.
+  useEffect(() => {
+    void prewarmAttemptAction(attemptId);
+  }, [attemptId]);
 
   async function handleMicTest() {
     // Read the outcome from the return value: the hook's state has not

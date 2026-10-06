@@ -1,36 +1,25 @@
 import "server-only";
 
-import { after } from "next/server";
-
-import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, ne, or, sql } from "drizzle-orm";
 
 import { db } from "~/server/db";
+import { withUsageScope } from "~/server/interview/usage";
 import {
   interviewAttemptsTable,
   interviewsTable,
   interviewAudioTable,
   interviewTurnVariantsTable,
   interviewTurnsTable,
+  interviewsTable,
 } from "~/server/db/schema";
 import type {
   Interview,
   InterviewAttempt,
   InterviewTurn,
 } from "~/server/db/schema";
-import {
-  LANGUAGE_CONFIDENCE_THRESHOLD,
-  languageFromCode,
-  resolveInterviewLanguage,
-} from "~/config/languages";
-import type {
-  InterviewLanguage,
-  InterviewLanguageKey,
-} from "~/config/languages";
-import {
-  openerFor,
-  PROBE_SPOKEN_LANGUAGE_CODE,
-  wrongLanguageNoticeFor,
-} from "~/config/greeting";
+import { resolveInterviewLanguage } from "~/config/languages";
+import type { InterviewLanguageKey } from "~/config/languages";
+import { OPENING_BY_KEY } from "~/config/greeting";
 import {
   LANGUAGE_PROBE_TURN,
   WORK_SKILLS,
@@ -39,13 +28,12 @@ import {
   getWorkSkill,
 } from "~/config/work-skills";
 import type { WorkSkill, WorkSkillId } from "~/config/work-skills";
+import { WORK_READINESS_QUESTIONS } from "~/config/work-readiness-pool";
 import {
   isRepeatRequest,
-  phraseIntent,
-  yesNoIntent,
+  isSkipRequest,
+  isSlowerRequest,
 } from "~/config/repeat-requests";
-import { FILLERS } from "~/config/fillers";
-import type { FillerKind } from "~/config/fillers";
 import { aggregateSkillScores } from "~/lib/scoring";
 import { ProviderError, toUserMessage } from "~/server/services/errors";
 import {
@@ -55,11 +43,9 @@ import {
   generateQuestion,
   translateQuestion,
 } from "~/server/services/openai";
-import type {
-  InterviewContext,
-  PreparedQuestion,
-  PriorTurn,
-} from "~/server/services/openai";
+import type { InterviewContext, PriorTurn } from "~/server/services/openai";
+import { deliverResult } from "~/server/integrations/result-webhook";
+import { env } from "~/env";
 import { generateSpeech, transcribeAudio } from "~/server/services/sarvam";
 import { timed } from "~/server/services/timing";
 import { loadAudioBytes, storeAudio } from "~/server/interview/audio";
@@ -123,6 +109,12 @@ export interface CandidateDetails {
   name: string;
   email: string | null;
   phone: string | null;
+  /** Interview language chosen up front; fixed for the whole session. */
+  language: InterviewLanguageKey;
+  /** Course / field of study, for grounding and pre-preparing questions. */
+  course: string | null;
+  /** Partner student id, when the candidate came through an integration link. */
+  externalStudentId?: string | null;
 }
 
 /**
@@ -145,6 +137,9 @@ export async function createAttempt(
       candidateName: details.name,
       candidateEmail: details.email,
       candidatePhone: details.phone,
+      candidateCourse: details.course,
+      externalStudentId: details.externalStudentId ?? null,
+      language: details.language,
       status: "not_started",
     })
     .returning({ id: interviewAttemptsTable.id });
@@ -178,6 +173,7 @@ function contextFor(
   attempt: InterviewAttempt,
   interview: Interview,
   introduction?: string | null,
+  priorAttempts?: string | null,
 ): InterviewContext {
   if (!attempt.language) {
     throw new AttemptError(
@@ -188,42 +184,113 @@ function contextFor(
   return {
     questionCount: interview.questionCount,
     language: resolveInterviewLanguage(attempt.language),
-    candidateName: firstNameOf(attempt.candidateName),
+    candidateName: attempt.candidateName,
+    candidateCourse: attempt.candidateCourse,
     candidateIntroduction: introduction ?? null,
+    priorAttempts: priorAttempts ?? null,
   };
 }
 
 /**
- * What to actually call someone, from the full name they typed in.
- *
- * The first word, because "Priya Sharma, tell me about a time..." is a summons
- * and not a conversation. Capped and stripped of punctuation: this is free
- * text a candidate typed, it is about to be spoken aloud by TTS, and a name
- * that is forty characters of symbols is not a name.
+ * Build the model context for an attempt, pulling the introduction and any
+ * earlier-attempt digest in parallel. Prefer this over calling `contextFor`
+ * directly so returning candidates always get their prior context.
  */
-function firstNameOf(fullName: string): string | null {
-  const first = fullName.trim().split(/\s+/)[0] ?? "";
-  const cleaned = first.replace(/[^\p{L}\p{M}'-]/gu, "").slice(0, 32);
-  return cleaned.length >= 2 ? cleaned : null;
+async function buildContext(
+  attempt: InterviewAttempt,
+  interview: Interview,
+): Promise<InterviewContext> {
+  const [introduction, priorAttempts] = await Promise.all([
+    introductionFor(attempt.id),
+    priorAttemptsContext(attempt),
+  ]);
+  return contextFor(attempt, interview, introduction, priorAttempts);
 }
 
+/** How much of each prior answer to carry over — enough for gist, not the lot. */
+const PRIOR_ANSWER_CHARS = 300;
+/** Safety cap on how many earlier attempts to fold in (retake limit is 3). */
+const MAX_PRIOR_ATTEMPTS = 3;
+
 /**
- * The two intake answers as one paragraph, for the prompt and the report.
- *
- * Labelled rather than concatenated: "B.Com final year" and "weekends at my
- * uncle's shop" mean very different things to a question writer, and running
- * them together loses which is which.
+ * A digest of ALL this candidate's EARLIER completed attempts at the SAME
+ * interview, oldest first so progression reads in order. Matched by partner
+ * student id when present (how a retake is identified), falling back to email
+ * for ordinary links. Null for first-timers. Best-effort: any failure just
+ * means no prior context, never a broken interview.
  */
-function composeBackground(about: {
-  course: string | null;
-  experience: string | null;
-}): string {
-  const parts: string[] = [];
-  const course = about.course?.trim();
-  const experience = about.experience?.trim();
-  if (course) parts.push(`Studying: ${course}`);
-  if (experience) parts.push(`Work experience: ${experience}`);
-  return parts.join("\n");
+async function priorAttemptsContext(
+  attempt: InterviewAttempt,
+): Promise<string | null> {
+  const studentId = attempt.externalStudentId?.trim() || null;
+  const email = attempt.candidateEmail?.trim() || null;
+  if (!studentId && !email) return null;
+
+  // Same identity a retake is counted by, so the prior attempts are found.
+  const sameCandidate = studentId
+    ? eq(interviewAttemptsTable.externalStudentId, studentId)
+    : eq(interviewAttemptsTable.candidateEmail, email!);
+
+  try {
+    const priors = await db.query.interviewAttemptsTable.findMany({
+      where: and(
+        sameCandidate,
+        eq(interviewAttemptsTable.interviewId, attempt.interviewId),
+        ne(interviewAttemptsTable.id, attempt.id),
+        eq(interviewAttemptsTable.status, "completed"),
+      ),
+      orderBy: asc(interviewAttemptsTable.completedAt),
+    });
+    if (priors.length === 0) return null;
+    // Defensive cap; keep the most recent ones if there are somehow more.
+    const kept = priors.slice(-MAX_PRIOR_ATTEMPTS);
+
+    // One query for every prior turn, then grouped per attempt.
+    const turns = await db.query.interviewTurnsTable.findMany({
+      where: and(
+        inArray(
+          interviewTurnsTable.attemptId,
+          kept.map((p) => p.id),
+        ),
+        eq(interviewTurnsTable.kind, "skill"),
+      ),
+      orderBy: asc(interviewTurnsTable.turnNumber),
+    });
+    const turnsByAttempt = new Map<string, typeof turns>();
+    for (const t of turns) {
+      const list = turnsByAttempt.get(t.attemptId) ?? [];
+      list.push(t);
+      turnsByAttempt.set(t.attemptId, list);
+    }
+
+    const blocks = kept
+      .map((prior, i) => {
+        const lines = (turnsByAttempt.get(prior.id) ?? [])
+          .filter((t) => t.answerTranscript?.trim())
+          .map(
+            (t) =>
+              `Q: ${t.question}\nA: ${t
+                .answerTranscript!.trim()
+                .slice(0, PRIOR_ANSWER_CHARS)}`,
+          );
+        if (lines.length === 0) return null;
+        const score =
+          prior.overallScore !== null
+            ? `overall ${prior.overallScore}/100`
+            : "not scored";
+        return [`Attempt ${i + 1} (${score}):`, ...lines].join("\n");
+      })
+      .filter((b): b is string => b !== null);
+
+    return blocks.length > 0 ? blocks.join("\n\n") : null;
+  } catch (error) {
+    console.error(
+      `[attempt] prior-attempts lookup failed: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+    return null;
+  }
 }
 
 /**
@@ -272,31 +339,41 @@ function toHistory(turns: InterviewTurn[]): PriorTurn[] {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Begin an attempt by creating the language probe.
+ * Begin an attempt by creating the opening turn.
+ *
+ * The candidate has already chosen their language, so the opener is asked and
+ * spoken in it from the first word. It still captures the introduction used to
+ * ground later questions (kept under `kind: "language_probe"` so
+ * `introductionFor` keeps working) — it is no longer a language probe.
  *
  * Idempotent: a refresh or double click returns the existing state rather than
- * creating a second turn. No OpenAI call happens here — the probe is fixed
- * text, because we do not yet know what language to generate in.
+ * creating a second turn. No OpenAI call — the opener is fixed per-language text.
  */
-async function startAttemptInner(
-  attemptId: string,
-  /**
-   * The language the candidate picked before starting.
-   *
-   * Chosen up front now rather than inferred from the first answer, so the
-   * opener is already spoken in it — greeting someone in English and
-   * switching afterwards undoes the choice they just made. Detection still
-   * runs on every answer, but only to notice a candidate drifting to another
-   * language, never to override this.
-   */
-  languageKey: string,
-  /** What the candidate typed about themselves on the same screen. */
-  about: { course: string | null; experience: string | null },
-): Promise<void> {
-  const language = resolveInterviewLanguage(languageKey);
+/** Everything this does, and everything it calls, is billed to the attempt. */
+export function startAttempt(attemptId: string): Promise<void> {
+  return withUsageScope(attemptId, () => startAttemptInner(attemptId));
+}
+
+async function startAttemptInner(attemptId: string): Promise<void> {
   const attempt = await reload(attemptId);
   const existing = await getTurns(attemptId);
-  if (attempt.status !== "not_started" || existing.length > 0) return;
+  // Guard on the OPENER specifically, not "any turn" — the first question may
+  // already have been prepared ahead by `prewarmFirstQuestion` while the
+  // candidate was on the device-check screen, and that must not stop the
+  // opener from being created here.
+  const openerExists = existing.some(
+    (turn) => turn.turnNumber === LANGUAGE_PROBE_TURN,
+  );
+  if (attempt.status !== "not_started" || openerExists) return;
+  if (!attempt.language) {
+    throw new AttemptError(
+      "invalid_state",
+      "No interview language was chosen for this attempt.",
+    );
+  }
+
+  const language = resolveInterviewLanguage(attempt.language);
+  const opening = OPENING_BY_KEY[language.key];
 
   const [claimed] = await db
     .update(interviewAttemptsTable)
@@ -321,7 +398,7 @@ async function startAttemptInner(
     )
     .returning({ id: interviewAttemptsTable.id });
 
-  // Another request won the race; it created the probe.
+  // Another request won the race; it created the opener.
   if (!claimed) return;
 
   const opener = openerFor(language.key, firstNameOf(attempt.candidateName));
@@ -331,33 +408,57 @@ async function startAttemptInner(
     turnNumber: LANGUAGE_PROBE_TURN,
     kind: "language_probe",
     skillId: null,
-    question: opener,
+    question: opening,
     status: "awaiting_answer",
   });
 
   await tryAttachQuestionAudio(
     attemptId,
     LANGUAGE_PROBE_TURN,
-    opener,
+    opening,
     language.code,
   );
+}
 
-  /**
-   * The rest of the interview is written while the candidate listens to the
-   * opener.
-   *
-   * Not awaited: the opener is fixed text that was already voiced above, so
-   * there is nothing to wait for. By the time they have answered it — thirty
-   * seconds at the very least — the warm-ups and the first band of skills are
-   * written and voiced, and from then on every question is already waiting.
-   */
-  scheduleBackground(`prepare wave 0 for ${attemptId}`, async () => {
-    const interview = await db.query.interviewsTable.findFirst({
-      where: eq(interviewsTable.id, attempt.interviewId),
-    });
-    if (!interview) return;
-    await withUsageScope(attemptId, () => prepareWave(attemptId, interview, 0));
-  });
+/**
+ * Prepare the first real question WHILE the candidate is still on the device
+ * check, so it is ready the instant they finish the opening turn.
+ *
+ * Grounded in the course they entered on the form — the intro answer does not
+ * exist yet, so this one question trades intro-grounding for a zero-wait start;
+ * every later question still uses the intro and prior answers. Best-effort: if
+ * it fails, the question is simply generated the normal way when reached.
+ */
+export function prewarmFirstQuestion(
+  attempt: InterviewAttempt,
+  interview: Interview,
+): Promise<void> {
+  return withUsageScope(attempt.id, () =>
+    prewarmFirstQuestionInner(attempt, interview),
+  );
+}
+
+async function prewarmFirstQuestionInner(
+  attempt: InterviewAttempt,
+  interview: Interview,
+): Promise<void> {
+  if (!attempt.language || attempt.status !== "not_started") return;
+  const existing = await getTurns(attempt.id);
+  if (existing.length > 0) return; // already started or already prewarmed
+
+  try {
+    await generateAndInsertQuestion(
+      attempt.id,
+      interview,
+      LANGUAGE_PROBE_TURN + 1,
+    );
+  } catch (error) {
+    console.error(
+      `[attempt] prewarm failed attempt=${attempt.id}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -381,9 +482,10 @@ async function synthesiseQuestionAudio(
   attemptId: string,
   text: string,
   languageCode: string,
+  pace?: number,
 ): Promise<string | null> {
   try {
-    const speech = await generateSpeech(text, { languageCode });
+    const speech = await generateSpeech(text, { languageCode, pace });
     return await timed("r2.store.question", () =>
       storeAudio({
         attemptId,
@@ -429,6 +531,15 @@ async function tryAttachQuestionAudio(
   return true;
 }
 
+export function regenerateQuestionAudio(
+  attempt: InterviewAttempt,
+  turnNumber: number,
+): Promise<boolean> {
+  return withUsageScope(attempt.id, () =>
+    regenerateQuestionAudioInner(attempt, turnNumber),
+  );
+}
+
 async function regenerateQuestionAudioInner(
   attempt: InterviewAttempt,
   turnNumber: number,
@@ -437,10 +548,7 @@ async function regenerateQuestionAudioInner(
   const turn = turns.find((t) => t.turnNumber === turnNumber);
   if (!turn || turn.questionAudioId) return Boolean(turn?.questionAudioId);
 
-  const code =
-    turn.kind === "language_probe" || !attempt.language
-      ? PROBE_SPOKEN_LANGUAGE_CODE
-      : resolveInterviewLanguage(attempt.language).code;
+  const code = resolveInterviewLanguage(attempt.language ?? "english").code;
 
   return tryAttachQuestionAudio(attempt.id, turnNumber, turn.question, code);
 }
@@ -560,6 +668,121 @@ async function repeatTurn(attemptId: string, turnId: string): Promise<void> {
   });
 }
 
+/**
+ * Answer a doubt OUT LOUD, leaving the question exactly as it is.
+ *
+ * The candidate asked something instead of answering — "what does this word
+ * mean?" — or said nothing usable. The interviewer speaks a short reply and the
+ * on-screen question text never moves; the candidate answers it next. The reply
+ * plays through the turn's audio slot, so a following "repeat" replays the
+ * reply — acceptable, since the reply itself invites them to answer and the
+ * question is still on screen. Falls back to a plain replay if the reply cannot
+ * be generated or voiced.
+ */
+async function speakDoubtResponse(
+  attempt: InterviewAttempt,
+  turn: InterviewTurn,
+  doubtTranscript: string,
+): Promise<void> {
+  const language = resolveInterviewLanguage(attempt.language ?? "english");
+
+  let reply: string;
+  try {
+    reply = await generateDoubtResponse({
+      // Reason from the English original where we have it — the local text may
+      // itself be the word the candidate could not follow.
+      question: turn.questionTranslation ?? turn.question,
+      doubtTranscript,
+      languageName: language.promptName,
+      languageCode: language.code,
+    });
+  } catch (error) {
+    console.error(
+      `[attempt] doubt reply failed turn=${turn.id}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+    await repeatTurn(attempt.id, turn.id);
+    return;
+  }
+
+  const audioId = await synthesiseQuestionAudio(
+    attempt.id,
+    reply,
+    language.code,
+  );
+  if (!audioId) {
+    // No voice for the reply — fall back to replaying the question rather than
+    // leave the candidate with a silent, unchanged screen.
+    await repeatTurn(attempt.id, turn.id);
+    return;
+  }
+
+  const previousAudioId = turn.questionAudioId;
+
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      // Reply plays here; question / questionTranslation are left UNTOUCHED.
+      questionAudioId: audioId,
+      status: "awaiting_answer",
+      errorMessage: null,
+      processingStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turn.id));
+
+  await db
+    .update(interviewAttemptsTable)
+    .set({ status: "in_progress", updatedAt: new Date() })
+    .where(eq(interviewAttemptsTable.id, attempt.id));
+
+  // The original question clip is now unreferenced.
+  if (previousAudioId) await discardAudioClip(previousAudioId);
+}
+
+/**
+ * Re-voice the CURRENT question slower, at the candidate's request.
+ *
+ * Same question text — only the audio changes (a lower TTS pace). Falls back to
+ * a plain replay if the slow clip cannot be made.
+ */
+async function revoiceSlower(
+  attempt: InterviewAttempt,
+  turn: InterviewTurn,
+): Promise<void> {
+  const language = resolveInterviewLanguage(attempt.language ?? "english");
+  const audioId = await synthesiseQuestionAudio(
+    attempt.id,
+    turn.question,
+    language.code,
+    0.7, // noticeably slower than the default 0.9
+  );
+  if (!audioId) {
+    await repeatTurn(attempt.id, turn.id);
+    return;
+  }
+  const previousAudioId = turn.questionAudioId;
+
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      questionAudioId: audioId,
+      status: "awaiting_answer",
+      errorMessage: null,
+      processingStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turn.id));
+
+  await db
+    .update(interviewAttemptsTable)
+    .set({ status: "in_progress", updatedAt: new Date() })
+    .where(eq(interviewAttemptsTable.id, attempt.id));
+
+  if (previousAudioId) await discardAudioClip(previousAudioId);
+}
+
 async function failTurn(
   attemptId: string,
   turnId: string,
@@ -663,54 +886,32 @@ async function archiveAnswerAudio(
  *
  * The pieces are transcribed IN PARALLEL, not one after another — a long
  * answer is cut into ~25-second segments, and transcribing them serially made
- * the wait scale with how long the candidate spoke (five segments meant five
- * Sarvam calls back to back). Firing them together turns that into roughly the
- * time of a single segment. Order still matters for the final transcript, so
- * the results are stitched back together in segment order regardless of which
- * finished first.
+ * the wait scale with how long the candidate spoke. Firing them together turns
+ * that into roughly the time of a single segment; results are stitched back in
+ * segment order regardless of which finished first.
  *
- * The language reported is the one from the longest-transcribing segment —
- * the opening few words of a reply are the least reliable place to judge
- * from, and a candidate who switches language mid-answer should be read as
- * whatever they mostly spoke.
+ * The language is FIXED — the candidate chose it up front — so every segment is
+ * transcribed in it rather than letting Sarvam free-guess per segment. Locking
+ * the language is also what stops the old silence-hallucination: told a language,
+ * Sarvam no longer invents a stray phrase in a random script on a silent tail.
  */
-/**
- * Longest transcribed slice wins the language vote, and a short slice in a
- * DIFFERENT language than that winner is dropped.
- *
- * Sarvam, told to detect ("unknown"), free-guesses a language per segment and
- * on a silent tail hallucinates a stray phrase in a random script — the
- * "આપણે હા ચાલો" / "achcha achcha" garbage that used to get appended to
- * answers. A real answer slice is substantial; a hallucination is short and
- * off-language. So detection still runs every turn (switching works), but the
- * junk slice is discarded and cannot corrupt the transcript or flip the
- * detected language.
- */
-const HALLUCINATION_MAX_CHARS = 40;
-
-async function transcribeSegments(answer: AnswerAudio): Promise<{
-  transcript: string;
-  languageCode: string | null;
-  languageProbability: number | null;
-}> {
+async function transcribeSegments(
+  answer: AnswerAudio,
+  languageCode: string,
+): Promise<string> {
   const settled = await Promise.all(
     answer.segments.map(async (segment) => {
       try {
         const result = await transcribeAudio({
           audio: segment,
           mimeType: answer.mimeType,
-          languageCode: "unknown",
+          languageCode,
         });
-        return {
-          ok: true as const,
-          text: result.transcript?.trim() ?? "",
-          code: result.languageCode,
-          probability: result.languageProbability,
-        };
+        return { ok: true as const, text: result.transcript?.trim() ?? "" };
       } catch (error) {
         // One bad slice must not lose the whole answer — a rollover can leave
-        // a final fragment of a fraction of a second, which is exactly the
-        // sort of thing a transcriber rejects.
+        // a final fragment of a fraction of a second, which a transcriber
+        // rejects.
         console.error(
           `[attempt] segment transcription failed: ${
             error instanceof Error ? error.message : "unknown"
@@ -721,42 +922,17 @@ async function transcribeSegments(answer: AnswerAudio): Promise<{
     }),
   );
 
-  // First pass: the longest slice decides the answer's language. It is the
-  // most real thing here — a hallucination on silence is always short.
-  let best: { code: string | null; probability: number | null; len: number } = {
-    code: null,
-    probability: null,
-    len: -1,
-  };
+  const parts: string[] = [];
   let failures = 0;
   for (const result of settled) {
     if (!result.ok) {
       failures += 1;
       continue;
     }
-    if (result.text.length > best.len) {
-      best = {
-        code: result.code,
-        probability: result.probability,
-        len: result.text.length,
-      };
-    }
+    if (result.text) parts.push(result.text);
   }
 
-  // Second pass, in segment order so the transcript reads the way it was
-  // spoken. Drop a short slice whose language differs from the winner — that
-  // is a silence hallucination, not part of the answer.
-  const parts: string[] = [];
-  for (const result of settled) {
-    if (!result.ok || !result.text) continue;
-    const offDominant =
-      best.code !== null && result.code !== null && result.code !== best.code;
-    if (offDominant && result.text.length < HALLUCINATION_MAX_CHARS) continue;
-    parts.push(result.text);
-  }
-
-  // Every slice failed: that is a real failure, and the caller should say so
-  // rather than score an empty answer.
+  // Every slice failed: a real failure — say so rather than score an empty one.
   if (failures > 0 && parts.length === 0) {
     throw new ProviderError({
       provider: "sarvam",
@@ -767,23 +943,102 @@ async function transcribeSegments(answer: AnswerAudio): Promise<{
     });
   }
 
-  return {
-    transcript: parts.join(" "),
-    languageCode: best.code,
-    languageProbability: best.probability,
-  };
+  return parts.join(" ");
 }
 
-async function processTurnInner(
+/**
+ * Non-repeat doubts raised per turn ("I don't know", "explain this"), so a
+ * candidate who keeps saying they cannot answer is coaxed a couple of times
+ * and then moved on, instead of being asked the same question forever.
+ *
+ * ponytail: in-process Map — per-instance and reset on restart, which is fine
+ * (worst case is one extra re-ask after a redeploy). Promote to a turn column
+ * only if it ever needs to survive across instances.
+ */
+const doubtCounts = new Map<string, number>();
+const MAX_DOUBTS_BEFORE_SKIP = 1;
+
+/**
+ * Lowest score that may earn a follow-up. Deliberately 1, not higher: the whole
+ * point of a probe is to give a THIN, LOW-scoring but genuine answer a fair
+ * chance before that low score is settled (client ask — a fresher who says
+ * "I've never spotted an error" must be PROBED, not handed a 1/10). Only a
+ * literal 0 (nothing to work with) skips it; refusals / "I don't know" are
+ * already filtered to the doubt path before scoring, and the model is told to
+ * return no follow-up for empty/off-topic/refusal answers.
+ */
+const FOLLOWUP_MIN_SCORE = 1;
+
+/**
+ * Hard ceiling on follow-ups across the whole interview, so its length can't
+ * balloon even when many answers are thin. Primaries are unaffected — every
+ * skill is still asked — this only bounds the extra probes on top.
+ */
+const MAX_FOLLOWUPS_PER_INTERVIEW = 3;
+
+/**
+ * Floor on follow-ups per interview. Real freshers mostly give substantive
+ * answers, so the thin-answer path almost never fires and interviews were
+ * ending with ZERO probes. Once the remaining primary skills are down to
+ * exactly the number of probes still owed, the follow-up decision is FORCED —
+ * the model still writes the probe from what the candidate said; we only insist
+ * one happens. Best-effort: an empty / skipped final answer can still slip it.
+ */
+const MIN_FOLLOWUPS_PER_INTERVIEW = 2;
+
+/**
+ * How short an answer must be to be worth pausing on.
+ *
+ * The follow-up decision is a model call on the critical path, so running it on
+ * every answer taxes the whole interview with a pause. Instead we only reach
+ * for it when the answer is genuinely THIN — a bare "yes", a couple of words —
+ * which is exactly the case a probe is for. A substantive answer skips the call
+ * entirely: advance instantly on the prefetched next question, score in the
+ * background. Tunable — raise to probe more often, lower to probe less.
+ */
+const THIN_ANSWER_MAX_WORDS = 6;
+
+function isThinAnswer(transcript: string): boolean {
+  return (
+    transcript.trim().split(/\s+/).filter(Boolean).length <=
+    THIN_ANSWER_MAX_WORDS
+  );
+}
+
+/**
+ * Transcribe, score and move the interview on — billed to this attempt.
+ *
+ * The scope wraps the whole thing rather than each provider call, so anything
+ * added underneath is counted without being told to.
+ */
+export function processTurn(
+  attemptId: string,
+  turnId: string,
+  interview: Interview,
+  answer?: AnswerAudio,
+  providedTranscript?: string,
+): Promise<void> {
+  return withUsageScope(attemptId, () =>
+    processTurnScoped(attemptId, turnId, interview, answer, providedTranscript),
+  );
+}
+
+async function processTurnScoped(
   attemptId: string,
   turnId: string,
   interview: Interview,
   /**
    * The recording, when `processTurn` is called straight after the upload.
    * Absent when recovering a turn later, in which case it is read back from
-   * storage instead.
+   * storage instead — or when the transcript arrived from streaming STT.
    */
   answer?: AnswerAudio,
+  /**
+   * Transcript already produced by realtime streaming STT. When present, the
+   * batch transcribe (and its silent-tail hallucination) is skipped entirely;
+   * the video track still archives the answer separately.
+   */
+  providedTranscript?: string,
 ): Promise<void> {
   const attempt = await reload(attemptId).catch(() => null);
   const turn = await db.query.interviewTurnsTable.findFirst({
@@ -798,103 +1053,70 @@ async function processTurnInner(
   }
 
   try {
-    // Fresh submission: use the bytes we were handed. Recovery: read the
-    // archived copy back — only the first segment survives that route, so
-    // a recovered long answer is transcribed from its opening 25 seconds.
-    const recovered = turn.answerAudioId
-      ? await loadAudioBytes({ audioId: turn.answerAudioId, attemptId })
-      : null;
-
-    const audioRow: AnswerAudio | null =
-      answer ??
-      (recovered
-        ? { segments: [recovered.data], mimeType: recovered.mimeType }
-        : null);
-
-    if (!audioRow) {
+    // Language is fixed (chosen up front) and needed by both paths below.
+    if (!attempt.language) {
       await failTurn(
         attemptId,
         turnId,
-        "Your recording could not be read. Please record the answer again.",
+        "No interview language is set. Please start again.",
       );
       return;
     }
+    const language = resolveInterviewLanguage(attempt.language);
 
-    /**
-     * Nothing was said. Do not ask what was said.
-     *
-     * Returning here skips the provider call entirely — silence costs no STT
-     * request — and, more importantly, removes the only route by which an
-     * imagined transcript could become a scored answer.
-     */
-    if (answer?.heardSpeech === false) {
-      console.log(
-        `[attempt] silence turn=${turn.turnNumber} — no speech detected, not transcribed`,
-      );
-      if (answer) await archiveAnswerAudio(attemptId, turnId, answer);
-      /**
-       * The opener only has to be failed when it is genuinely load-bearing —
-       * that is, when nobody has chosen a language and this recording was the
-       * only chance to detect one. The candidate picks their language before
-       * the interview starts now, so the usual case is that this is simply the
-       * first question, and a red "check your microphone" box is the wrong
-       * answer to somebody who paused before their first word.
-       */
-      if (turn.kind === "language_probe" && !attempt.language) {
+    // --- 1. Get the transcript --------------------------------------------
+    // Streaming path: Sarvam already returned it live, so there is nothing to
+    // transcribe here. Audio path: transcribe in the FIXED interview language
+    // (which also stops Sarvam hallucinating on silent tails), archiving the
+    // audio alongside so the turn is only as long as the slower of the two.
+    let transcript: string;
+    if (providedTranscript != null) {
+      transcript = providedTranscript.trim();
+    } else {
+      // Fresh submission: use the bytes we were handed. Recovery: read the
+      // archived copy back — only the first segment survives that route, so
+      // a recovered long answer is transcribed from its opening 25 seconds.
+      const recovered = turn.answerAudioId
+        ? await loadAudioBytes({ audioId: turn.answerAudioId, attemptId })
+        : null;
+
+      const audioRow: AnswerAudio | null =
+        answer ??
+        (recovered
+          ? { segments: [recovered.data], mimeType: recovered.mimeType }
+          : null);
+
+      if (!audioRow) {
         await failTurn(
           attemptId,
           turnId,
-          "We could not hear an answer in that recording. Please check your microphone and record again.",
+          "Your recording could not be read. Please record the answer again.",
         );
-      } else if (turn.addMorePromptedAt && turn.answerTranscript) {
-        /**
-         * They were asked whether they wanted to add anything, and said
-         * nothing. Silence answers that question: it means no.
-         *
-         * Re-asking here would be the interview forgetting an answer it
-         * already has and putting the same question again — which is what it
-         * used to do, and why saying nothing after a short answer felt like
-         * being stuck.
-         */
-        await handleAnsweredTurn({
-          attempt,
-          interview,
-          turn,
-          transcript: "",
-          languageCode: turn.detectedLanguageCode,
-        });
-      } else {
-        await repeatTurn(attemptId, turnId);
+        return;
       }
-      return;
+
+      const [, heard] = await Promise.all([
+        answer
+          ? archiveAnswerAudio(attemptId, turnId, answer)
+          : Promise.resolve(),
+        transcribeSegments(audioRow, language.code),
+      ]);
+      transcript = heard;
     }
 
-    // --- 1. Transcribe, with detection always on ---------------------------
-    // "unknown" lets Sarvam identify the language, which is how both the
-    // initial detection and a later switch are noticed.
-    //
-    // Archiving runs alongside rather than before it: the two are
-    // independent, and overlapping them keeps the turn as short as the
-    // slower of the two rather than their sum.
-    const [, transcription] = await Promise.all([
-      answer
-        ? archiveAnswerAudio(attemptId, turnId, answer)
-        : Promise.resolve(),
-      transcribeSegments(audioRow),
-    ]);
-    const { transcript, languageCode, languageProbability } = transcription;
-
-    // Diagnostic: what Sarvam actually heard, and whether we read it as a
-    // "repeat the question" request. A repeat spoken in English during a
-    // non-English interview can be mis-transcribed into the session script and
-    // slip past isRepeatRequest — this line is how we confirm that.
     console.log(
-      `[attempt] heard turn=${turn.turnNumber} lang=${languageCode} repeat=${isRepeatRequest(
+      `[attempt] heard turn=${turn.turnNumber} lang=${language.key} repeat=${isRepeatRequest(
         transcript,
       )} transcript=${JSON.stringify(transcript.slice(0, 160))}`,
     );
 
     const isProbe = turn.kind === "language_probe";
+
+    // "Say it slower" — re-voice the same question at a lower pace.
+    if (!isProbe && isSlowerRequest(transcript)) {
+      await revoiceSlower(attempt, turn);
+      return;
+    }
 
     if (!transcript || transcript.trim().length < 2) {
       /**
@@ -939,166 +1161,61 @@ async function processTurnInner(
     // understand", "what should I say?" — rather than an attempt at the
     // question? The phrase list catches the obvious ones instantly; for
     // anything subtler the model judges, so we respond and re-ask like a real
-    // interviewer instead of scoring it as the answer. The probe is never
-    // classified: its only job is to capture a language sample.
-    const detected = languageFromCode(languageCode);
-    const confident =
-      (languageProbability ?? 0) >= LANGUAGE_CONFIDENCE_THRESHOLD;
+    // interviewer instead of scoring it as the answer. The opening turn is
+    // never classified: its only job is to capture the introduction.
+    const looksLikeRepeat = isRepeatRequest(transcript);
+    const wantsSkip = !isProbe && isSkipRequest(transcript);
+    const isDoubt =
+      looksLikeRepeat ||
+      wantsSkip ||
+      (!isProbe &&
+        (await classifyUtterance({
+          question: turn.question,
+          transcript,
+          languageName: attempt.language
+            ? resolveInterviewLanguage(attempt.language).promptName
+            : "English",
+        })) === "doubt");
 
-    /**
-     * They are answering in a language they did not choose.
-     *
-     * Said in the language they CHOSE, not the one they slipped into. They
-     * picked it on the way in, so it is the one language we know they can
-     * follow — and hearing the interview's own language at the moment they are
-     * being asked to return to it is the clearer signal of the two.
-     *
-     * It names both ways out, because a candidate who is plainly more
-     * comfortable elsewhere should not have to fight the interview to switch.
-     *
-     * Once per interview. The check is over the turns already answered, so it
-     * needs no column of its own — and repeating it every turn would turn a
-     * kindness into nagging. After the first time the answer is simply taken
-     * as given, in whatever language it arrives: being understood matters more
-     * than the setting.
-     *
-     * Not a prepared filler, because there is one of these per language pair
-     * and almost every interview needs none. Voiced on demand, which costs a
-     * TTS call on a path that is rare by construction.
-     */
-    if (
-      detected &&
-      confident &&
-      attempt.language &&
-      detected !== attempt.language &&
-      !alreadyToldAboutLanguage(await getTurns(attemptId), attempt.language)
-    ) {
-      const chosen = resolveInterviewLanguage(attempt.language);
-      const notice = await synthesiseQuestionAudio(
-        attemptId,
-        wrongLanguageNoticeFor(chosen.key, chosen.key),
-        chosen.code,
-      );
-      if (notice) {
-        await issueDirective(turnId, "play_filler", notice);
-        return;
-      }
-      // Could not be voiced. Take the answer rather than stall on a nicety.
-    }
-
-    /**
-     * Is this a request rather than an answer?
-     *
-     * A phrase list, and no model call. This runs on every answer, so asking
-     * a model would tax every turn to catch a rare one — and an interview
-     * that has to wait for a provider before it can repeat itself does not
-     * feel responsive, which is the whole point of the exercise.
-     *
-     * The question text NEVER changes here. Whichever branch runs, the words
-     * on screen stay as they were until the candidate actually answers them;
-     * only what the interviewer says out loud differs.
-     */
-    const intent = phraseIntent(transcript, Boolean(turn.addMorePromptedAt));
-    if (intent) {
-      switch (intent) {
-        case "slower": {
-          // Recorded on the attempt rather than the turn: "slowly" is a
-          // standing request, not a comment on this one question.
-          await db
-            .update(interviewAttemptsTable)
-            .set({ speechRate: SLOWER_SPEECH_RATE, updatedAt: new Date() })
-            .where(eq(interviewAttemptsTable.id, attemptId));
-          await issueDirective(turnId, "replay", turn.questionAudioId);
-          break;
-        }
-        case "not_understood": {
-          // The prepared simpler wording, falling back to the question itself
-          // when this turn has none — the opener, or a wave that failed.
-          const easier = await variantAudioId(
-            attemptId,
-            turn.planIndex,
-            "easier",
-            0,
-            turn.questionAudioId,
-          );
-          await issueDirective(turnId, "play_easier", easier);
-          break;
-        }
-        case "off_topic": {
-          /**
-           * They asked the interviewer something rather than answering.
-           *
-           * Nothing is scored: "what is your name?" is not a weak answer to a
-           * reliability question, it is not an answer at all, and marking it
-           * as one costs the candidate a whole skill for one stray remark.
-           * The question stays on screen, the microphone stays open, and they
-           * simply answer it.
-           */
-          const redirect = await fillerAudioId(
-            attemptId,
-            "stayOnTopic",
-            turn.turnNumber + turn.directiveSeq,
-          );
-          await issueDirective(
-            turnId,
-            redirect ? "play_filler" : "replay",
-            redirect ?? turn.questionAudioId,
-          );
-          break;
-        }
-        case "repeat":
-        default: {
-          await issueDirective(turnId, "replay", turn.questionAudioId);
-          break;
+    if (isDoubt) {
+      // The question text NEVER changes — the one first shown stays until it is
+      // actually answered. What differs is the interviewer's spoken response:
+      //   - an explicit "repeat" (or the probe) just replays the exact question;
+      //   - a skip, "I don't know", or any other doubt gets ONE spoken nudge to
+      //     try, and if they still don't answer, we move on. No endless loop.
+      if (looksLikeRepeat || isProbe || !attempt.language) {
+        // A plain "say it again" (or the probe, which cannot be skipped) just
+        // replays. These do not count as giving up.
+        await repeatTurn(attemptId, turnId);
+      } else {
+        // Skip / "I don't know" / "I can't answer": encourage them to try ONCE,
+        // then move on. The candidate asked not to be badgered 3+ times.
+        const key = `${attemptId}:${turn.turnNumber}`;
+        const seen = (doubtCounts.get(key) ?? 0) + 1;
+        doubtCounts.set(key, seen);
+        if (seen > MAX_DOUBTS_BEFORE_SKIP) {
+          doubtCounts.delete(key);
+          await skipTurn(attempt, interview, turn.turnNumber);
+        } else {
+          await speakDoubtResponse(attempt, turn, transcript);
         }
       }
       return;
     }
 
-    if (turn.kind === "language_probe") {
-      await completeProbe({
-        attempt,
-        interview,
-        turnId,
-        transcript,
-        languageCode,
-        detected,
-        confident,
-      });
+    if (isProbe) {
+      await completeProbe({ attempt, interview, turnId, transcript });
       return;
     }
 
-    // --- 2. The language is the candidate's choice, and only theirs --------
-    //
-    // Detection used to switch the interview whenever it heard something
-    // different and was confident about it. That was wrong twice over: a
-    // short, quiet or noisy answer is misdetected often enough that
-    // interviews flipped language on their own, mid-way, without anyone
-    // asking — and even a correct detection is not a request. Someone
-    // answering one question in English inside a Hindi interview has not
-    // asked for the rest of it in English.
-    //
-    // So the language now changes in exactly one place: the picker in the
-    // header, when the candidate reaches for it. Detection still runs and is
-    // still stored per turn — the report shows which languages were actually
-    // spoken, and `wrongLanguageNotice` uses it to ask them, kindly, to stay
-    // in the one they chose — but it no longer decides anything.
-    const activeLanguage = attempt.language as InterviewLanguageKey | null;
-    if (!activeLanguage) {
-      await failTurn(
-        attemptId,
-        turnId,
-        "We could not determine your language. Please choose one and try again.",
-      );
-      return;
-    }
-
+    // Language is fixed for the whole interview (chosen up front), so there is
+    // no detection or switching — the answer is scored and we move on.
     await handleAnsweredTurn({
-      attempt: { ...attempt, language: activeLanguage },
+      attempt,
       interview,
       turn,
       transcript,
-      languageCode,
+      languageCode: language.code,
     });
   } catch (error) {
     const message =
@@ -1113,255 +1230,30 @@ async function processTurnInner(
 }
 
 /**
- * Finish the language probe.
+ * Finish the opening turn.
  *
- * On a confident, supported detection the attempt is locked to that language
- * and the first real question is generated. Otherwise the candidate is asked
- * to choose — we never guess a language and conduct a whole interview in it.
+ * The language is already fixed (chosen up front), so this just records the
+ * candidate's introduction and delivers the first real question.
  */
 async function completeProbe(args: {
   attempt: InterviewAttempt;
   interview: Interview;
   turnId: string;
   transcript: string;
-  languageCode: string | null;
-  detected: InterviewLanguageKey | null;
-  confident: boolean;
 }): Promise<void> {
-  const { attempt, interview, turnId, transcript, languageCode } = args;
+  const { attempt, interview, turnId, transcript } = args;
 
   await db
     .update(interviewTurnsTable)
     .set({
       answerTranscript: transcript,
-      detectedLanguageCode: languageCode,
       status: "completed",
       processingStartedAt: null,
       updatedAt: new Date(),
     })
     .where(eq(interviewTurnsTable.id, turnId));
 
-  // The candidate chose their language before the interview started, so the
-  // probe no longer decides it — their choice stands even if they answered
-  // this one in something else. `generateAndInsertQuestion` notices that
-  // mismatch separately and has the interviewer mention it, kindly.
-  //
-  // The detection branches below remain for an attempt with no language at
-  // all: one started before the chooser existed, or any future path that
-  // skips it. Falling back to detection is better than stalling.
-  if (!attempt.language) {
-    if (!args.detected || !args.confident) {
-      await db
-        .update(interviewAttemptsTable)
-        .set({
-          needsLanguageChoice: true,
-          status: "in_progress",
-          updatedAt: new Date(),
-        })
-        .where(eq(interviewAttemptsTable.id, attempt.id));
-      return;
-    }
-
-    await db
-      .update(interviewAttemptsTable)
-      .set({
-        language: args.detected,
-        languageConfidence: null,
-        needsLanguageChoice: false,
-        status: "in_progress",
-        updatedAt: new Date(),
-      })
-      .where(eq(interviewAttemptsTable.id, attempt.id));
-  }
-
   await deliverTurn(attempt.id, interview, LANGUAGE_PROBE_TURN + 1);
-}
-
-/** Candidate picked a language after detection failed. */
-async function chooseLanguageInner(
-  attempt: InterviewAttempt,
-  interview: Interview,
-  languageKey: string,
-): Promise<void> {
-  const language = resolveInterviewLanguage(languageKey);
-
-  await db
-    .update(interviewAttemptsTable)
-    .set({
-      language: language.key,
-      needsLanguageChoice: false,
-      updatedAt: new Date(),
-    })
-    .where(eq(interviewAttemptsTable.id, attempt.id));
-
-  // Before anything else, and regardless of what the candidate is looking
-  // at: questions are prepared ahead, so a switch has to reach past the one
-  // on screen. Anything already written for a later turn is in the language
-  // they just rejected.
-  //
-  // These used to be DELETED and written again from scratch. They are
-  // translated in place instead: the question a candidate gets should not
-  // depend on which language they happened to pick, and regenerating meant a
-  // switch quietly changed the interview as well as its language. It is also
-  // cheaper — a translation is shorter than an authored question — and it
-  // keeps whatever the look-ahead had already paid for.
-  //
-  // This sits above the guards further down deliberately: switching while
-  // the current answer is still processing is exactly when someone realises
-  // the language is wrong, and skipping it there left the next question in
-  // the old language.
-  await translatePreparedQuestions(
-    attempt.id,
-    attempt.currentQuestionNumber,
-    language,
-  );
-
-  /**
-   * The fixed lines follow the language too.
-   *
-   * In the background: re-voicing eight short clips takes about a second, and
-   * none of them is needed until the candidate goes quiet — whereas the
-   * question they are looking at is needed now.
-   */
-  scheduleBackground(`re-voice fillers for ${attempt.id}`, () =>
-    withUsageScope(attempt.id, () =>
-      refreshFillersForLanguage(
-        attempt.id,
-        language,
-        firstNameOf(attempt.candidateName),
-      ),
-    ),
-  );
-
-  const turns = await getTurns(attempt.id);
-  const next = LANGUAGE_PROBE_TURN + 1;
-
-  // Nothing asked yet: the first real question is simply written in the
-  // language that was just chosen.
-  if (!turns.some((t) => t.turnNumber === next)) {
-    await deliverTurn(attempt.id, interview, next);
-    return;
-  }
-
-  // Mid-interview switch. Re-ask what is on screen right now in the new
-  // language rather than waiting for the next question — a candidate who
-  // says they cannot follow the language is telling us about the question
-  // in front of them, and leaving it there makes them answer it anyway.
-  const current = turns.find(
-    (t) => t.turnNumber === attempt.currentQuestionNumber,
-  );
-  // Only the question actually on screen can be rewritten in place; one
-  // being processed or already answered is left alone. The discard above
-  // has already dealt with everything after it either way.
-  if (!current || current.status !== "awaiting_answer") return;
-  if (current.kind === "language_probe") return;
-
-  await reaskInLanguage(attempt.id, current, language);
-}
-
-/**
- * Rewrite every question prepared ahead into the newly chosen language.
- *
- * Only unanswered turns past the current one: an answered turn is part of the
- * record and must keep the wording the candidate actually heard, and the
- * current one is handled by `reaskInLanguage` so the candidate is not left
- * staring at a question that changes under them.
- *
- * Sequential rather than parallel. There is normally exactly one prepared
- * question, so concurrency buys nothing, and a language switch is already a
- * moment where the candidate is waiting — two provider calls racing would
- * only make a failure harder to reason about.
- *
- * Best-effort per turn: a translation that fails leaves that question in the
- * old language, which is worse than switching but far better than deleting a
- * question and leaving a hole in the interview.
- */
-async function translatePreparedQuestions(
-  attemptId: string,
-  currentTurnNumber: number,
-  language: ReturnType<typeof resolveInterviewLanguage>,
-): Promise<void> {
-  const prepared = await db.query.interviewTurnsTable.findMany({
-    where: and(
-      eq(interviewTurnsTable.attemptId, attemptId),
-      gt(interviewTurnsTable.turnNumber, currentTurnNumber),
-      isNull(interviewTurnsTable.answerTranscript),
-    ),
-    orderBy: asc(interviewTurnsTable.turnNumber),
-  });
-  if (prepared.length === 0) return;
-
-  for (const turn of prepared) {
-    // The clip it points at is about to be replaced, so take the old one out
-    // of storage rather than leaving it billed and unreferenced.
-    const previousAudioId = turn.questionAudioId;
-    await reaskInLanguage(attemptId, turn, language);
-    if (previousAudioId) await discardAudioClip(previousAudioId);
-  }
-}
-
-/**
- * Rewrite one pending question into another language and re-voice it.
- *
- * Best-effort in both halves: if translation fails the question stays as it
- * was, which is worse than switching but far better than blanking the
- * question the candidate is looking at.
- */
-async function reaskInLanguage(
-  attemptId: string,
-  turn: InterviewTurn,
-  language: ReturnType<typeof resolveInterviewLanguage>,
-): Promise<void> {
-  // The English original is the best source to translate from — going
-  // language A -> B directly compounds whatever A already lost.
-  const source = turn.questionTranslation ?? turn.question;
-
-  let rewritten;
-  try {
-    rewritten = await translateQuestion(
-      {
-        questionCount: 0,
-        language,
-        candidateIntroduction: null,
-      },
-      source,
-    );
-  } catch (error) {
-    console.error(
-      `[attempt] re-ask translation failed turn=${turn.id}: ${
-        error instanceof Error ? error.message : "unknown"
-      }`,
-    );
-    return;
-  }
-
-  // Voiced first, then swapped in as one update. Writing the new text with
-  // the audio cleared and filling it in afterwards would leave the question
-  // briefly captioned "audio unavailable"; a null here means TTS genuinely
-  // failed, which is what the retry button is for.
-  const questionAudioId = await synthesiseQuestionAudio(
-    attemptId,
-    rewritten.question,
-    language.code,
-  );
-
-  await db
-    .update(interviewTurnsTable)
-    .set({
-      question: rewritten.question,
-      questionTranslation: rewritten.translation,
-      questionAudioId,
-      /**
-       * Any pending instruction is void: it points at a clip in the language
-       * the candidate has just rejected, and the browser prefers a directive's
-       * clip over the question's. Leaving it would re-ask in the new language
-       * on screen while still speaking the old one.
-       */
-      directiveAction: null,
-      directiveAudioId: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(interviewTurnsTable.id, turn.id));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1925,27 +1817,52 @@ function nextPrimarySkill(priorTurns: InterviewTurn[]): WorkSkill | null {
   return asked < WORK_SKILL_COUNT ? WORK_SKILLS[asked]! : null;
 }
 
+/**
+ * Whether the turn the candidate just answered was the last skill.
+ *
+ * The look-ahead prefetches the NEXT primary question — inserting a real turn
+ * row — while the candidate is still on the current one. So `getTurns()` already
+ * contains a skill turn that has NOT been delivered yet, and counting it made
+ * the interview finish one skill early: the prefetched last skill (customer
+ * orientation) was inserted, counted as "asked", then never shown. Count only
+ * turns up to and including the one just answered, so a prefetched-ahead turn is
+ * still delivered rather than mistaken for an already-covered skill.
+ */
+function isLastSkillTurn(
+  turns: InterviewTurn[],
+  answeredTurnNumber: number,
+): boolean {
+  const delivered = turns.filter((t) => t.turnNumber <= answeredTurnNumber);
+  return !nextPrimarySkill(delivered);
+}
+
 /** 1-based position of a skill in the fixed framework order. */
 function skillNumberOf(skillId: WorkSkillId): number {
   return WORK_SKILL_IDS.indexOf(skillId) + 1;
 }
 
 /**
- * Has this candidate already been asked to stay in the language they chose?
+ * Pick a Work Readiness question from the fixed pool for this interview.
  *
- * Read off the turns rather than stored: an answer whose detected language
- * differs from the chosen one is exactly what triggers the notice, so its
- * presence in the history is the record that it happened.
+ * Hindi and Marathi use the client-finalised text verbatim (with the English
+ * kept as the reviewer translation); English uses the English; every other
+ * language renders the English seed live. This is the only skill that skips
+ * the model for its wording.
  */
-function alreadyToldAboutLanguage(
-  priorTurns: InterviewTurn[],
-  chosen: string,
-): boolean {
-  return priorTurns.some((t) => {
-    if (!t.detectedLanguageCode) return false;
-    const spoken = languageFromCode(t.detectedLanguageCode);
-    return !!spoken && spoken !== chosen;
-  });
+async function pickReadinessQuestion(
+  ctx: InterviewContext,
+  languageKey: string | null,
+): Promise<{ question: string; translation: string | null }> {
+  const q =
+    WORK_READINESS_QUESTIONS[
+      Math.floor(Math.random() * WORK_READINESS_QUESTIONS.length)
+    ]!;
+  if (languageKey === "hindi") return { question: q.hi, translation: q.en };
+  if (languageKey === "marathi") return { question: q.mr, translation: q.en };
+  if (languageKey === "english" || !languageKey)
+    return { question: q.en, translation: null };
+  // Telugu, Tamil, etc. — render the English seed in the interview language.
+  return translateQuestion(ctx, q.en);
 }
 
 async function generateAndInsertQuestion(
@@ -1968,13 +1885,19 @@ async function generateAndInsertQuestion(
   const skill = nextPrimarySkill(priorTurns);
   if (!skill) return;
 
-  const ctx = contextFor(attempt, interview, await introductionFor(attemptId));
-  const generated = await generateQuestion({
-    ctx,
-    skill,
-    turnNumber: skillNumberOf(skill.id),
-    history: toHistory(priorTurns),
-  });
+  const ctx = await buildContext(attempt, interview);
+  // Work readiness comes from a FIXED per-language pool (never AI-invented):
+  // pick one at random, using the stored Hindi/Marathi text as-is and rendering
+  // the English live for other languages. Every other skill is AI-generated.
+  const generated =
+    skill.id === "work_readiness"
+      ? await pickReadinessQuestion(ctx, attempt.language)
+      : await generateQuestion({
+          ctx,
+          skill,
+          turnNumber: skillNumberOf(skill.id),
+          history: toHistory(priorTurns),
+        });
 
   // Voiced before the turn is written, so it is never current without audio.
   const questionAudioId = await synthesiseQuestionAudio(
@@ -2043,11 +1966,43 @@ async function discardAudioClip(audioId: string): Promise<void> {
 /**
  * Make a question current.
  *
- * The question is normally already sitting there, written and voiced by a
- * wave. Generating one here is the emergency path — a wave that failed, or an
- * interview that got ahead of its plan — and it is synchronous because the
- * candidate is looking at the screen: one slow question beats a dead
- * interview.
+ * Only non-follow-up questions can be prepared ahead — a follow-up has to be
+ * built from an answer that does not exist yet. Best-effort: if it fails, the
+ * question is simply generated the normal way when the answer arrives.
+ */
+async function prefetchNextQuestion(
+  attemptId: string,
+  interview: Interview,
+  currentTurnNumber: number,
+): Promise<void> {
+  const turns = await getTurns(attemptId);
+
+  // Prepare the next primary ahead of time after EVERY turn, so the common case
+  // (a substantive answer that needs no follow-up) advances with the next
+  // question already in hand — no on-demand generation, no pause. On the rare
+  // thin answer that does earn a follow-up, `deliverFollowUp` reclaims this
+  // slot (see there).
+  //
+  // Nothing left to prepare once every skill has its primary question.
+  if (!nextPrimarySkill(turns)) return;
+
+  const nextTurnNumber = currentTurnNumber + 1;
+  if (turns.some((t) => t.turnNumber === nextTurnNumber)) return;
+
+  try {
+    await buildAndInsertQuestion(attemptId, interview, nextTurnNumber);
+  } catch (error) {
+    console.error(
+      `[attempt] prefetch failed attempt=${attemptId} turn=${nextTurnNumber}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
+}
+
+/**
+ * Make a question current — generating it first only if it was not already
+ * prepared — then look ahead and start preparing the one after it.
  */
 async function deliverTurn(
   attemptId: string,
@@ -2076,13 +2031,56 @@ async function deliverTurn(
   const nextWave = SKILL_WAVES.findIndex(
     (band) => band.length > 0 && asked < (band[0] ?? 0) + 1,
   );
-  if (nextWave > 0) {
-    scheduleBackground(`prepare wave ${nextWave} for ${attemptId}`, () =>
-      withUsageScope(attemptId, () =>
-        prepareWave(attemptId, interview, nextWave),
-      ),
-    );
+
+  // A next primary may have been prefetched into this slot while the candidate
+  // answered. The follow-up takes it: drop that prepared turn (and its clip)
+  // first, and overwrite on the off chance a prefetch lands in the same instant
+  // — so the follow-up always wins, never a silent no-op that leaves the
+  // primary in place.
+  const prepared = await db.query.interviewTurnsTable.findFirst({
+    where: and(
+      eq(interviewTurnsTable.attemptId, attempt.id),
+      eq(interviewTurnsTable.turnNumber, nextTurnNumber),
+    ),
+  });
+  if (prepared) {
+    if (prepared.questionAudioId) await discardAudioClip(prepared.questionAudioId);
+    await db
+      .delete(interviewTurnsTable)
+      .where(eq(interviewTurnsTable.id, prepared.id));
   }
+
+  const followUpValues = {
+    kind: "skill" as const,
+    skillId: currentTurn.skillId,
+    isFollowUp: true,
+    question: followUpQuestion,
+    questionTranslation: followUpTranslation,
+    questionAudioId,
+    status: "awaiting_answer" as const,
+  };
+  await db
+    .insert(interviewTurnsTable)
+    .values({
+      attemptId: attempt.id,
+      turnNumber: nextTurnNumber,
+      ...followUpValues,
+    })
+    .onConflictDoUpdate({
+      target: [interviewTurnsTable.attemptId, interviewTurnsTable.turnNumber],
+      set: followUpValues,
+    });
+
+  await db
+    .update(interviewAttemptsTable)
+    .set({
+      status: "in_progress",
+      currentQuestionNumber: nextTurnNumber,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewAttemptsTable.id, attempt.id));
+
+  await prefetchNextQuestion(attempt.id, interview, nextTurnNumber);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2102,7 +2100,7 @@ async function scoreTurn(args: {
   languageCode: string | null;
 }): Promise<void> {
   const { attempt, interview, turn, transcript, languageCode } = args;
-  const ctx = contextFor(attempt, interview, await introductionFor(attempt.id));
+  const ctx = await buildContext(attempt, interview);
 
   const priorTurns = await db.query.interviewTurnsTable.findMany({
     where: and(
@@ -2194,6 +2192,63 @@ async function writeScoredTurn(
     .where(eq(interviewTurnsTable.id, turnId));
 }
 
+/** Move to the next primary skill, or finish the interview if none remain. */
+async function advanceOrFinish(
+  attempt: InterviewAttempt,
+  interview: Interview,
+  turn: InterviewTurn,
+): Promise<void> {
+  const turns = await getTurns(attempt.id);
+  if (isLastSkillTurn(turns, turn.turnNumber)) {
+    await settleScoring(attempt.id);
+    await finaliseAttempt(attempt.id, interview);
+    return;
+  }
+  await deliverTurn(attempt.id, interview, turn.turnNumber + 1);
+}
+
+/**
+ * Skip the current question at the candidate's request.
+ *
+ * Marked completed but UNSCORED — skipping is not penalised (see the scoring
+ * note): the skill simply reads as unassessed, like one never reached. Then we
+ * move on exactly as a real answer would.
+ */
+export function skipTurn(
+  attempt: InterviewAttempt,
+  interview: Interview,
+  turnNumber: number,
+): Promise<void> {
+  return withUsageScope(attempt.id, () =>
+    skipTurnInner(attempt, interview, turnNumber),
+  );
+}
+
+async function skipTurnInner(
+  attempt: InterviewAttempt,
+  interview: Interview,
+  turnNumber: number,
+): Promise<void> {
+  const turn = (await getTurns(attempt.id)).find(
+    (t) => t.turnNumber === turnNumber,
+  );
+  if (!turn || turn.status === "completed") return;
+
+  await db
+    .update(interviewTurnsTable)
+    .set({
+      status: "completed",
+      answerTranscript: turn.answerTranscript ?? "(skipped)",
+      evaluation: "The candidate chose to skip this question.",
+      score: null,
+      processingStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(interviewTurnsTable.id, turn.id));
+
+  await advanceOrFinish(attempt, interview, turn);
+}
+
 /**
  * What happens once a skill answer has been transcribed.
  *
@@ -2214,149 +2269,104 @@ async function handleAnsweredTurn(args: {
   const { attempt, interview, turn, languageCode } = args;
 
   const skillId = turn.skillId as WorkSkillId | null;
-  const language = attempt.language as InterviewLanguageKey | null;
+  const priorTurns = await db.query.interviewTurnsTable.findMany({
+    where: and(
+      eq(interviewTurnsTable.attemptId, attempt.id),
+      lt(interviewTurnsTable.turnNumber, turn.turnNumber),
+    ),
+    orderBy: asc(interviewTurnsTable.turnNumber),
+  });
+  const followUpsSoFar = priorTurns.filter((t) => t.isFollowUp).length;
 
-  /**
-   * Are we hearing a reply to "would you like to add anything?"
-   *
-   * If so the answer proper is already recorded on the turn, and what just
-   * arrived is either a refusal, an acceptance, or the extra sentence they
-   * wanted to add. All three continue the same answer rather than replacing
-   * it, so they are joined.
-   */
-  const replyingToAddMore = Boolean(turn.addMorePromptedAt);
-  const answered = turn.answerTranscript?.trim() ?? "";
-  const reply = replyingToAddMore ? yesNoIntent(args.transcript) : null;
-
-  if (replyingToAddMore && reply === "yes") {
-    // They have more to say. Invite it and keep listening — the turn stays
-    // open, and whatever comes next lands in the `null` branch below.
-    const audioId = await fillerAudioId(
-      attempt.id,
-      "goAhead",
-      turn.turnNumber + turn.directiveSeq,
-    );
-    await issueDirective(turn.id, "play_filler", audioId);
-    return;
-  }
-
-  /**
-   * The transcript this turn is actually worth.
-   *
-   * A plain "no" is the end of a sentence we already have, not a new answer —
-   * scoring it would mark somebody down for declining to pad. Anything else
-   * said after the prompt is genuine continuation and joins what came before.
-   */
-  const transcript =
-    replyingToAddMore && reply === "no"
-      ? answered
-      : [answered, args.transcript.trim()].filter(Boolean).join(" ");
-
-  const words = transcript.trim().split(/\s+/).filter(Boolean);
-
-  /**
-   * Was that the whole answer, or the start of one?
-   *
-   * A sentence or less counts as short — twelve words, or sixty characters,
-   * whichever they cross first. Counting words alone under-reads scripts that
-   * run a whole clause together without spaces; counting characters alone
-   * over-reads a terse but complete English answer.
-   *
-   * The old bar was two words, which only caught a grunt. Someone who answers
-   * "I checked the stock and told my manager" has given a real answer and a
-   * thin one, and asking whether they want to add anything is exactly what an
-   * interviewer would do there — it is the difference between a candidate who
-   * has finished and one who has not got going.
-   */
-  const isThinAnswer = words.length <= 12 || transcript.trim().length < 60;
-
-  /**
-   * "Would you like to add anything?" — once, and only for a thin answer.
-   *
-   * The distinction this draws is between a candidate who has finished and
-   * one who has not started. Asking twice would be nagging, so the timestamp
-   * is the guard; asking a candidate who gave a real answer would be rude, so
-   * the length is.
-   */
-  if (isThinAnswer && !replyingToAddMore && language) {
-    const audioId = await fillerAudioId(
-      attempt.id,
-      "addMore",
-      turn.turnNumber + turn.directiveSeq,
-    );
-    if (audioId) {
-      await db
-        .update(interviewTurnsTable)
-        .set({
-          addMorePromptedAt: new Date(),
-          // Kept now, while the turn stays open: a later "no, that's all"
-          // ends this turn, and this is the only copy of what they said.
-          answerTranscript: transcript,
-          detectedLanguageCode: languageCode,
-          updatedAt: new Date(),
-        })
-        .where(eq(interviewTurnsTable.id, turn.id));
-      await issueDirective(turn.id, "play_filler", audioId);
-      /**
-       * Not scored yet, on purpose.
-       *
-       * Every way out of this prompt — "no", "yes" then more, a continuation,
-       * or silence — comes back through this function and scores once at the
-       * bottom, against the complete answer. Marking it here as well would
-       * spend a second provider call to grade half of what they said, and the
-       * two would race to write the result.
-       */
-      return;
-    }
-  }
-
-  /**
-   * A prepared follow-up, when the answer was substantial enough to dig into.
-   *
-   * Gated on length rather than on the model's judgment, which is what used to
-   * decide this. A probe written before the answer existed cannot refer to
-   * what they said, so asking one after a one-line answer produces "can you
-   * give an example?" when the honest answer is that there was nothing there
-   * to expand. Fifteen words is the line between an answer with something in
-   * it and an answer that merely exists.
-   */
-  const SUBSTANTIAL_ANSWER_WORDS = 15;
-  const canProbe =
+  // A follow-up runs the decision on the critical path (it has to see the
+  // answer), so we don't do it on every turn. Two triggers:
+  //  - the answer is THIN — a bare / one-word reply a probe is actually for;
+  //  - the FLOOR is at risk — the remaining primary skills are down to exactly
+  //    the number of probes still owed, so this one is forced to guarantee the
+  //    minimum (see MIN_FOLLOWUPS_PER_INTERVIEW). AI still writes the probe.
+  // Everything else takes the fast path: advance on the prefetched next
+  // question and score in the background, with no model call between questions.
+  const primariesBefore = primaryTurns(priorTurns).length;
+  const followUpsOwed = MIN_FOLLOWUPS_PER_INTERVIEW - followUpsSoFar;
+  const remainingPrimaries = WORK_SKILL_COUNT - primariesBefore; // incl. this turn
+  const underCap = followUpsSoFar < MAX_FOLLOWUPS_PER_INTERVIEW;
+  const mustFollowUp =
     !turn.isFollowUp &&
     !!skillId &&
-    !!language &&
-    interview.followUpSkills.includes(skillId) &&
-    turn.followUpsAsked < MAX_FOLLOW_UPS &&
-    words.length >= SUBSTANTIAL_ANSWER_WORDS;
+    underCap &&
+    followUpsOwed > 0 &&
+    remainingPrimaries <= followUpsOwed;
+  const eligible =
+    !turn.isFollowUp &&
+    !!skillId &&
+    underCap &&
+    (isThinAnswer(transcript) || mustFollowUp);
 
-  if (canProbe) {
-    const probeAudio = await variantAudioId(
-      attempt.id,
-      turn.planIndex,
-      "probe",
-      turn.followUpsAsked,
-      null,
-    );
-    if (probeAudio) {
-      await db
-        .update(interviewTurnsTable)
-        .set({
-          followUpsAsked: sql`${interviewTurnsTable.followUpsAsked} + 1`,
-          updatedAt: new Date(),
-        })
-        .where(eq(interviewTurnsTable.id, turn.id));
-      await issueDirective(turn.id, "play_probe", probeAudio);
-      scheduleScoring(attempt, interview, turn, transcript, languageCode);
+  // --- Score AND decide the follow-up in one call. --------------------------
+  // This is the one path with a provider call on the critical path, so a
+  // failure here — even after its own retries — must not strand the candidate
+  // on an error screen. It falls through to the ordinary fast path below
+  // instead: rare, and costs at most one skipped follow-up, never a stuck
+  // interview.
+  if (eligible && skillId) {
+    try {
+      const ctx = await buildContext(attempt, interview);
+
+      const evaluation = await scoreAndMaybeFollowUp({
+        ctx,
+        history: toHistory(priorTurns),
+        currentSkill: getWorkSkill(skillId),
+        currentQuestion: turn.question,
+        answerTranscript: transcript,
+        skillNumber: skillNumberOf(skillId),
+        force: mustFollowUp,
+      });
+
+      await writeScoredTurn(turn.id, transcript, languageCode, evaluation);
+
+      // Only dig deeper into a REAL answer. A skip, "I don't know", an evasive
+      // reply, or silence-noise that slipped past the earlier checks all score
+      // low — and following those up is exactly the behaviour candidates hated.
+      // Gate on a scorable answer, EXCEPT when forced to meet the floor (there
+      // the model already returns null for a genuine non-answer). Bounded by
+      // MAX_FOLLOWUPS_PER_INTERVIEW so the interview can't balloon.
+      const followUp = evaluation.nextQuestion?.trim();
+      if (
+        followUp &&
+        (mustFollowUp || evaluation.score >= FOLLOWUP_MIN_SCORE) &&
+        followUpsSoFar < MAX_FOLLOWUPS_PER_INTERVIEW
+      ) {
+        await deliverFollowUp(
+          attempt,
+          interview,
+          turn,
+          followUp,
+          evaluation.questionTranslation.trim() || null,
+        );
+        return;
+      }
+
+      // Thin answer / non-answer, or no follow-up offered: move on. Scored above.
+      await advanceOrFinish(attempt, interview, turn);
       return;
+    } catch (error) {
+      console.error(
+        `[attempt] follow-up decision failed attempt=${attempt.id} turn=${turn.id}, advancing without it: ${
+          error instanceof Error ? error.message : "unknown"
+        }`,
+      );
     }
   }
 
-  // --- Nothing more to ask of this turn: acknowledge, score, move on. -------
-  await writeAnsweredTurn(turn.id, transcript, languageCode);
-  scheduleScoring(attempt, interview, turn, transcript, languageCode);
-
+  // --- Ineligible primary, a follow-up answer, or a failed follow-up decision
+  // above: advance fast, score after. --------------------------------------
   const turns = await getTurns(attempt.id);
-  if (!nextPrimarySkill(turns)) {
+  const isLast = isLastSkillTurn(turns, turn.turnNumber);
+
+  if (isLast) {
+    // Score before the report is written, after any earlier background
+    // scoring has landed.
+    await scoreTurn({ attempt, interview, turn, transcript, languageCode });
     await settleScoring(attempt.id);
     await finaliseAttempt(attempt.id, interview);
     return;
@@ -2589,21 +2599,35 @@ async function finaliseAttempt(
   );
   const skillScores = aggregateSkillScores(turns);
 
-  let overallScore: number | null = null;
+  // Overall = the AVERAGE of the skills the candidate actually ANSWERED, on a
+  // 0-10 scale (stored ×10 so a decimal survives; the report divides it back).
+  // Skipped / unanswered skills are EXCLUDED — not answering one question must
+  // never drag the whole score down; the candidate is judged on what they did
+  // answer. Deterministic, not the model's number.
+  const scored = skillScores.filter((s) => s.score !== null);
+  const overallScore =
+    scored.length > 0
+      ? Math.round(
+          (scored.reduce((sum, s) => sum + (s.score ?? 0), 0) / scored.length) *
+            10,
+        )
+      : null;
+
   let summary: string | null = null;
   let strengths: string[] = [];
   let improvements: string[] = [];
 
   try {
     const report = await generateInterviewSummary({
-      ctx: contextFor(attempt, interview, await introductionFor(attemptId)),
+      ctx: await buildContext(attempt, interview),
       history: toHistory(answered),
       skillScores: skillScores.map((s) => ({
         skillLabel: getWorkSkill(s.skillId).label,
         score: s.score,
       })),
     });
-    overallScore = report.overallScore;
+    // Keep only the written summary — the number is the deterministic average
+    // above, so the model's overallScore is ignored.
     summary = report.summary;
     strengths = report.strengths;
     improvements = report.improvements;
@@ -2614,11 +2638,6 @@ async function finaliseAttempt(
         error instanceof Error ? error.message : "unknown"
       }`,
     );
-    const scored = skillScores.filter((s) => s.score !== null);
-    if (scored.length > 0) {
-      const total = scored.reduce((sum, s) => sum + (s.score ?? 0), 0);
-      overallScore = Math.round((total / (scored.length * 10)) * 100);
-    }
     summary =
       "The detailed summary could not be generated, but the per-question feedback below is complete.";
   }
@@ -2635,6 +2654,119 @@ async function finaliseAttempt(
       updatedAt: new Date(),
     })
     .where(eq(interviewAttemptsTable.id, attemptId));
+
+  // Post the result to the partner (only for integration candidates, only if a
+  // webhook is configured). Best-effort and self-contained — a delivery failure
+  // must never undo a finished, saved interview.
+  try {
+    await deliverResult({
+      attempt,
+      interview,
+      turns,
+      skillScores,
+      overallScore,
+      summary,
+      strengths,
+      improvements,
+    });
+  } catch (error) {
+    console.error(
+      `[attempt] result delivery threw attempt=${attemptId}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
+}
+
+/**
+ * Re-send a finished attempt's result to the partner webhook, from STORED data.
+ *
+ * For integration candidates whose result never reached the partner — the
+ * webhook URL was added only after they finished, or an earlier delivery
+ * failed. Rebuilds the exact payload `finaliseAttempt` sends (no re-scoring, no
+ * model calls) and re-runs delivery, which re-stamps `resultDeliveredAt` and
+ * re-uploads the report PDF on success.
+ */
+export async function resendResult(
+  attemptId: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  const attempt = await reload(attemptId);
+  if (!attempt.externalStudentId) {
+    return {
+      ok: false,
+      reason: "This candidate did not come through a partner link.",
+    };
+  }
+  if (!env.INTEGRATION_RESULT_WEBHOOK_URL) {
+    return { ok: false, reason: "No partner webhook URL is configured." };
+  }
+
+  const interview = await db.query.interviewsTable.findFirst({
+    where: eq(interviewsTable.id, attempt.interviewId),
+  });
+  if (!interview) {
+    return { ok: false, reason: "That interview could not be found." };
+  }
+
+  const turns = await getTurns(attemptId);
+  const delivered = await deliverResult({
+    attempt,
+    interview,
+    turns,
+    skillScores: aggregateSkillScores(turns),
+    overallScore: attempt.overallScore,
+    summary: attempt.summary,
+    strengths: attempt.strengths ?? [],
+    improvements: attempt.improvements ?? [],
+  });
+
+  return delivered
+    ? { ok: true }
+    : {
+        ok: false,
+        reason: "The partner webhook did not accept the result — see the logs.",
+      };
+}
+
+/**
+ * Re-grade a finished attempt from its STORED transcripts — no re-recording,
+ * no STT, no TTS (so it never touches the speech rate limits). Used after a
+ * scoring-rubric change to bring old reports in line with the new one.
+ *
+ * Re-scores every answered skill turn and regenerates the summary + overall
+ * score. Skipped / unscored turns keep their null score, and it CANNOT add a
+ * follow-up that never happened — it only re-grades what was actually said.
+ */
+export function rescoreAttempt(attemptId: string): Promise<void> {
+  return withUsageScope(attemptId, () => rescoreAttemptInner(attemptId));
+}
+
+async function rescoreAttemptInner(attemptId: string): Promise<void> {
+  const attempt = await reload(attemptId);
+  const interview = await db.query.interviewsTable.findFirst({
+    where: eq(interviewsTable.id, attempt.interviewId),
+  });
+  if (!interview) {
+    throw new AttemptError("not_found", "That interview could not be found.");
+  }
+
+  const languageCode = attempt.language
+    ? resolveInterviewLanguage(attempt.language).code
+    : null;
+  const turns = await getTurns(attemptId);
+
+  for (const turn of turns) {
+    // Only answered, previously-scored skill turns (probes/follow-ups included).
+    // Skipped turns keep their null score; empty transcripts are left alone.
+    if (turn.kind !== "skill" || turn.status !== "completed") continue;
+    if (turn.score === null) continue;
+    const transcript = turn.answerTranscript?.trim();
+    if (!transcript) continue;
+
+    await scoreTurn({ attempt, interview, turn, transcript, languageCode });
+  }
+
+  await finaliseAttempt(attemptId, interview);
 }
 
 /* -------------------------------------------------------------------------- */

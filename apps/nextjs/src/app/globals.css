@@ -31,45 +31,51 @@
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
 
-  --radius-card: 1rem;
+  /* PathSaathi radius (14px), so cards/buttons share their softer corner. */
+  --radius-card: 0.875rem;
 
-  /* next/font sets separate Inter and Devanagari variables; the stack covers
-     and for scripts Inter does not cover (Devanagari, Tamil, …). */
+  /* ONE typeface across the whole app: Anek Devanagari, headings and body
+     alike. Anek covers Latin + Devanagari; the system Indic fallbacks (Nirmala
+     UI / Noto Sans) still catch Telugu, Tamil, Kannada, Malayalam, Bengali,
+     Gujarati, Odia, Gurmukhi per-glyph, so a non-Hindi interview never loses
+     its script. */
   --font-sans:
-    var(--font-instrument), var(--font-devanagari), ui-sans-serif, system-ui,
-    "Segoe UI", "Nirmala UI", "Noto Sans", sans-serif;
+    var(--font-anek), ui-sans-serif, system-ui, "Segoe UI", "Nirmala UI",
+    "Noto Sans", sans-serif;
 
+  /* PathSaathi shadows (neutral warm-grey, softer than our old indigo tint). */
   --shadow-card:
-    0 1px 2px oklch(20% 0.02 260 / 0.04), 0 1px 3px oklch(20% 0.02 260 / 0.06);
+    0 1px 2px rgba(22, 25, 28, 0.06), 0 1px 1px rgba(22, 25, 28, 0.04);
   --shadow-raised:
-    0 1px 2px oklch(20% 0.02 260 / 0.05),
-    0 8px 24px -6px oklch(20% 0.02 260 / 0.1);
+    0 4px 12px rgba(22, 25, 28, 0.08), 0 2px 4px rgba(22, 25, 28, 0.06);
 }
 
 :root {
   /* Keeps native controls (selects, checkboxes, scrollbars) light too. */
   color-scheme: light;
 
-  --canvas: #f6f8fc;
-  --surface: oklch(100% 0 0);
-  --surface-muted: #f0f3f9;
-  --border-subtle: #e1e6f0;
-  --border-strong: #c6cfdf;
+  /* Palette ported from PathSaathi's design system (their globals.css): warm
+     off-white paper, hairline warm-grey borders, and their red brand accent. */
+  --canvas: #fdfbf9;
+  --surface: #ffffff;
+  --surface-muted: #f6f0ea;
+  --border-subtle: #eee6de;
+  --border-strong: #ddd0c3;
 
-  --content: #17233b;
-  --content-muted: #58667e;
+  --content: #16191c;
+  --content-muted: #545a60;
 
-  --accent: #4338ca;
-  --accent-hover: #3730a3;
-  --accent-contrast: oklch(100% 0 0);
-  --accent-soft: #eef0ff;
+  --accent: #e02228;
+  --accent-hover: #c41a20;
+  --accent-contrast: #ffffff;
+  --accent-soft: #fdecec;
 
-  --danger: oklch(52% 0.17 26);
-  --danger-soft: oklch(96.5% 0.024 26);
-  --success: oklch(48% 0.1 158);
-  --success-soft: oklch(96% 0.03 158);
-  --warning: oklch(53% 0.115 72);
-  --warning-soft: oklch(96.5% 0.036 72);
+  --danger: #c41a20;
+  --danger-soft: #fdecec;
+  --success: #1a7a47;
+  --success-soft: #e7f5ec;
+  --warning: #b35f13;
+  --warning-soft: #fef2e5;
 }
 
 body {
@@ -78,6 +84,17 @@ body {
   color: var(--content);
   -webkit-font-smoothing: antialiased;
   line-height: 1.6;
+}
+
+/* Headings use the same Anek Devanagari as the body — one font everywhere —
+   just bold and slightly tightened so they still read as headings. */
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 /**
@@ -205,13 +222,13 @@ li {
   overflow-wrap: anywhere;
 }
 ::selection {
-  background: #dfe3ff;
-  color: #231b79;
+  background: #fdecec;
+  color: #c41a20;
 }
 .auth-story {
   background:
-    radial-gradient(ellipse at 20% 80%, #e0e7ff 0%, transparent 65%),
-    linear-gradient(145deg, #f6f8ff, #eef2fa);
+    radial-gradient(ellipse at 20% 80%, #ffe3cf 0%, transparent 65%),
+    linear-gradient(145deg, #fff3e6, #fbf6f1);
 }
 .eyebrow {
   display: inline-flex;
@@ -241,40 +258,67 @@ li {
   }
 }
 
+/* ------------------------------------------------------------------------- */
+/*  Voice orb (the interviewer). Every keyframe below touches only transform */
+/*  or opacity, so the whole thing runs on the compositor for the length of  */
+/*  an interview. Amplitude arrives as `--orb-amp` (0-1) from an animation    */
+/*  frame, never React state.                                                */
+/* ------------------------------------------------------------------------- */
 /**
- * Voice orb.
+ * The hand-off between the last answer and the results page.
  *
- * Built from layered radial gradients that drift over one another, NOT from
- * blurred shapes: `filter: blur()` on a moving element repaints the blurred
- * region every frame, and this thing is on screen for the whole interview. A
- * soft gradient is painted once and then only ever transformed, so the entire
- * animation runs on the compositor.
+ * Two staggered parts: the blurred backdrop arrives first, then the text lifts
+ * into it a moment later. Doing both at once reads as a modal appearing; the
+ * stagger reads as the page stepping back and something else stepping forward.
  *
- * Every keyframe below touches `transform` or `opacity` and nothing else, for
- * the same reason. Amplitude arrives as `--orb-amp` (0-1), written straight to
- * the element by an animation frame rather than through React state — a
- * re-render per frame would cost far more than the paint does.
+ * The blur is animated rather than simply switched on — going from 0 to 24px
+ * instantly looks like a rendering glitch, whereas easing it over a third of a
+ * second looks deliberate. This is the one place in the app where `filter` is
+ * animated, and it is affordable precisely because it happens once, at the end,
+ * when nothing else needs the frame budget.
  */
+@keyframes submitting-in {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+}
+
+@keyframes submitting-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+}
+
+.submitting-overlay {
+  animation: submitting-in 320ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.submitting-panel {
+  animation: submitting-panel-in 380ms cubic-bezier(0.2, 0, 0, 1) 120ms both;
+}
+
 /**
- * Cloud drift.
+ * The indeterminate sweep, for when there is nothing left to upload.
  *
- * One direction, linear, forever — weather does not change its mind. The banks
- * that use this are twice the width of the orb and tile at half that, so
- * travelling exactly -50% lands the pattern back on itself and the loop is
- * invisible. The previous version swung each bank left and right on an
- * ease-in-out, which reads as sloshing rather than sky.
+ * Runs edge to edge rather than pulsing in place, so it reads as work passing
+ * through rather than a stalled bar breathing. Transform-only, so it stays on
+ * the compositor alongside the backdrop blur it sits on top of.
  */
-/**
- * Cloud rolling past.
- *
- * Each mass is drawn on a box half again as wide as the orb and moves along
- * its own slow path — different distances, different directions, and periods
- * (44/57/69s) with no useful common factor, so the three never line up and the
- * loop is not findable by watching it.
- *
- * Scale as well as position: cloud that only slides looks like a texture being
- * dragged across, while cloud that also swells reads as something turning over.
- */
+@keyframes submitting-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
+}
+
+.submitting-sweep {
+  animation: submitting-sweep 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
 @keyframes orb-roll-a {
   0%,
   100% {
@@ -305,19 +349,6 @@ li {
   }
 }
 
-/**
- * Cloud gathering and thinning.
- *
- * The half that makes it read as smoke. A mass that only moves looks like a
- * picture being dragged across the sphere; one that also comes and goes looks
- * like something passing through it.
- *
- * Each runs on a period unrelated to the roll underneath it, so a mass is
- * rarely at its brightest and its nearest at the same moment, and the three
- * together never repeat an arrangement often enough to be noticed. None of
- * them reaches full opacity — see the mass definitions for why the sky has to
- * keep showing through.
- */
 @keyframes orb-fade-a {
   0%,
   100% {
@@ -375,12 +406,10 @@ li {
   }
 }
 
-/**
- * Motion here is decoration, and a vestibular disorder does not care how nice
- * it looks. The orb keeps its colour and its amplitude response — which is
- * information — and stops moving on its own.
- */
 @media (prefers-reduced-motion: reduce) {
+  .submitting-overlay,
+  .submitting-panel,
+  .submitting-sweep,
   .orb-layer,
   .orb-breathe,
   .orb-ripple {

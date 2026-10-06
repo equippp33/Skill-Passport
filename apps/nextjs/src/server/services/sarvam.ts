@@ -1,4 +1,5 @@
 import "server-only";
+import { recordUsage } from "~/server/interview/usage";
 
 import { env } from "~/env";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
@@ -187,6 +188,79 @@ export async function transcribeAudio(input: {
 }
 
 /* -------------------------------------------------------------------------- */
+/*                               Transliteration                              */
+/* -------------------------------------------------------------------------- */
+
+const TRANSLITERATE_TIMEOUT_MS = 6_000;
+
+/**
+ * Force any Latin/English words in a native-script sentence into that script.
+ *
+ * The chat model, however firmly told not to, keeps leaving everyday English
+ * words in Latin ("...deadline చాలా tight గా...") — natural for a bilingual
+ * writer, unreadable for a candidate who only reads Telugu. Sarvam's
+ * transliterate endpoint fixes this deterministically: with source == target ==
+ * the session language it rewrites the Latin runs by sound (design→డిజైన్) and
+ * leaves the native text untouched. Prompt instructions can't guarantee this;
+ * this does.
+ *
+ * Best-effort: on any error it returns the text unchanged. A question with a
+ * stray English word is far better than no question, and this must never block
+ * or fail a turn. Callers should skip it for English and for already-clean text.
+ *
+ * POST https://api.sarvam.ai/transliterate
+ */
+export async function transliterateToNative(
+  text: string,
+  languageCode: string,
+): Promise<string> {
+  const trimmed = text.trim();
+  if (!trimmed) return text;
+
+  const run = async (): Promise<string> => {
+    const response = await fetchWithTimeout(
+      `${SARVAM_BASE_URL}/transliterate`,
+      {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input: trimmed,
+          source_language_code: languageCode,
+          target_language_code: languageCode,
+          // We want the written form (డిజైన్), not a spoken expansion.
+          spoken_form: false,
+        }),
+      },
+      TRANSLITERATE_TIMEOUT_MS,
+      "transliterate",
+    );
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      logProviderFailure("transliterate", response.status, body);
+      return text;
+    }
+
+    const json = (await response.json().catch(() => null)) as {
+      transliterated_text?: unknown;
+    } | null;
+
+    const out =
+      typeof json?.transliterated_text === "string"
+        ? json.transliterated_text.trim()
+        : "";
+    return out || text;
+  };
+
+  try {
+    return await timed("transliterate.sarvam", run, () => `chars=${trimmed.length}`);
+  } catch {
+    // Never let a cleanup step break a turn.
+    return text;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /*                               Text-to-Speech                               */
 /* -------------------------------------------------------------------------- */
 
@@ -215,22 +289,11 @@ export interface SpeechResult {
  */
 export async function generateSpeech(
   text: string,
-  options: {
-    languageCode: string;
-    speaker?: string;
-    /**
-     * Speaking rate, 1.0 being the model's own.
-     *
-     * Was pinned at 0.9 in the request body to make questions easier to
-     * follow. It made the interviewer sound laboured — the clip is ~19%
-     * longer at 0.9 than at 1.0 on the same sentence — so the default is
-     * back to natural and slowing down is now something a candidate asks
-     * for, applied per attempt.
-     */
-    pace?: number;
-  },
+  options: { languageCode: string; speaker?: string; pace?: number },
 ): Promise<SpeechResult> {
   const clipped = text.trim().slice(0, TTS_MAX_CHARS);
+  // Counted on what is SENT, after clipping — that is what Sarvam bills for.
+  recordUsage({ ttsCharacters: clipped.length });
   if (!clipped) {
     throw new ProviderError({
       provider: "sarvam",
@@ -253,7 +316,9 @@ export async function generateSpeech(
           model: env.SARVAM_TTS_MODEL,
           // MP3 instead of the default WAV — ~10x smaller to store and send.
           output_audio_codec: "mp3",
-          pace: options.pace ?? DEFAULT_TTS_PACE,
+          // Slightly slower than default (1.0) so questions are easier to
+          // follow; a candidate who asks to slow down gets an even lower pace.
+          pace: options.pace ?? 0.9,
         }),
       },
       TTS_TIMEOUT_MS,

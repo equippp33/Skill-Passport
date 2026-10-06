@@ -7,30 +7,32 @@ import { db } from "~/server/db";
 import { interviewAttemptsTable } from "~/server/db/schema";
 
 /**
- * What each interview cost to run.
+ * What each interview cost to run, counted as it runs.
  *
- * Every external leg is billed on its own unit — TTS per character, the
- * models per token, STT per request — so each is counted in the unit it is
- * actually billed in and the arithmetic is left to whoever is doing the
- * costing. Prices change and differ per account; a column of rupees would be
- * wrong within a month.
+ * Every provider bills on its own unit, so each is counted in the unit it is
+ * actually billed in and the arithmetic is left to `~/config/pricing`. Prices
+ * change and differ per account; a column of rupees would be wrong within a
+ * month, whereas a column of characters stays true.
  *
  * The attempt is carried in `AsyncLocalStorage` rather than threaded through
- * every provider signature. Those functions are three and four layers below
- * the code that knows which attempt is running, and adding an id parameter to
- * all of them — plus every call site — to serve a counter would be a large,
- * noisy change for a small feature. A scope set at the few entry points in
- * `~/server/attempt/service` covers everything beneath it, including legs
- * added later, for free.
+ * every provider signature. Those functions sit three and four layers below the
+ * code that knows which attempt is running, and adding an id parameter to all
+ * of them — plus every call site — to serve a counter would be a large, noisy
+ * change for a small feature. A scope set at the few entry points in
+ * `~/server/attempt/service` covers everything beneath it, including legs added
+ * later, for free.
  *
  * Outside a scope every call here is a no-op: a script, a test or an admin
  * request that reaches a provider records nothing rather than guessing an
  * attempt to bill.
+ *
+ * Speech-to-text is deliberately NOT counted here. Sarvam bills it per second
+ * of audio, and the streaming path never makes a request at all — it holds a
+ * socket. Minutes are read from the recorded answer clips instead, which are
+ * stored whichever transcription path ran.
  */
 
 interface UsageDelta {
-  sttRequests?: number;
-  sttAudioBytes?: number;
   ttsCharacters?: number;
   llmRequests?: number;
   llmInputTokens?: number;
@@ -59,12 +61,6 @@ export function recordUsage(delta: UsageDelta): void {
   if (!current) return;
 
   const set: Record<string, unknown> = {};
-  if (delta.sttRequests) {
-    set.sttRequests = sql`${interviewAttemptsTable.sttRequests} + ${delta.sttRequests}`;
-  }
-  if (delta.sttAudioBytes) {
-    set.sttAudioBytes = sql`${interviewAttemptsTable.sttAudioBytes} + ${delta.sttAudioBytes}`;
-  }
   if (delta.ttsCharacters) {
     set.ttsCharacters = sql`${interviewAttemptsTable.ttsCharacters} + ${delta.ttsCharacters}`;
   }

@@ -131,6 +131,8 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
       name: "Candidate One",
       email: null,
       phone: null,
+      language: "english",
+      course: null,
     });
     return { interview, attemptId };
   }
@@ -190,11 +192,15 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
       name: "First",
       email: null,
       phone: null,
+      language: "english",
+      course: null,
     });
     const second = await createAttempt(interview, {
       name: "Second",
       email: null,
       phone: null,
+      language: "english",
+      course: null,
     });
 
     expect(first.attemptId).not.toBe(second.attemptId);

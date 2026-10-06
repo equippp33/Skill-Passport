@@ -27,6 +27,23 @@ const FILTERS: { key: Group; label: string }[] = [
 
 type Sort = "recent" | "score_desc" | "score_asc" | "name";
 
+/** Retake filter: everyone, only those who did a 2nd attempt, only a 3rd. */
+type AttemptsFilter = "all" | "2plus" | "3plus";
+
+/** Stable per-day key from a date, in the viewer's own timezone. */
+function dayKey(d: Date): string {
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+/** Human date header for a day group, e.g. "29 September 2026". */
+function dayLabel(d: Date): string {
+  return d.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
 export function CandidateGrid({
   attempts,
   statusLabels,
@@ -70,6 +87,7 @@ export function CandidateGrid({
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<Group>("all");
   const [sort, setSort] = useState<Sort>("recent");
+  const [attemptsFilter, setAttemptsFilter] = useState<AttemptsFilter>("all");
 
   const counts = useMemo(() => {
     const c: Record<Group, number> = {
@@ -87,6 +105,8 @@ export function CandidateGrid({
     const q = query.trim().toLowerCase();
     let list = attempts.filter((a) => {
       if (group !== "all" && groupOf(a.status) !== group) return false;
+      if (attemptsFilter === "2plus" && a.attemptCount < 2) return false;
+      if (attemptsFilter === "3plus" && a.attemptCount < 3) return false;
       if (!q) return true;
       return (
         a.candidateName.toLowerCase().includes(q) ||
@@ -108,7 +128,22 @@ export function CandidateGrid({
       }
     });
     return list;
-  }, [attempts, query, group, sort]);
+  }, [attempts, query, group, sort, attemptsFilter]);
+
+  // Gallery view: when sorted by most-recent, break the list into day sections
+  // (newest day first) with a date header, the way a photo gallery groups by
+  // date. Other sorts (name/score) stay a single flat grid.
+  const sections = useMemo(() => {
+    if (sort !== "recent") return null;
+    const out: { key: string; label: string; items: AttemptSummary[] }[] = [];
+    for (const a of shown) {
+      const key = dayKey(a.createdAt);
+      const last = out[out.length - 1];
+      if (last && last.key === key) last.items.push(a);
+      else out.push({ key, label: dayLabel(a.createdAt), items: [a] });
+    }
+    return out;
+  }, [shown, sort]);
 
   if (attempts.length === 0) {
     return (
@@ -140,6 +175,16 @@ export function CandidateGrid({
             aria-label="Search candidates"
             className="h-10 w-64 max-w-full"
           />
+          <Select
+            value={attemptsFilter}
+            onChange={(e) => setAttemptsFilter(e.target.value as AttemptsFilter)}
+            aria-label="Filter by number of attempts"
+            className="h-10 w-auto"
+          >
+            <option value="all">All attempts</option>
+            <option value="2plus">Did a 2nd attempt</option>
+            <option value="3plus">Did a 3rd attempt</option>
+          </Select>
           <Select
             value={sort}
             onChange={(e) => setSort(e.target.value as Sort)}
@@ -184,6 +229,29 @@ export function CandidateGrid({
         <p className="rounded-xl border border-border-subtle bg-surface p-8 text-center text-sm text-content-muted">
           No candidates match.
         </p>
+      ) : sections ? (
+        <div className="space-y-8">
+          {sections.map((s) => (
+            <div key={s.key} className="space-y-3">
+              <h3 className="border-b border-border-subtle pb-1.5 text-sm font-semibold">
+                {s.label}{" "}
+                <span className="font-normal text-content-muted">
+                  ({s.items.length})
+                </span>
+              </h3>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                {s.items.map((attempt) => (
+                  <CandidateCard
+                    key={attempt.id}
+                    attempt={attempt}
+                    statusLabel={statusLabels[attempt.status] ?? attempt.status}
+                    returnTo={returnTo}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {shown.map((attempt) => (

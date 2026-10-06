@@ -43,11 +43,11 @@ export const PROBE_PROMPTS: { code: string; text: string }[] = [
   },
   {
     code: "hi-IN",
-    text: "आप जिस भाषा में सहज हों, उसी में जवाब दें। अपना नाम और अपने काम के बारे में थोड़ा बताइए।",
+    text: "आप जिस भाषा में कम्फ़र्टेबल हों, उसी में जवाब दें। अपना नाम और अपने काम के बारे में थोड़ा बताइए।",
   },
   {
     code: "mr-IN",
-    text: "तुम्हाला ज्या भाषेत सोपे वाटते त्या भाषेत उत्तर द्या. तुमचे नाव आणि तुमच्या कामाबद्दल थोडे सांगा.",
+    text: "तुम्हाला ज्या भाषेत कम्फर्टेबल वाटतं त्या भाषेत उत्तर द्या. तुमचं नाव आणि तुमच्या कामाबद्दल थोडं सांगा.",
   },
   {
     code: "ta-IN",
@@ -55,7 +55,7 @@ export const PROBE_PROMPTS: { code: string; text: string }[] = [
   },
   {
     code: "te-IN",
-    text: "మీకు సౌకర్యంగా ఉన్న భాషలో సమాధానం ఇవ్వండి. మీ పేరు మరియు మీ పని గురించి చెప్పండి.",
+    text: "మీకు కంఫర్టబుల్‌గా ఉన్న లాంగ్వేజ్‌లో ఆన్సర్ చెప్పండి. మీ పేరు, మీరు చేసే పని గురించి కొంచెం చెప్పండి.",
   },
   {
     code: "bn-IN",
@@ -71,121 +71,186 @@ export const PROBE_PROMPTS: { code: string; text: string }[] = [
   },
 ];
 
-/* -------------------------------------------------------------------------- */
-/*                        Spoken openers, per language                        */
-/* -------------------------------------------------------------------------- */
+/** Stored as the probe turn's question text. */
+export const PROBE_QUESTION_TEXT = PROBE_SPOKEN_TEXT;
 
 /**
- * The opener, written in each interview language.
+ * Short interviewer fillers, played the instant the candidate stops so the
+ * processing gap feels like a reply, not dead air. A few per language, rotated
+ * at random so it never sounds like a recording. Deliberately NOT "thank you" —
+ * these are the natural little things a real interviewer says between answers:
+ * an acknowledgement and a "let me see". NEVER a question — a filler is
+ * cosmetic and the interview advances while it plays, so it can take no reply.
+ * Inviting the candidate to "add more" here would promise a turn that isn't
+ * coming (no voice meter, it just moves on); that job belongs to a real
+ * follow-up question turn instead.
  *
- * The candidate now chooses their language before the interview starts, so
- * the very first thing they hear should already be in it — greeting them in
- * English and only switching afterwards undoes the choice they just made.
- *
- * Hard-coded rather than translated at runtime on purpose. This is the first
- * impression, and a provider round-trip before the first word would add
- * seconds of silence to it; these eleven strings never change.
- *
- * Written the way people actually speak, keeping ordinary workplace words in
- * English (`interview`), matching the register rules the interviewer prompts
- * follow.
+ * Confident for English / Hindi / Marathi / Telugu; have a native speaker
+ * eyeball the rest before shipping widely.
  */
-export const PROBE_QUESTION_BY_LANGUAGE: Record<InterviewLanguageKey, string> =
-  {
-    english: PROBE_SPOKEN_TEXT,
-    hindi:
-      "नमस्ते {name}, आपका स्वागत है। शुरुआत कुछ आसान से करते हैं — अभी आप जो कर रहे हैं, उसमें आपको सबसे अच्छा क्या लगता है?",
-    marathi:
-      "नमस्कार {name}, तुमचं स्वागत आहे. सुरुवात सोप्या गोष्टीने करूया — सध्या तुम्ही जे करताय, त्यात तुम्हाला सगळ्यात जास्त काय आवडतं?",
-    bengali:
-      "নমস্কার {name}, আপনাকে স্বাগতম। সহজ কিছু দিয়েই শুরু করি — এখন আপনি যা করছেন, তার মধ্যে আপনার সবচেয়ে ভালো কী লাগে?",
-    gujarati:
-      "નમસ્તે {name}, તમારું સ્વાગત છે. શરૂઆત કંઈક સરળથી કરીએ — અત્યારે તમે જે કરો છો, તેમાં તમને સૌથી વધારે શું ગમે છે?",
-    kannada:
-      "ನಮಸ್ಕಾರ {name}, ಸ್ವಾಗತ. ಸುಲಭವಾದ ವಿಷಯದಿಂದಲೇ ಶುರು ಮಾಡೋಣ — ಈಗ ನೀವು ಏನು ಮಾಡ್ತಿದ್ದೀರೋ, ಅದರಲ್ಲಿ ನಿಮಗೆ ಅತೀ ಹೆಚ್ಚು ಇಷ್ಟವಾಗೋದು ಏನು?",
-    malayalam:
-      "നമസ്കാരം {name}, സ്വാഗതം. എളുപ്പമുള്ള ഒരു ചോദ്യത്തിൽ തുടങ്ങാം — ഇപ്പോൾ നിങ്ങൾ ചെയ്യുന്നതിൽ ഏറ്റവും ഇഷ്ടം എന്താണ്?",
-    odia: "ନମସ୍କାର {name}, ସ୍ୱାଗତ। ସହଜ କିଛିରୁ ଆରମ୍ଭ କରିବା — ଏବେ ଆପଣ ଯାହା କରୁଛନ୍ତି, ସେଥିରେ ଆପଣଙ୍କୁ ସବୁଠାରୁ ଭଲ କଣ ଲାଗେ?",
-    punjabi:
-      "ਸਤ ਸ੍ਰੀ ਅਕਾਲ {name}, ਤੁਹਾਡਾ ਸੁਆਗਤ ਹੈ। ਸ਼ੁਰੂਆਤ ਕਿਸੇ ਸੌਖੀ ਗੱਲ ਤੋਂ ਕਰਦੇ ਹਾਂ — ਹੁਣ ਤੁਸੀਂ ਜੋ ਕਰ ਰਹੇ ਹੋ, ਉਸ ਵਿੱਚ ਤੁਹਾਨੂੰ ਸਭ ਤੋਂ ਵੱਧ ਕੀ ਪਸੰਦ ਹੈ?",
-    tamil:
-      "வணக்கம் {name}, வரவேற்கிறோம். ஏதாவது சுலபமானதுல ஆரம்பிக்கலாம் — இப்போ நீங்க பண்றதுல உங்களுக்கு எது ரொம்ப பிடிக்கும்?",
-    telugu:
-      "నమస్కారం {name}, స్వాగతం. ఏదైనా సులభమైన దాంతో మొదలుపెడదాం — ఇప్పుడు మీరు చేస్తున్న దాంట్లో మీకు బాగా నచ్చేది ఏంటి?",
-  };
-
-/**
- * The opener with the candidate's name in it.
- *
- * Every opener carries a `{name}` slot right after the greeting, which is
- * where a name falls naturally in all eleven of these languages — "नमस्ते
- * Priya, आपका स्वागत है". The very first thing a nervous candidate hears is
- * their own name, which is the cheapest reassurance there is.
- *
- * The space goes with the slot when there is no name to put in it, so an
- * attempt created without one still reads as ordinary speech rather than
- * "Hello , and welcome".
- */
-export function openerFor(
-  language: InterviewLanguageKey,
-  name: string | null,
-): string {
-  const template = PROBE_QUESTION_BY_LANGUAGE[language];
-  return name
-    ? template.replace("{name}", name)
-    : template.replace(" {name}", "");
-}
-
-/**
- * Said when the candidate answers in a language they did not choose.
- *
- * Keyed by the language they are SPEAKING, not the one they picked — which
- * is the whole point. Telling somebody in Telugu that they should be
- * speaking Hindi is a message they can act on; telling them in Hindi is the
- * same failure they are already having.
- *
- * `{language}` is filled with the chosen language's own name, as it appears
- * in the picker, so the instruction and the menu agree.
- *
- * Warm, never a telling-off: the candidate has done nothing wrong, and the
- * interview carries on either way. It names both ways out — answer in the
- * chosen language, or switch the interview to this one — because a candidate
- * who is more comfortable here should not have to fight it.
- */
-export const WRONG_LANGUAGE_NOTICE: Record<InterviewLanguageKey, string> = {
-  english:
-    "You chose {language} for this interview. Please carry on in {language}, or change the language yourself from the menu at the top.",
-  hindi:
-    "आपने इस interview के लिए {language} चुनी है। कृपया {language} में ही जवाब दीजिए, या ऊपर दिए मेन्यू से भाषा खुद बदल लीजिए।",
-  marathi:
-    "तुम्ही या interview साठी {language} निवडली आहे. कृपया {language} मध्येच उत्तर द्या, किंवा वरच्या मेन्यूमधून भाषा स्वतः बदला.",
-  bengali:
-    "আপনি এই interview-এর জন্য {language} বেছে নিয়েছেন। অনুগ্রহ করে {language}-এই উত্তর দিন, বা উপরের মেনু থেকে ভাষা নিজেই বদলে নিন।",
-  gujarati:
-    "તમે આ interview માટે {language} પસંદ કરી છે. કૃપા કરીને {language}માં જ જવાબ આપો, અથવા ઉપરના મેનુમાંથી ભાષા જાતે બદલો.",
-  kannada:
-    "ನೀವು ಈ interview ಗೆ {language} ಆಯ್ಕೆ ಮಾಡಿದ್ದೀರಿ. ದಯವಿಟ್ಟು {language} ದಲ್ಲೇ ಉತ್ತರಿಸಿ, ಅಥವಾ ಮೇಲಿನ ಮೆನುವಿನಿಂದ ಭಾಷೆಯನ್ನು ನೀವೇ ಬದಲಾಯಿಸಿ.",
-  malayalam:
-    "നിങ്ങൾ ഈ interview-ന് {language} തിരഞ്ഞെടുത്തിട്ടുണ്ട്. ദയവായി {language}-ൽ തന്നെ ഉത്തരം പറയൂ, അല്ലെങ്കിൽ മുകളിലെ മെനുവിൽ നിന്ന് ഭാഷ സ്വയം മാറ്റൂ.",
-  odia: "ଆପଣ ଏହି interview ପାଇଁ {language} ବାଛିଛନ୍ତି। ଦୟାକରି {language}ରେ ହିଁ ଉତ୍ତର ଦିଅନ୍ତୁ, କିମ୍ବା ଉପରର ମେନୁରୁ ଭାଷା ନିଜେ ବଦଳାନ୍ତୁ।",
-  punjabi:
-    "ਤੁਸੀਂ ਇਸ interview ਲਈ {language} ਚੁਣੀ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ {language} ਵਿੱਚ ਹੀ ਜਵਾਬ ਦਿਓ, ਜਾਂ ਉੱਪਰਲੇ ਮੀਨੂ ਤੋਂ ਭਾਸ਼ਾ ਆਪ ਬਦਲ ਲਵੋ।",
-  tamil:
-    "நீங்க இந்த interview-க்கு {language} தேர்ந்தெடுத்திருக்கீங்க. தயவுசெய்து {language}-லயே பதில் சொல்லுங்க, இல்லைன்னா மேல இருக்கற மெனுல மொழிய நீங்களே மாத்திக்கோங்க.",
-  telugu:
-    "మీరు ఈ interview కోసం {language} ఎంచుకున్నారు. దయచేసి {language} లోనే సమాధానం చెప్పండి, లేదా పైన ఉన్న మెనూ నుండి భాషను మీరే మార్చుకోండి.",
+export const FILLERS_BY_KEY: Record<InterviewLanguageKey, string[]> = {
+  english: ["Okay.", "Alright, let me see.", "Got it."],
+  hindi: ["ठीक है।", "ओके, देखते हैं।", "समझ गया।"],
+  marathi: ["ठीक आहे.", "ओके, बघूया.", "समजलं."],
+  bengali: ["ঠিক আছে।", "আচ্ছা, দেখি।", "বুঝলাম।"],
+  gujarati: ["બરાબર.", "સારું, જોઈએ.", "સમજ્યું."],
+  kannada: ["ಸರಿ.", "ಆಯ್ತು, ನೋಡೋಣ.", "ಅರ್ಥವಾಯಿತು."],
+  malayalam: ["ശരി.", "ശരി, നോക്കാം.", "മനസ്സിലായി."],
+  odia: ["ଠିକ୍ ଅଛି।", "ଆଚ୍ଛା, ଦେଖିବା।", "ବୁଝିଲି।"],
+  punjabi: ["ਠੀਕ ਹੈ।", "ਚੰਗਾ, ਵੇਖਦੇ ਹਾਂ।", "ਸਮਝ ਗਿਆ।"],
+  tamil: ["சரி.", "சரி, பார்க்கலாம்.", "புரிந்தது."],
+  telugu: ["ఓకే.", "సరే, ఒక్క నిమిషం.", "అర్థమైంది."],
 };
 
 /**
- * The notice, in the language being spoken, naming the language that was
- * chosen.
+ * "Take your time" — the gentle first nudge when a candidate goes quiet, before
+ * the question is repeated and, failing that, skipped. One per language, cached
+ * exactly like the fillers.
  */
-export function wrongLanguageNoticeFor(
-  spoken: InterviewLanguageKey,
-  chosen: InterviewLanguageKey,
-): string {
-  return WRONG_LANGUAGE_NOTICE[spoken].replaceAll(
-    "{language}",
-    INTERVIEW_LANGUAGES[chosen].displayName,
-  );
-}
+export const TAKE_YOUR_TIME_BY_KEY: Record<InterviewLanguageKey, string> = {
+  english: "Take your time, there's no rush.",
+  hindi: "आराम से सोचिए, कोई जल्दी नहीं है।",
+  marathi: "आरामात विचार करा, काही घाई नाही.",
+  bengali: "সময় নিন, কোনো তাড়া নেই।",
+  gujarati: "આરામથી વિચારો, કોઈ ઉતાવળ નથી.",
+  kannada: "ನಿಧಾನವಾಗಿ ಯೋಚಿಸಿ, ಯಾವುದೇ ಆತುರವಿಲ್ಲ.",
+  malayalam: "സാവധാനം ആലോചിക്കൂ, തിടുക്കമില്ല.",
+  odia: "ଧୀରେ ଭାବନ୍ତୁ, କୌଣସି ତରାତରି ନାହିଁ।",
+  punjabi: "ਆਰਾਮ ਨਾਲ ਸੋਚੋ, ਕੋਈ ਕਾਹਲੀ ਨਹੀਂ।",
+  tamil: "நிதானமாக யோசியுங்கள், அவசரம் இல்லை.",
+  telugu: "నిదానంగా ఆలోచించండి, తొందర ఏమీ లేదు.",
+};
+
+/**
+ * The understanding check, played after a longer silence — before the visible
+ * skip countdown. Phrased to invite ACTION ("…or should I repeat it?") rather
+ * than a yes/no, so a bare "yes" is not mistaken for the answer. One per
+ * language, cached exactly like the nudge.
+ */
+export const UNDERSTANDING_CHECK_BY_KEY: Record<InterviewLanguageKey, string> = {
+  english: "Did you understand the question, or should I repeat it?",
+  hindi: "क्या आपको सवाल समझ आया, या मैं दोबारा बोलूँ?",
+  marathi: "तुम्हाला प्रश्न समजला का, की मी पुन्हा सांगू?",
+  bengali: "আপনি কি প্রশ্নটা বুঝেছেন, নাকি আমি আবার বলব?",
+  gujarati: "તમને પ્રશ્ન સમજાયો, કે હું ફરી કહું?",
+  kannada: "ನಿಮಗೆ ಪ್ರಶ್ನೆ ಅರ್ಥವಾಯಿತಾ, ಅಥವಾ ನಾನು ಪುನಃ ಹೇಳಲಾ?",
+  malayalam: "നിങ്ങൾക്ക് ചോദ്യം മനസ്സിലായോ, അതോ ഞാൻ വീണ്ടും പറയണോ?",
+  odia: "ଆପଣ ପ୍ରଶ୍ନ ବୁଝିଲେ କି, ନା ମୁଁ ପୁଣି କହିବି?",
+  punjabi: "ਕੀ ਤੁਹਾਨੂੰ ਸਵਾਲ ਸਮਝ ਆਇਆ, ਜਾਂ ਮੈਂ ਦੁਬਾਰਾ ਦੱਸਾਂ?",
+  tamil: "உங்களுக்கு கேள்வி புரிந்ததா, அல்லது நான் மீண்டும் சொல்லட்டுமா?",
+  telugu: "మీకు ప్రశ్న అర్థమైందా, లేక నేను మళ్లీ చెప్పాలా?",
+};
+
+/**
+ * Played once the candidate first pauses on an answer: a gentle invitation to
+ * add more before the interview moves on, so they are never cut off mid-thought.
+ * The mic stays open through it — if they add something it is captured; if they
+ * decline or stay quiet, the answer is submitted as-is. One per language.
+ */
+export const ADD_PROMPT_BY_KEY: Record<InterviewLanguageKey, string> = {
+  english: "Would you like to add anything?",
+  hindi: "कुछ और जोड़ना चाहेंगे?",
+  marathi: "आणखी काही सांगायचंय का?",
+  bengali: "আর কিছু যোগ করতে চান?",
+  gujarati: "બીજું કંઈ ઉમેરવું છે?",
+  kannada: "ಇನ್ನೇನಾದರೂ ಸೇರಿಸಬೇಕೆ?",
+  malayalam: "വേറെ എന്തെങ്കിലും ചേർക്കാനുണ്ടോ?",
+  odia: "ଆଉ କିଛି କହିବେ କି?",
+  punjabi: "ਹੋਰ ਕੁਝ ਦੱਸਣਾ ਚਾਹੋਗੇ?",
+  tamil: "வேறு ஏதாவது சொல்ல வேண்டுமா?",
+  telugu: "ఇంకేమైనా చెప్పాలనుకుంటున్నారా?",
+};
+
+/**
+ * The opening question, per language.
+ *
+ * The candidate now picks their language before the interview, so the opener is
+ * spoken in it from the very first word — a warm greeting plus "tell me your
+ * name and a little about yourself". It still captures the introduction we use
+ * to ground later questions; it is no longer a language probe. Kept short and
+ * simple, fresher-friendly (studies count, not just work).
+ */
+export const OPENING_BY_KEY: Record<InterviewLanguageKey, string> = {
+  english:
+    "Hello, and welcome! To start, please tell me your name and a little about yourself.",
+  hindi:
+    "नमस्ते! शुरू करने के लिए, अपना नाम बताइए और अपने बारे में थोड़ा बताइए।",
+  marathi:
+    "नमस्कार! सुरुवात करण्यासाठी, तुमचं नाव आणि तुमच्याबद्दल थोडं सांगा.",
+  bengali:
+    "নমস্কার! শুরু করতে, আপনার নাম এবং নিজের সম্পর্কে একটু বলুন।",
+  gujarati:
+    "નમસ્તે! શરૂ કરવા માટે, તમારું નામ અને તમારા વિશે થોડું કહો.",
+  kannada:
+    "ನಮಸ್ಕಾರ! ಪ್ರಾರಂಭಿಸಲು, ನಿಮ್ಮ ಹೆಸರು ಮತ್ತು ನಿಮ್ಮ ಬಗ್ಗೆ ಸ್ವಲ್ಪ ಹೇಳಿ.",
+  malayalam:
+    "നമസ്കാരം! തുടങ്ങാൻ, നിങ്ങളുടെ പേരും നിങ്ങളെക്കുറിച്ച് കുറച്ചും പറയൂ.",
+  odia: "ନମସ୍କାର! ଆରମ୍ଭ କରିବାକୁ, ଆପଣଙ୍କ ନାମ ଏବଂ ନିଜ ବିଷୟରେ କିଛି କୁହନ୍ତୁ।",
+  punjabi:
+    "ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਸ਼ੁਰੂ ਕਰਨ ਲਈ, ਆਪਣਾ ਨਾਮ ਅਤੇ ਆਪਣੇ ਬਾਰੇ ਥੋੜ੍ਹਾ ਦੱਸੋ।",
+  tamil:
+    "வணக்கம்! தொடங்குவதற்கு, உங்கள் பெயரையும் உங்களைப் பற்றி சிறிது சொல்லுங்கள்.",
+  telugu:
+    "నమస్కారం! స్టార్ట్ చేద్దాం — మీ పేరు, మీ గురించి కొంచెం చెప్పండి.",
+};
+
+/**
+ * The opening is ONE turn asked in three bits: the greeting above, then these
+ * two follow-ons — hobbies/interests, then where they live — each played after
+ * the previous bit is answered while the mic keeps recording. Together they give
+ * a much richer picture of the candidate to ground and personalise the rest of
+ * the interview. Only the NEW part is spoken each time (not a re-read), so it
+ * sounds like a natural conversation. `[hobbies, location]` per language.
+ *
+ * Confident for English / Hindi / Marathi / Telugu; the rest want a native
+ * speaker's eyeball, like the other fixed clips in this file.
+ */
+export const OPENING_BIT_PROMPTS_BY_KEY: Record<
+  InterviewLanguageKey,
+  readonly [string, string]
+> = {
+  english: [
+    "Thanks! And what do you enjoy doing — any hobbies or interests?",
+    "Got it. And where are you based right now?",
+  ],
+  hindi: [
+    "शुक्रिया! और आपको क्या करना पसंद है — कोई शौक या रुचि?",
+    "ठीक है। और आप अभी कहाँ रहते हैं?",
+  ],
+  marathi: [
+    "धन्यवाद! आणि तुम्हाला काय करायला आवडतं — काही छंद किंवा आवड?",
+    "ठीक आहे. आणि तुम्ही सध्या कुठे राहता?",
+  ],
+  bengali: [
+    "ধন্যবাদ! আর আপনি কী করতে ভালোবাসেন — কোনো শখ বা আগ্রহ?",
+    "ঠিক আছে। আর আপনি এখন কোথায় থাকেন?",
+  ],
+  gujarati: [
+    "આભાર! અને તમને શું કરવું ગમે છે — કોઈ શોખ કે રસ?",
+    "બરાબર. અને તમે અત્યારે ક્યાં રહો છો?",
+  ],
+  kannada: [
+    "ಧನ್ಯವಾದ! ನಿಮಗೆ ಏನು ಮಾಡಲು ಇಷ್ಟ — ಯಾವುದಾದರೂ ಹವ್ಯಾಸ ಅಥವಾ ಆಸಕ್ತಿ?",
+    "ಸರಿ. ಮತ್ತು ನೀವು ಈಗ ಎಲ್ಲಿ ವಾಸಿಸುತ್ತೀರಿ?",
+  ],
+  malayalam: [
+    "നന്ദി! നിങ്ങൾക്ക് എന്തു ചെയ്യാനാണ് ഇഷ്ടം — എന്തെങ്കിലും ഹോബികളോ താൽപ്പര്യങ്ങളോ?",
+    "ശരി. നിങ്ങൾ ഇപ്പോൾ എവിടെയാണ് താമസിക്കുന്നത്?",
+  ],
+  odia: [
+    "ଧନ୍ୟବାଦ! ଆପଣ କଣ କରିବାକୁ ଭଲ ପାଆନ୍ତି — କୌଣସି ଶଖ କିମ୍ବା ଆଗ୍ରହ?",
+    "ଠିକ୍ ଅଛି। ଆଉ ଆପଣ ବର୍ତ୍ତମାନ କେଉଁଠି ରୁହନ୍ତି?",
+  ],
+  punjabi: [
+    "ਧੰਨਵਾਦ! ਅਤੇ ਤੁਹਾਨੂੰ ਕੀ ਕਰਨਾ ਪਸੰਦ ਹੈ — ਕੋਈ ਸ਼ੌਕ ਜਾਂ ਦਿਲਚਸਪੀ?",
+    "ਠੀਕ ਹੈ। ਅਤੇ ਤੁਸੀਂ ਹੁਣ ਕਿੱਥੇ ਰਹਿੰਦੇ ਹੋ?",
+  ],
+  tamil: [
+    "நன்றி! நீங்கள் என்ன செய்ய விரும்புகிறீர்கள் — ஏதேனும் பொழுதுபோக்கு அல்லது ஆர்வம்?",
+    "சரி. நீங்கள் இப்போது எங்கே வசிக்கிறீர்கள்?",
+  ],
+  telugu: [
+    "థాంక్స్! మీకు ఏం చేయడం ఇష్టం — ఏమైనా హాబీస్ లేదా ఇంటరెస్ట్స్?",
+    "సరే. మీరు ప్రస్తుతం ఎక్కడ ఉంటారు?",
+  ],
+};

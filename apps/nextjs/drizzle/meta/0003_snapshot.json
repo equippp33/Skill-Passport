@@ -1,5 +1,5 @@
 {
-  "id": "48319cb7-4c3c-4fbe-b895-8aa31df1ddef",
+  "id": "19f7e6f5-2424-4f40-ab38-bef3e29109a1",
   "prevId": "4fd54888-7dd3-477a-9562-f95f104da7f8",
   "version": "7",
   "dialect": "postgresql",
@@ -45,8 +45,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "candidate_background": {
-          "name": "candidate_background",
+        "candidate_course": {
+          "name": "candidate_course",
           "type": "text",
           "primaryKey": false,
           "notNull": false

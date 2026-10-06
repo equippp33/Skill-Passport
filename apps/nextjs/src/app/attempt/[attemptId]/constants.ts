@@ -45,36 +45,50 @@ export const AUTO_START_BACKSTOP_MS = 60_000;
 export const SILENCE_ADVANCE_SECONDS = 8;
 
 /**
- * What the interviewer does while a candidate says nothing at all.
+ * Silence ladder: what to do, and when, while a candidate has said NOTHING at
+ * all (not while they are mid-answer — that is `SILENCE_ADVANCE_SECONDS`).
  *
- * Silence is where a nervous fresher is most likely to be lost, and treating
- * it as an answer is how eight questions once went by with nobody speaking.
- * So: check they are still there, ask whether the question landed, and only
- * then stop waiting — the sequence a person would use.
- *
- * Ten seconds is a pause rather than an interruption. Five more and the
- * wording itself is the likely problem, so ask directly: "did you not follow
- * the question?" is answerable, and answering it with "no" routes straight to
- * the simpler version through the ordinary phrase matching. Forty is where
- * insisting stops being kind — and that rung submits **nothing**, it re-asks
- * the question, because a recording with no speech in it is not an answer
- * however confidently the transcriber fills it in.
- *
- * `at` counts candidate silence only; the clock freezes while a rung is being
- * spoken. `id` names the clip to play — see `AttemptStatus["clips"]`.
+ * A real interviewer coaxes rather than sitting in dead air, but it never talks
+ * over someone gathering their thoughts. The stages, in order:
+ *  - 15s → a spoken check-in ("did you understand the question, or should I
+ *    repeat it?"); their reply routes through the normal doubt/repeat/skip path.
+ *  - 30s → a VISIBLE countdown starts ("skipping in Ns"), to prompt them.
+ *  - 60s → auto-skip the question, unscored, and move on.
+ * Any speech at all resets the ladder — it can never cut off someone talking.
  */
-export const NO_ANSWER_STAGES: SilenceStage[] = [
-  { id: "whatHappened", at: 10 },
-  { id: "didNotGet", at: 15 },
-  { id: "noProblem", at: 40, final: true },
-];
+/**
+ * The "would you like to add anything?" flow (streaming path only).
+ *
+ * On the first pause we don't submit — we ask if they want to add more and keep
+ * the mic open. If they stay quiet this long after the ask, the stashed answer
+ * is submitted on its own. Covers the short "add?" clip plus a few seconds of
+ * real listening. A reply of at most this many words is read as a decline
+ * ("no", "that's all") and dropped; anything longer is appended to the answer.
+ */
+export const ADD_WAIT_MS = 6000;
+export const ADD_DECLINE_MAX_WORDS = 3;
 
 /**
- * Longest anything will wait on a spoken aside.
- *
- * A clip that never reports `ended` — a stalled download, a codec the browser
- * quietly gave up on — must not hold a candidate on a finished interview, or
- * freeze the silence ladder mid-answer. Twelve seconds is comfortably longer
- * than the longest of these lines.
+ * Only offer "add anything?" when the answer was SHORT — a barely-there reply
+ * that probably has more behind it. If they actually spoke for longer than this
+ * (measured from the first to the last partial transcript), they clearly said
+ * their piece, so submit and move on without nagging.
  */
-export const ASIDE_MAX_MS = 12_000;
+export const ADD_MAX_ANSWER_MS = 3000;
+
+/**
+ * The multi-part opening asks the next bit (hobbies, then location) after each
+ * is answered, mic still recording. If the candidate stays silent on a bit this
+ * long, move on to the next bit rather than stalling the interview at the start.
+ * Cancelled the moment they start speaking (see the partial-transcript effect).
+ */
+export const OPENING_BIT_WAIT_MS = 10000;
+
+export const SILENCE_CHECK_IN_SECONDS = 15;
+export const SILENCE_WARN_SECONDS = 30;
+export const SILENCE_SKIP_SECONDS = 60;
+export const NO_ANSWER_STAGES = [
+  SILENCE_CHECK_IN_SECONDS,
+  SILENCE_WARN_SECONDS,
+  SILENCE_SKIP_SECONDS,
+];

@@ -53,7 +53,7 @@ export const mr: Messages = {
     newInterview: "नवीन मूल्यांकन सुरू करा",
     emptyTitle: "अजून एकही मूल्यांकन नाही",
     emptyBody:
-      "तुमचे पहिले मूल्यांकन सुरू करा. यात दहा कामाची कौशल्ये तपासली जातात, एका वेळी एक प्रश्न.",
+      "तुमचे पहिले मूल्यांकन सुरू करा. यात कामाची कौशल्ये तपासली जातात, एका वेळी एक प्रश्न.",
     statusLabel: "स्थिती",
     scoreLabel: "गुण",
     questions: "प्रश्न",
@@ -72,7 +72,7 @@ export const mr: Messages = {
       "एका वेळी एक प्रश्न. ऐका, मोठ्याने उत्तर द्या आणि मग पुढील बटण दाबा.",
     duration: "साधारण {minutes} मिनिटे",
     skillsCovered:
-      "यात विश्वासार्हता, सांघिक काम आणि संवाद अशी दहा कामाची कौशल्ये तपासली जातात.",
+      "यात विश्वासार्हता, सांघिक काम आणि संवाद अशी कामाची कौशल्ये तपासली जातात.",
     answerLimit:
       "प्रत्येक उत्तर जास्तीत जास्त {seconds} सेकंदांचे असू शकते. प्रश्न वाचून झाल्यावर रेकॉर्डिंग आपोआप सुरू होते.",
     microphone:
@@ -144,8 +144,10 @@ export const mr: Messages = {
     reRecord: "पुन्हा रेकॉर्ड करा",
     next: "पुढील प्रश्न",
     finish: "मूल्यांकन पूर्ण करा",
-    keepSpeaking: "बोलत राहा — तुम्ही थांबताच हे आपोआप पुढे जाईल.",
+    keepSpeaking: "आरामात बोला — झाल्यावर Next दाबा.",
     waitingForAnswer: "ऐकत आहोत — तयार असाल तेव्हा बोलायला सुरुवात करा.",
+    skippingIn:
+      "हा प्रश्न {seconds} सेकंदांत वगळला जाईल — सुरू ठेवण्यासाठी बोलायला सुरुवात करा.",
     advancingIn: "{seconds} मध्ये पुढे जात आहोत…",
     introduction: "ओळख",
     chooseLanguageTitle: "तुम्हाला कोणत्या भाषेत पुढे जायचे आहे?",
@@ -166,6 +168,9 @@ export const mr: Messages = {
       "जवळजवळ झालं…",
     ],
     savingRecordings: "तुमची रेकॉर्डिंग जतन होत आहे — जवळजवळ पूर्ण…",
+    submittingInterview: "तुमचा इंटरव्यू पाठवला जात आहे",
+    submittingHint: "फक्त एक क्षण — आम्ही सगळं जतन करतोय.",
+    savingProgress: "तुमची उत्तरं जतन होत आहेत — {total} पैकी {done}",
     processingHint:
       "तुमचे उत्तर लिहून घेतले जात आहे आणि तपासले जात आहे. यास काही सेकंद लागतात — हे पान उघडे ठेवा.",
     errorTitle: "काहीतरी चूक झाली",
@@ -188,7 +193,7 @@ export const mr: Messages = {
     noStrengths: "कोणतीही विशिष्ट बलस्थाने आढळली नाहीत.",
     noImprovements: "कोणत्याही विशिष्ट सुधारणा सुचवल्या गेल्या नाहीत.",
     skillBreakdown: "कौशल्यनिहाय गुण",
-    skillBreakdownHint: "दहाही कामाची कौशल्ये, प्रत्येकी १० पैकी गुण.",
+    skillBreakdownHint: "सर्व कामाची कौशल्ये, प्रत्येकी १० पैकी गुण.",
     notAssessed: "तपासले नाही",
     questionBreakdown: "प्रश्ननिहाय तपशील",
     yourAnswer: "तुमचे उत्तर",
@@ -207,14 +212,15 @@ export const mr: Messages = {
   },
 
   skills: {
+    work_readiness: "कामाची तयारी व आकांक्षा",
     reliability: "विश्वासार्हता",
     responsibility: "जबाबदारी",
     following_instructions: "सूचनांचे पालन",
     attention_to_detail: "बारकाव्यांकडे लक्ष",
     communication: "संवाद",
     teamwork: "सांघिक काम",
-    problem_solving: "विचार व समस्या सोडवणे",
-    learning_adaptability: "शिकणे व जुळवून घेणे",
+    problem_solving: "समस्या सोडवणे",
+    learning_adaptability: "जुळवून घेणे",
     initiative: "पुढाकार",
     customer_orientation: "ग्राहकाभिमुखता",
   },

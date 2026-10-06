@@ -70,6 +70,9 @@ export function AttemptReport({
   const skillScores = aggregateSkillScores(turns);
   const spoken = spokenLanguages(turns);
   const probe = turns.find((x) => x.kind === "language_probe");
+  // The opening introduction reads as a normal question in the breakdown (first,
+  // unscored) rather than a separate "language sample" box.
+  const breakdown = probe?.answerTranscript ? [probe, ...answered] : answered;
 
   return (
     <div className="space-y-6">
@@ -145,9 +148,11 @@ export function AttemptReport({
               {m.result.overallScore}
             </p>
             <p className="mt-2 text-5xl font-semibold tracking-tight text-accent tabular-nums">
-              {attempt.overallScore ?? "—"}
+              {attempt.overallScore !== null
+                ? (attempt.overallScore / 10).toFixed(1)
+                : "—"}
               {attempt.overallScore !== null ? (
-                <span className="text-lg text-content-muted">/100</span>
+                <span className="text-lg text-content-muted">/10</span>
               ) : null}
             </p>
           </div>
@@ -163,7 +168,7 @@ export function AttemptReport({
       {/* Skills on one side, the written verdict on the other, so the width
           carries two columns of report instead of one tall stack. */}
       <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
-        {/* All ten skills, always — unassessed ones are shown, not hidden. */}
+        {/* All skills, always — unassessed ones are shown, not hidden. */}
         <Card>
           <CardHeader>
             <CardTitle>{m.result.skillBreakdown}</CardTitle>
@@ -220,39 +225,25 @@ export function AttemptReport({
         </div>
       </div>
 
-      {showCandidate && probe?.answerTranscript ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Opening answer (language sample)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p
-              className="text-sm leading-relaxed whitespace-pre-wrap"
-              lang={probe.detectedLanguageCode ?? langCode}
-            >
-              {probe.answerTranscript}
-            </p>
-          </CardContent>
-        </Card>
-      ) : null}
-
       <section className="space-y-4">
         <h2 className="text-lg font-semibold tracking-tight">
           {m.result.questionBreakdown}
         </h2>
 
-        {answered.length === 0 ? (
+        {breakdown.length === 0 ? (
           <Alert tone="warning">{m.result.noAnswers}</Alert>
         ) : (
           <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
-            {answered.map((turn) => (
+            {breakdown.map((turn) => (
               <Card key={turn.id}>
                 <CardHeader>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <CardTitle className="text-sm font-medium text-content-muted">
-                      {turn.skillId
-                        ? m.skills[turn.skillId as WorkSkillId]
-                        : `Question ${turn.turnNumber}`}
+                      {turn.kind === "language_probe"
+                        ? "Introduction"
+                        : turn.skillId
+                          ? m.skills[turn.skillId as WorkSkillId]
+                          : `Question ${turn.turnNumber}`}
                     </CardTitle>
                     <div className="flex items-center gap-2">
                       {/*
@@ -340,7 +331,9 @@ export function AttemptReport({
                         never be read as belonging to the wrong question. */}
                       <p className="text-xs text-content-muted">
                         {[
-                          `Question ${turn.turnNumber}`,
+                          turn.kind === "language_probe"
+                            ? "Introduction"
+                            : `Question ${turn.turnNumber}`,
                           clipLength(clipDurations?.[turn.answerVideoId]),
                           `answered ${formatDateTime(turn.updatedAt)}`,
                         ]

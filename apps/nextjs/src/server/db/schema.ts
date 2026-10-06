@@ -171,6 +171,7 @@ export const preparationStatusEnum = pgEnum("preparation_status", [
 
 /** Mirrors WORK_SKILL_IDS in `~/config/work-skills`. */
 export const workSkillEnum = pgEnum("work_skill", [
+  "work_readiness",
   "reliability",
   "responsibility",
   "following_instructions",
@@ -264,58 +265,15 @@ export const interviewAttemptsTable = pgTable(
     candidateName: text("candidate_name").notNull(),
     candidateEmail: text("candidate_email"),
     candidatePhone: text("candidate_phone"),
-
-    /**
-     * What the candidate typed about themselves before starting: studying or
-     * working, where, doing what.
-     *
-     * Collected alongside the language choice rather than drawn out of the
-     * first spoken answer, so the very first question can already be about
-     * their actual life. Without it question one is asked into a vacuum and
-     * only the questions after it benefit from knowing anything.
-     *
-     * Untrusted free text — it reaches the model wrapped, like any transcript.
-     */
-    candidateBackground: text("candidate_background"),
-
-    /**
-     * What they are studying or training in, and what work they have done
-     * before — asked as two questions rather than one open box.
-     *
-     * Structured because the two answer different things: the course says
-     * what world to set a scenario in, the experience says whether they have
-     * ever had a manager, a shift or a customer. One free-text box got
-     * whichever the candidate thought to mention, and usually not both.
-     *
-     * `candidateBackground` above is kept and still written, composed from
-     * these, so every existing report and prompt path keeps working without a
-     * data migration.
-     */
+    /** The candidate's course/field, from the start form. Grounds questions and
+     *  lets the first one be prepared before the interview begins. */
     candidateCourse: text("candidate_course"),
-    candidateExperience: text("candidate_experience"),
-
     /**
-     * Speaking rate for this interview, 1.0 being the interviewer's natural
-     * pace.
-     *
-     * Set when a candidate asks for it slower. Applied in the browser with
-     * `playbackRate`, which is what makes it work retroactively: clips voiced
-     * before they asked slow down too, where re-synthesising would only fix
-     * the next one. Persisted so a reload does not lose it.
+     * The partner's own student id, carried through the integration link so the
+     * completed result can be posted back keyed to their record. Null for
+     * candidates who came through a normal shared link.
      */
-    speechRate: real("speech_rate").notNull().default(1),
-
-    /**
-     * How far the up-front question preparation has got.
-     *
-     * Stored rather than inferred so preparation is resumable: a deploy or a
-     * crash mid-wave otherwise orphans the work with nothing to notice it,
-     * and the candidate walks into a question that was never written.
-     */
-    preparationStatus: preparationStatusEnum("preparation_status")
-      .notNull()
-      .default("pending"),
-    preparationError: text("preparation_error"),
+    externalStudentId: text("external_student_id"),
 
     /**
      * Detected from the candidate's first spoken answer, then used for every
@@ -368,22 +326,35 @@ export const interviewAttemptsTable = pgTable(
     awayCount: smallint("away_count").notNull().default(0),
 
     /**
-     * When the browser said it was closing, if it managed to.
+     * What this interview cost to run, accumulated as it runs.
      *
-     * Sent as a beacon on the way out, which is the only moment we can learn
-     * this directly — after that the tab is gone and the server can only infer
-     * it from missing heartbeats, which takes minutes and leaves the interview
-     * showing as running the whole time.
+     * Each provider bills on a different unit, so each is stored in the unit it
+     * is actually billed in rather than normalised into one number here: TTS
+     * per character and the models per token. Prices change and differ per
+     * account, so the arithmetic belongs wherever someone is doing the costing
+     * — see `~/config/pricing` — and not baked into a column.
      *
-     * Cleared by the next heartbeat, so a reload or a restored tab undoes it.
-     * That is what makes it safe to act on quickly: a candidate who comes
-     * straight back is still here, and only somebody who really left stays
-     * left.
+     * Speech-to-text is absent on purpose. Sarvam bills it per second of audio,
+     * and the streaming path holds a socket rather than making requests, so
+     * there is nothing to count here; minutes come from the recorded answer
+     * clips instead.
+     *
+     * Incremented in SQL (`x = x + n`) rather than read-modify-written, so the
+     * concurrent legs of one turn cannot lose each other's counts.
      */
-    leftAt: timestamp("left_at", { withTimezone: true }),
+    ttsCharacters: integer("tts_characters").notNull().default(0),
+    llmRequests: integer("llm_requests").notNull().default(0),
+    llmInputTokens: integer("llm_input_tokens").notNull().default(0),
+    llmOutputTokens: integer("llm_output_tokens").notNull().default(0),
 
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    /**
+     * When the result was successfully POSTed to the partner's webhook. Null
+     * until delivered (or when there is no webhook / no partner student). Lets
+     * a failed delivery be found and re-sent later without double-posting.
+     */
+    resultDeliveredAt: timestamp("result_delivered_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

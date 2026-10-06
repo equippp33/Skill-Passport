@@ -31,14 +31,43 @@ export interface AttemptSummary {
   spokenLanguages: { code: string; label: string; turns: number }[];
   overallScore: number | null;
   awayCount: number;
+  /** How many attempts this candidate made at this interview (1 = no retake). */
+  attemptCount: number;
   /**
-   * What this interview cost to run — development only, null in production.
+   * What this interview cost to run — development only, null in production and
+   * null for any interview the meter did not cover.
    *
-   * Sent ready-formatted ("₹2.14") rather than as counters or a number, so
+   * Sent ready-formatted ("₹12.30") rather than as counters or a number, so
    * neither the rate card nor the arithmetic reaches the browser bundle.
+   *
+   * Three states, and the card needs all three: a string is a real cost,
+   * `null` means development but this interview was never metered, and the
+   * field is ABSENT in production so the badge does not render at all.
    */
-  devCost: string | null;
+  devCost?: string | null;
+  /** The same figure split by provider, for the card's tooltip. */
+  devCostParts?: string | null;
+  /**
+   * True when `devCost` is a FLOOR rather than the whole bill.
+   *
+   * An interview that ran before the meter existed still has its question text
+   * and its recorded answers, so speech can be priced exactly — but nothing
+   * recorded the model tokens, which are the larger share. Showing the speech
+   * total alone as if it were the cost would understate it roughly threefold,
+   * so the card marks it "≥" instead.
+   */
+  devCostIsFloor?: boolean;
   createdAt: Date;
+}
+
+/** One repeat candidate's attempts, oldest first, for the retake-comparison table. */
+export interface RepeatCandidate {
+  /** Attempt to open when the row is clicked (their latest). */
+  reportAttemptId: string;
+  candidateName: string;
+  candidateEmail: string | null;
+  /** Overall score (0-10) per attempt, oldest first; null if that run was unscored. */
+  attempts: { overallScore: number | null; status: string }[];
 }
 
 export interface InterviewDetails {
@@ -50,18 +79,26 @@ export interface InterviewDetails {
   isOpen: boolean;
   createdAt: Date;
   attempts: AttemptSummary[];
+  /** Every candidate with 2+ attempts, for the retake-comparison table. */
+  repeatComparison?: RepeatCandidate[];
   /**
-   * What every interview under this link has cost so far — development only,
-   * null in production.
+   * What every interview under this link has cost, split by provider —
+   * development only, absent in production.
    *
-   * Carries the counts as well as the total, because a total over four metered
-   * runs out of seven is a different claim from a total over all seven, and a
-   * number without that context invites being quoted as if it were the whole
-   * bill.
+   * There is no separate line for the WebSocket. Sarvam bills realtime
+   * speech-to-text by the second of audio, not by connection, so the socket's
+   * cost IS the STT line; a relay connection of its own costs nothing.
    */
-  devCostTotal: {
+  devCosts?: {
+    /** "Sarvam" or "OpenAI" — whichever `AI_PROVIDER` selects. */
+    modelLabel: string;
+    openai: string;
+    tts: string;
+    stt: string;
     total: string;
     metered: number;
     unmetered: number;
-  } | null;
+    /** Some of the total is a floor — see `devCostIsFloor`. */
+    hasFloor: boolean;
+  };
 }

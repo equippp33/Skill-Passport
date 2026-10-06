@@ -50,7 +50,9 @@ export default async function AdminLayout({
         <AdminSidebar signOut={m.app.signOut} email={admin.email} />
       </div>
 
-      <div className="lg:pl-60 print:pl-0">
+      {/* Collapsed rail width (w-16). The sidebar expands OVER the content on
+          hover, so content keeps the extra space instead of reserving w-60. */}
+      <div className="lg:pl-16 print:pl-0">
         {/* Mobile only — the desktop rail carries the brand, nav and profile,
             so there is nothing for a top bar to do there. */}
         <header
@@ -62,7 +64,7 @@ export default async function AdminLayout({
               href="/admin"
               className="flex items-center gap-2 text-sm font-semibold tracking-tight"
             >
-              <Brand className="gap-2 [&>svg]:size-8 [&>span]:text-base" />
+              <Brand className="h-8" />
             </Link>
             <form action={logoutAction}>
               <Button type="submit" variant="secondary" size="sm">

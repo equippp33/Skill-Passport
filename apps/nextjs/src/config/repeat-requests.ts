@@ -399,157 +399,152 @@ export function phraseIntent(
  * this" — the diagnostic log, and anything that treats all three the same.
  */
 export function isRepeatRequest(transcript: string): boolean {
-  return phraseIntent(transcript) !== null;
+  const text = normalise(transcript);
+  if (!text) return false;
+
+  const words = text.split(" ");
+  if (words.length > MAX_WORDS) return false;
+
+  return PHRASES.some((phrase) => {
+    const needle = normalise(phrase);
+    return text === needle || text.includes(needle);
+  });
 }
 
-/* -------------------------------------------------------------------------- */
-/*                      Answering a yes-or-no question                        */
-/* -------------------------------------------------------------------------- */
-
 /**
- * "Would you like to add anything?" — and what came back.
+ * "Move on / skip this one" — a command, not an answer.
  *
- * Only ever consulted when the interviewer has just asked something with a
- * yes-or-no answer, so the words here can be short ones that would be reckless
- * to match anywhere else: plenty of real answers contain "no" or "haan" in
- * passing, but almost none consist of it.
- *
- * A phrase list, like everything else on the answer path — no model call, so
- * the reply is instant.
+ * Same guardrails as the repeat check: only a short utterance counts, so
+ * "next, I told the customer to wait" (a real answer that starts with "next")
+ * is not mistaken for a skip.
  */
-const AFFIRMATIVE: string[] = [
-  "yes",
-  "yeah",
-  "yep",
-  "yup",
-  "sure",
-  "ok",
-  "okay",
-  "one more",
-  "one minute",
-  "i want to add",
-  "i would like to add",
-  "let me add",
-  "actually",
-  "हाँ",
-  "हां",
-  "जी",
-  "जी हाँ",
-  "हाँ जी",
-  "बिल्कुल",
-  "थोड़ा और",
-  "हो",
-  "होय",
-  "हो सांगतो",
-  "आणखी",
-  "হ্যাঁ",
-  "হ্যা",
-  "আরও",
-  "আর একটু",
-  "હા",
-  "હાજી",
-  "થોડું વધારે",
-  "ಹೌದು",
-  "ಹೂಂ",
-  "ಇನ್ನೂ",
-  "അതെ",
-  "ഉവ്വ്",
-  "കുറച്ചു കൂടി",
-  "ହଁ",
-  "ହଁ ଜୀ",
-  "ଆଉ କିଛି",
-  "ਹਾਂ",
-  "ਹਾਂ ਜੀ",
-  "ਹੋਰ",
-  "ஆமா",
-  "ஆம்",
-  "ஆமாம்",
-  "இன்னும்",
-  "అవును",
-  "ఔను",
-  "ఇంకా",
-];
-
-const NEGATIVE: string[] = [
-  "no",
-  "nope",
-  "nothing",
-  "no thanks",
-  "no thank you",
-  "that is all",
-  "thats all",
-  "that's it",
-  "thats it",
-  "i am done",
-  "im done",
-  "done",
-  "nothing else",
+const SKIP_PHRASES: string[] = [
+  // English
+  "skip",
+  "skip this",
+  "skip it",
+  "skip question",
   "next",
   "next question",
-  "नहीं",
-  "नही",
-  "बस",
-  "बस इतना ही",
-  "कुछ नहीं",
-  "आगे बढ़िए",
+  "next one",
+  "move on",
+  "leave it",
+  // Hindi / Marathi, romanised
+  "agla sawaal",
+  "agla question",
+  "aage badho",
+  "aage badhe",
+  "aage chalo",
+  "chhod do",
+  "chhodo",
+  "isko chhodo",
+  "pudhcha prashna",
+  "pudhe chala",
+  // Devanagari
   "अगला सवाल",
-  "नाही",
-  "बस एवढंच",
-  "काही नाही",
+  "अगला प्रश्न",
+  "आगे बढ़ो",
+  "आगे चलो",
+  "छोड़ दो",
+  "पुढचा प्रश्न",
   "पुढे चला",
-  "না",
-  "আর কিছু না",
-  "এটুকুই",
-  "পরেরটা",
-  "ના",
-  "બસ",
-  "બીજું કંઈ નહીં",
-  "આગળ",
-  "ಇಲ್ಲ",
-  "ಅಷ್ಟೇ",
-  "ಬೇರೇನೂ ಇಲ್ಲ",
-  "ಮುಂದೆ",
-  "ഇല്ല",
-  "അത്രമാത്രം",
-  "വേറൊന്നുമില്ല",
-  "അടുത്തത്",
-  "ନାହିଁ",
-  "ଏତିକି",
-  "ଆଉ କିଛି ନାହିଁ",
-  "ପରବର୍ତ୍ତୀ",
-  "ਨਹੀਂ",
-  "ਬਸ",
-  "ਹੋਰ ਕੁਝ ਨਹੀਂ",
-  "ਅਗਲਾ",
-  "இல்ல",
-  "இல்லை",
-  "அவ்வளவுதான்",
-  "அடுத்தது",
-  "లేదు",
-  "అంతే",
-  "ఇంకేమీ లేదు",
-  "తరువాత",
+  // Other scripts, short forms
+  "తదుపరి ప్రశ్న",
+  "తర్వాత ప్రశ్న",
+  "వదిలేయండి",
+  "அடுத்த கேள்வி",
+  " முந்தைய",
 ];
 
 /**
- * Whether a reply to a yes-or-no question was a yes, a no, or neither.
+ * Unambiguous "I want to skip / I can't answer" phrases.
  *
- * Null means "neither" — which, for the add-more prompt, is the most common
- * and most useful outcome: the candidate ignored the question and simply
- * carried on answering, and that continuation is what we actually wanted.
- *
- * Negative is checked first. "No, that's all" starts with a word on neither
- * list in some languages but contains needles from both, and the refusal is
- * the part that matters.
+ * Unlike the short list above, these are checked WITHOUT the word limit: they
+ * are specific enough that they mean skip even buried in a longer sentence —
+ * "I don't have an answer for it, can we skip this question?" is a skip, not an
+ * answer, and the 8-word guard was throwing it into the doubt loop instead.
  */
-export function yesNoIntent(transcript: string): "yes" | "no" | null {
-  const text = normalise(transcript);
-  if (!text) return null;
-  // Longer than this and it is an answer that happens to contain "no", not a
-  // reply to the question we asked.
-  if (text.split(" ").length > 5) return null;
+const STRONG_SKIP_PHRASES: string[] = [
+  "skip this question",
+  "skip the question",
+  "skip this one",
+  "skip this",
+  "can we skip",
+  "can i skip",
+  "i want to skip",
+  "lets skip",
+  "i dont want to answer",
+  "dont want to answer",
+  "i cant answer this",
+  "i cannot answer this",
+  "i have no answer",
+  "i dont have an answer",
+  "i dont have any answer",
+];
 
-  if (matchesWord(text, NEGATIVE)) return "no";
-  if (matchesWord(text, AFFIRMATIVE)) return "yes";
-  return null;
+export function isSkipRequest(transcript: string): boolean {
+  const text = normalise(transcript);
+  if (!text) return false;
+
+  // Strong phrases mean skip at any length.
+  if (STRONG_SKIP_PHRASES.some((p) => text.includes(normalise(p)))) return true;
+
+  const words = text.split(" ");
+  if (words.length > MAX_WORDS) return false;
+
+  return SKIP_PHRASES.some((phrase) => {
+    const needle = normalise(phrase);
+    return text === needle || text.includes(needle);
+  });
+}
+
+/**
+ * "Say it slower" — a command. The current question is re-voiced at a slower
+ * pace. Same short-utterance guard as the others.
+ */
+const SLOWER_PHRASES: string[] = [
+  // English
+  "slowly",
+  "slower",
+  "slow down",
+  "speak slowly",
+  "say it slowly",
+  "too fast",
+  "bit slow",
+  // Hindi / Marathi, romanised
+  "dheere",
+  "dheere",
+  "dheere boliye",
+  "dheere bolo",
+  "aaram se boliye",
+  "halu bola",
+  "halu bola na",
+  "savkash",
+  "savkash bola",
+  // Devanagari
+  "धीरे",
+  "धीरे बोलिए",
+  "धीरे बोलो",
+  "हळू बोला",
+  "सावकाश",
+  "सावकाश बोला",
+  // Other scripts
+  "నెమ్మదిగా",
+  "నెమ్మదిగా చెప్పండి",
+  "మెల్లగా",
+  "மெதுவாக",
+  "மெதுவாக சொல்லுங்கள்",
+];
+
+export function isSlowerRequest(transcript: string): boolean {
+  const text = normalise(transcript);
+  if (!text) return false;
+
+  const words = text.split(" ");
+  if (words.length > MAX_WORDS) return false;
+
+  return SLOWER_PHRASES.some((phrase) => {
+    const needle = normalise(phrase);
+    return text === needle || text.includes(needle);
+  });
 }

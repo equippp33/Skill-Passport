@@ -3,6 +3,7 @@ import { z } from "zod";
 import { PHONE_DIGITS, phoneDigits } from "~/lib/phone";
 
 import { WORK_SKILL_COUNT } from "~/config/work-skills";
+import { INTERVIEW_LANGUAGE_KEYS } from "~/config/languages";
 
 /**
  * Shared client/server validation contract.
@@ -94,4 +95,34 @@ export const candidateDetailsSchema = z.object({
     .refine((v) => v === null || v.length === PHONE_DIGITS, {
       message: "Enter a 10-digit phone number.",
     }),
+  /**
+   * The interview language, chosen up front and fixed for the whole interview.
+   * One of the supported interview languages; the whole session — questions,
+   * speech, transcription — runs in it, with no mid-interview switching.
+   */
+  language: z.enum(INTERVIEW_LANGUAGE_KEYS as [string, ...string[]], {
+    message: "Choose the language for your interview.",
+  }),
+  /** Course / field of study, used to ground and pre-prepare questions. */
+  course: z
+    .string()
+    .trim()
+    .max(120, "Keep the course under 120 characters.")
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v && v.length > 0 ? v : null)),
+  /**
+   * Partner student id, carried through as a hidden field on integration
+   * links. Absent for ordinary candidates; never shown or validated for the
+   * candidate, only stored so their result can be posted back.
+   */
+  studentId: z
+    .string()
+    .trim()
+    .max(128)
+    // nullish, NOT just optional: a plain link omits the hidden field entirely,
+    // so `formData.get("studentId")` is null (not undefined) — `.optional()`
+    // alone rejects null and would fail every ordinary candidate's submit.
+    .nullish()
+    .transform((v) => (v && v.length > 0 ? v : null)),
 });

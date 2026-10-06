@@ -1,6 +1,6 @@
 {
-  "id": "0f44e0e7-fe83-4eb6-8fe4-413d0f9bc7d8",
-  "prevId": "48319cb7-4c3c-4fbe-b895-8aa31df1ddef",
+  "id": "cafd6130-a2ff-4903-a73a-ade688887191",
+  "prevId": "19f7e6f5-2424-4f40-ab38-bef3e29109a1",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -45,8 +45,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "candidate_background": {
-          "name": "candidate_background",
+        "candidate_course": {
+          "name": "candidate_course",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -69,48 +69,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
-        },
-        "stt_requests": {
-          "name": "stt_requests",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "stt_audio_bytes": {
-          "name": "stt_audio_bytes",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "tts_characters": {
-          "name": "tts_characters",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "llm_requests": {
-          "name": "llm_requests",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "llm_input_tokens": {
-          "name": "llm_input_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "llm_output_tokens": {
-          "name": "llm_output_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         },
         "status": {
           "name": "status",
@@ -160,6 +118,34 @@
         "away_count": {
           "name": "away_count",
           "type": "smallint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "tts_characters": {
+          "name": "tts_characters",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "llm_requests": {
+          "name": "llm_requests",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "llm_input_tokens": {
+          "name": "llm_input_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "llm_output_tokens": {
+          "name": "llm_output_tokens",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "default": 0
@@ -883,6 +869,7 @@
       "name": "work_skill",
       "schema": "public",
       "values": [
+        "work_readiness",
         "reliability",
         "responsibility",
         "following_instructions",

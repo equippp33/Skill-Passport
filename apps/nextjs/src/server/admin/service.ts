@@ -16,13 +16,17 @@ import {
   interviewsTable,
   usersTable,
 } from "~/server/db/schema";
-import type { Interview, InterviewAttempt } from "~/server/db/schema";
-import type { InterviewDetails } from "./dto";
-import { isWorkSkillId } from "~/config/work-skills";
-import { formatInr, interviewCostInr, wasMetered } from "~/config/pricing";
-import { env } from "~/env";
-import { deleteAudioObject } from "~/server/interview/storage";
+import type {
+  Interview,
+  InterviewAttempt,
+  InterviewTurn,
+} from "~/server/db/schema";
+import { aggregateSkillScores } from "~/lib/scoring";
+import { WORK_SKILLS } from "~/config/work-skills";
 import type { WorkSkillId } from "~/config/work-skills";
+import type { InterviewDetails } from "./dto";
+import { formatInr, interviewCost, wasMetered } from "~/config/pricing";
+import { env } from "~/env";
 import { labelForCode } from "~/lib/spoken-languages";
 import type { SpokenLanguage } from "~/lib/spoken-languages";
 import { getAuth } from "~/server/auth/session";
@@ -98,12 +102,8 @@ export async function createInterview(
     title: string;
     description: string | null;
     questionCount?: number;
-    followUpSkills?: WorkSkillId[];
   },
 ): Promise<Interview> {
-  // Only real skill ids reach the column, whatever the caller passed.
-  const followUpSkills = (input.followUpSkills ?? []).filter(isWorkSkillId);
-
   const [row] = await db
     .insert(interviewsTable)
     .values({
@@ -111,7 +111,8 @@ export async function createInterview(
       title: input.title,
       description: input.description,
       questionCount: input.questionCount ?? DEFAULT_QUESTION_COUNT,
-      followUpSkills,
+      // followUpSkills column is unused now (follow-ups are answer-driven on
+      // every skill); the DB default [] fills it.
       publicToken: generateToken(),
     })
     .returning();
@@ -128,7 +129,7 @@ export interface InterviewWithCounts extends Interview {
 /**
  * Create an interview with nothing to fill in.
  *
- * Every interview is the same ten workplace skills, and the language comes
+ * Every interview is the same workplace skills, and the language comes
  * from how the candidate answers, so there is no configuration to collect.
  * The title exists only so an admin can tell two links apart and is numbered
  * from how many they already have. Two simultaneous creates can land on the
@@ -137,7 +138,6 @@ export interface InterviewWithCounts extends Interview {
  */
 export async function createGeneralInterview(
   adminId: string,
-  followUpSkills: WorkSkillId[] = [],
 ): Promise<Interview> {
   const [counted] = await db
     .select({ total: sql<number>`count(*)::int` })
@@ -147,18 +147,22 @@ export async function createGeneralInterview(
   return createInterview(adminId, {
     title: `General interview ${(counted?.total ?? 0) + 1}`,
     description: null,
-    followUpSkills,
   });
 }
 
 export async function listInterviews(
   adminId: string,
 ): Promise<InterviewWithCounts[]> {
+  // Counts are PER CANDIDATE (a person, by student id → email → attempt id),
+  // not per attempt — matching the detail page, which collapses retakes to one
+  // card per candidate. Counting raw attempts here made the list say "1705 /
+  // 360" while the detail page said "895 / 332" for the same interview.
+  const candidateKey = sql`coalesce(${interviewAttemptsTable.externalStudentId}, lower(${interviewAttemptsTable.candidateEmail}), ${interviewAttemptsTable.id}::text)`;
   const rows = await db
     .select({
       interview: interviewsTable,
-      attemptCount: sql<number>`count(${interviewAttemptsTable.id})::int`,
-      completedCount: sql<number>`count(*) filter (where ${interviewAttemptsTable.status} = 'completed')::int`,
+      attemptCount: sql<number>`count(distinct ${candidateKey})::int`,
+      completedCount: sql<number>`count(distinct ${candidateKey}) filter (where ${interviewAttemptsTable.status} = 'completed')::int`,
     })
     .from(interviewsTable)
     .leftJoin(
@@ -193,10 +197,61 @@ export async function getInterviewForAdmin(
   const attempts = await db.query.interviewAttemptsTable.findMany({
     where: eq(interviewAttemptsTable.interviewId, interview.id),
     orderBy: desc(interviewAttemptsTable.createdAt),
-    limit: 500,
+    // High cap, not 500: a candidate can now RETAKE (up to 3 attempts), so rows
+    // far outnumber people. A 500 cap ordered by newest silently dropped older
+    // COMPLETED attempts out of the window as fresh in-progress ones arrived —
+    // which is exactly why the completed count appeared to shrink. Load enough
+    // that the per-candidate collapse below sees every attempt.
+    // ponytail: fine to a few thousand candidates; page + aggregate if it grows.
+    limit: 5000,
   });
 
   return { interview, attempts };
+}
+
+/** Rank a status so a candidate's "best" attempt wins the collapse below. */
+const ATTEMPT_STATUS_RANK: Record<string, number> = {
+  completed: 5,
+  processing: 4,
+  in_progress: 3,
+  failed: 2,
+  not_started: 1,
+};
+
+/** How a candidate is identified across their retakes. */
+function candidateKey(a: InterviewAttempt): string {
+  return (
+    a.externalStudentId?.trim() ||
+    a.candidateEmail?.trim().toLowerCase() ||
+    a.id
+  );
+}
+
+/**
+ * Collapse an interview's attempts to ONE per candidate.
+ *
+ * With retakes, one person has several attempts, which double-counted them
+ * (shown in both "in progress" and "completed") and made "completed" jitter.
+ * Keep each candidate's BEST attempt — completed beats in-progress beats
+ * not-started, newest breaks ties — so counts are per-person and, once someone
+ * has finished, they stay "completed" even while a retake is under way.
+ */
+function collapseByCandidate(attempts: InterviewAttempt[]): InterviewAttempt[] {
+  const best = new Map<string, InterviewAttempt>();
+  for (const a of attempts) {
+    const key = candidateKey(a);
+    const cur = best.get(key);
+    if (!cur) {
+      best.set(key, a);
+      continue;
+    }
+    const rank = ATTEMPT_STATUS_RANK[a.status] ?? 0;
+    const curRank = ATTEMPT_STATUS_RANK[cur.status] ?? 0;
+    if (rank > curRank || (rank === curRank && a.createdAt > cur.createdAt)) {
+      best.set(key, a);
+    }
+  }
+  return [...best.values()];
 }
 
 export async function setInterviewOpen(
@@ -241,6 +296,115 @@ export async function getAttemptForAdmin(
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+export interface AttemptTab {
+  attemptId: string;
+  /** 1-based, oldest first. */
+  attemptNumber: number;
+  status: string;
+  overallScore: number | null;
+  createdAt: Date;
+  completedAt: Date | null;
+  isCurrent: boolean;
+}
+
+/** One skill's score across every attempt, aligned to `attempts` order. */
+export interface SkillComparisonRow {
+  skillId: WorkSkillId;
+  label: string;
+  /** 0-10 per attempt (same order as `attempts`), null where not assessed. */
+  scores: (number | null)[];
+}
+
+export interface CandidateAttempts {
+  attempts: AttemptTab[];
+  /** Per-skill score matrix for the side-by-side comparison. */
+  skills: SkillComparisonRow[];
+}
+
+/**
+ * A candidate's attempts at the SAME interview, oldest first — for the report's
+ * tab bar AND the side-by-side score comparison. Identity is the partner student
+ * id when present, else email (the same key retakes are counted by). Scoped to
+ * the admin's own interview. Returns null when there is only one attempt (no
+ * tabs, no comparison needed).
+ */
+export async function getCandidateAttempts(
+  adminId: string,
+  attempt: InterviewAttempt,
+): Promise<CandidateAttempts | null> {
+  const studentId = attempt.externalStudentId?.trim() || null;
+  const email = attempt.candidateEmail?.trim() || null;
+  if (!studentId && !email) return null;
+
+  const identity = studentId
+    ? eq(interviewAttemptsTable.externalStudentId, studentId)
+    : eq(interviewAttemptsTable.candidateEmail, email!);
+
+  const rows = await db
+    .select({
+      attemptId: interviewAttemptsTable.id,
+      status: interviewAttemptsTable.status,
+      overallScore: interviewAttemptsTable.overallScore,
+      createdAt: interviewAttemptsTable.createdAt,
+      completedAt: interviewAttemptsTable.completedAt,
+    })
+    .from(interviewAttemptsTable)
+    .innerJoin(
+      interviewsTable,
+      eq(interviewAttemptsTable.interviewId, interviewsTable.id),
+    )
+    .where(
+      and(
+        eq(interviewAttemptsTable.interviewId, attempt.interviewId),
+        identity,
+        eq(interviewsTable.createdByUserId, adminId),
+      ),
+    )
+    // Order by when each attempt was FINISHED, not created — a candidate often
+    // starts several in quick succession and completes them out of that order
+    // (resume, retries). `completedAt` is immutable (unlike updatedAt, which a
+    // resend bumps); an unfinished attempt falls back to its start time.
+    .orderBy(
+      asc(
+        sql`coalesce(${interviewAttemptsTable.completedAt}, ${interviewAttemptsTable.createdAt})`,
+      ),
+    );
+
+  if (rows.length <= 1) return null;
+
+  const attempts: AttemptTab[] = rows.map((r, i) => ({
+    ...r,
+    attemptNumber: i + 1,
+    isCurrent: r.attemptId === attempt.id,
+  }));
+
+  // Per-attempt per-skill scores, using the SAME aggregation the report uses so
+  // the comparison matches each attempt's own report exactly.
+  const ids = attempts.map((a) => a.attemptId);
+  const turns = await db.query.interviewTurnsTable.findMany({
+    where: inArray(interviewTurnsTable.attemptId, ids),
+  });
+  const turnsByAttempt = new Map<string, InterviewTurn[]>();
+  for (const t of turns) {
+    const list = turnsByAttempt.get(t.attemptId) ?? [];
+    list.push(t);
+    turnsByAttempt.set(t.attemptId, list);
+  }
+  const scoreByAttempt = new Map<string, Map<WorkSkillId, number | null>>();
+  for (const id of ids) {
+    const agg = aggregateSkillScores(turnsByAttempt.get(id) ?? []);
+    scoreByAttempt.set(id, new Map(agg.map((s) => [s.skillId, s.score])));
+  }
+
+  const skills: SkillComparisonRow[] = WORK_SKILLS.map((skill) => ({
+    skillId: skill.id,
+    label: skill.label,
+    scores: ids.map((id) => scoreByAttempt.get(id)?.get(skill.id) ?? null),
+  }));
+
+  return { attempts, skills };
 }
 
 export interface AdminStats {
@@ -315,51 +479,150 @@ export async function getInterviewDetails(
   const found = await getInterviewForAdmin(adminId, interviewId);
   if (!found) return null;
 
-  const { interview, attempts } = found;
-
-  /**
-   * Tidy up interviews nobody is sitting in any more.
-   *
-   * In `after()` so it never delays the page: the sweep scores and writes a
-   * report for each abandoned attempt, which takes provider calls. The list
-   * this render returns may therefore still show one as running; the grid
-   * re-fetches while anything is in progress, so it corrects itself within
-   * seconds rather than needing a reload.
-   */
-  after(async () => {
-    await sweepAbandonedAttempts(
-      new Map([[interview.id, interview]]),
-      attempts,
-    );
-  });
-
+  const { interview } = found;
+  // One card + one count per candidate, not per attempt (retakes make several).
+  const attempts = collapseByCandidate(found.attempts);
   const attemptIds = attempts.map((a) => a.id);
-  const [spokenByAttempt, thumbnailByAttempt] = await Promise.all([
+  // How many attempts each candidate made — for the per-card badge and the
+  // "did a 2nd / 3rd attempt" filter. Counted over ALL attempts, before collapse.
+  const attemptCounts = new Map<string, number>();
+  const attemptsByCandidate = new Map<string, InterviewAttempt[]>();
+  for (const a of found.attempts) {
+    const k = candidateKey(a);
+    attemptCounts.set(k, (attemptCounts.get(k) ?? 0) + 1);
+    const list = attemptsByCandidate.get(k) ?? [];
+    list.push(a);
+    attemptsByCandidate.set(k, list);
+  }
+
+  // Every candidate with 2+ attempts, each attempt oldest-first by when it
+  // FINISHED (not created — retakes complete out of creation order). Powers the
+  // "Retake comparison" table so reviewers can scan how repeat scores held up.
+  const finishedAt = (a: InterviewAttempt) =>
+    (a.completedAt ?? a.createdAt).getTime();
+  const repeatComparison = [...attemptsByCandidate.values()]
+    .filter((list) => list.length >= 2)
+    .map((list) => {
+      const ordered = [...list].sort((a, b) => finishedAt(a) - finishedAt(b));
+      const latest = ordered[ordered.length - 1]!;
+      return {
+        reportAttemptId: latest.id,
+        candidateName: latest.candidateName,
+        candidateEmail: latest.candidateEmail,
+        attempts: ordered.map((a) => ({
+          overallScore: a.overallScore === null ? null : a.overallScore / 10,
+          status: a.status,
+        })),
+      };
+    })
+    .sort((a, b) => a.candidateName.localeCompare(b.candidateName));
+
+  const isDev = env.NODE_ENV === "development";
+  const [
+    spokenByAttempt,
+    thumbnailByAttempt,
+    sttMinutesByAttempt,
+    questionCharsByAttempt,
+  ] = await Promise.all([
     getSpokenLanguages(attemptIds),
     getThumbnailVideos(attemptIds),
+    // Only in development, and only because the cost badge needs it — these
+    // are extra aggregates over every clip and turn in the interview.
+    isDev ? getSttMinutes(attemptIds) : Promise.resolve(new Map()),
+    isDev ? getQuestionChars(attemptIds) : Promise.resolve(new Map()),
   ]);
 
   /**
-   * The running total for this link. Development only.
+   * The running total for this link, split by provider. Development only.
    *
-   * Summed over the attempts that were actually metered — the rest contribute
-   * nothing and are counted separately, rather than being folded in as zero
-   * and quietly dragging the total down.
+   * Summed over the attempts the meter actually covered; the rest are counted
+   * separately rather than folded in as zero, because a total over four runs
+   * out of seven is a different claim from a total over all seven.
    */
-  const metered = attempts.filter((a) => wasMetered(a));
-  const devCostTotal =
-    env.NODE_ENV === "development"
-      ? {
-          total: formatInr(
-            metered.reduce(
-              (sum, a) => sum + interviewCostInr(a, env.AI_PROVIDER),
-              0,
-            ),
-          ),
+  /** One place both the per-card badge and the header total cost from. */
+  const costOf = (a: (typeof attempts)[number]) =>
+    interviewCost(
+      {
+        sttMinutes: sttMinutesByAttempt.get(a.id) ?? 0,
+        ttsCharacters: a.ttsCharacters,
+        llmInputTokens: a.llmInputTokens,
+        llmOutputTokens: a.llmOutputTokens,
+      },
+      env.AI_PROVIDER,
+    );
+
+  /**
+   * The least this interview can have cost, for one the meter never saw.
+   *
+   * Speech can be priced exactly after the fact: the question text is stored
+   * and this branch synthesises one clip per question, so the characters are
+   * known, and the answers carry their own measured durations. Only the model
+   * tokens are unrecoverable — and they are the larger share, so this is a
+   * floor and is labelled as one rather than passed off as the total.
+   */
+  const floorOf = (a: (typeof attempts)[number]) =>
+    interviewCost(
+      {
+        sttMinutes: sttMinutesByAttempt.get(a.id) ?? 0,
+        ttsCharacters: questionCharsByAttempt.get(a.id) ?? 0,
+        llmInputTokens: 0,
+        llmOutputTokens: 0,
+      },
+      env.AI_PROVIDER,
+    );
+
+  /** Whoever is running the brain today. See `AI_PROVIDER`. */
+  const modelLabel = env.AI_PROVIDER === "sarvam" ? "Sarvam" : "OpenAI";
+
+  /** Metered where we can, floored where we cannot, and which is which. */
+  const readingFor = (a: (typeof attempts)[number]) => {
+    if (!isDev) return { cost: undefined, parts: undefined, floor: undefined };
+    const metered = wasMetered(a);
+    const c = metered ? costOf(a) : floorOf(a);
+    if (!metered && c.total === 0) {
+      return { cost: null, parts: null, floor: undefined };
+    }
+    return {
+      cost: formatInr(c.total),
+      parts: `${modelLabel} ${formatInr(c.llm)} · TTS ${formatInr(
+        c.tts,
+      )} · STT ${formatInr(c.stt)}`,
+      floor: metered ? undefined : true,
+    };
+  };
+
+  const metered = isDev ? attempts.filter((a) => wasMetered(a)) : [];
+  const devCosts = isDev
+    ? (() => {
+        const sum = attempts.reduce(
+          (acc, a) => {
+            const c = wasMetered(a) ? costOf(a) : floorOf(a);
+            return {
+              llm: acc.llm + c.llm,
+              tts: acc.tts + c.tts,
+              stt: acc.stt + c.stt,
+              total: acc.total + c.total,
+            };
+          },
+          { llm: 0, tts: 0, stt: 0, total: 0 },
+        );
+        return {
+          // Named by whichever provider is actually running the brain — the
+          // label used to say OpenAI whatever `AI_PROVIDER` was set to, which
+          // meant it read "OpenAI" while quoting Sarvam's rates.
+          modelLabel: env.AI_PROVIDER === "sarvam" ? "Sarvam" : "OpenAI",
+          openai: formatInr(sum.llm),
+          tts: formatInr(sum.tts),
+          stt: formatInr(sum.stt),
+          total: formatInr(sum.total),
           metered: metered.length,
           unmetered: attempts.length - metered.length,
-        }
-      : null;
+          // True when any part of the total came from a floor, so the header
+          // can say "at least" rather than state it as the bill.
+          hasFloor: metered.length < attempts.length,
+        };
+      })()
+    : undefined;
 
   return {
     id: interview.id,
@@ -369,6 +632,8 @@ export async function getInterviewDetails(
     publicToken: interview.publicToken,
     isOpen: interview.isOpen,
     createdAt: interview.createdAt,
+    devCosts,
+    repeatComparison,
     attempts: attempts.map((attempt) => ({
       id: attempt.id,
       candidateName: attempt.candidateName,
@@ -380,18 +645,176 @@ export async function getInterviewDetails(
       spokenLanguages: spokenByAttempt.get(attempt.id) ?? [],
       overallScore: attempt.overallScore,
       awayCount: attempt.awayCount,
-      // Development only — see `~/config/pricing`. The check is here rather
-      // than in the component so the rate card never reaches the browser.
-      // Null in production, and null when this interview ran before the
-      // counters covered it — see `wasMetered`.
-      devCost:
-        env.NODE_ENV === "development" && wasMetered(attempt)
-          ? formatInr(interviewCostInr(attempt, env.AI_PROVIDER))
-          : null,
+      attemptCount: attemptCounts.get(candidateKey(attempt)) ?? 1,
+      // Null in production, and null when the meter did not cover this
+      // interview — see `wasMetered`. A zero would be a claim that it was free.
+      devCost: readingFor(attempt).cost,
+      devCostParts: readingFor(attempt).parts,
+      devCostIsFloor: readingFor(attempt).floor,
       createdAt: attempt.createdAt,
     })),
     devCostTotal,
   };
+}
+
+/**
+ * Minutes of candidate audio per attempt, for the development cost badge.
+ *
+ * Read from recordings rather than a counter, because Sarvam bills
+ * speech-to-text per second of audio and the streaming path never makes a
+ * countable request — it holds a socket open, so there is nothing to increment.
+ *
+ * The VIDEO is the source, not the audio clip. Since realtime streaming
+ * replaced batch transcription, answer audio is no longer archived at all —
+ * recent interviews have zero `answer` rows — while the webcam recording still
+ * runs for every answer on every path and carries a measured duration. It also
+ * happens to be the better match: the socket streams for as long as the
+ * candidate has the microphone, which is the length of the recording.
+ *
+ * The `answer` clips remain as a fallback so interviews from the batch era
+ * still price correctly. Whichever source is used, only one is counted, so a
+ * turn that produced both cannot be billed twice.
+ */
+async function getSttMinutes(
+  attemptIds: string[],
+): Promise<Map<string, number>> {
+  const byAttempt = new Map<string, number>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewAudioTable.attemptId,
+      kind: interviewAudioTable.kind,
+      ms: sql<number>`coalesce(sum(${interviewAudioTable.durationMs}), 0)::int`,
+    })
+    .from(interviewAudioTable)
+    .where(
+      and(
+        inArray(interviewAudioTable.attemptId, attemptIds),
+        inArray(interviewAudioTable.kind, ["answer_video", "answer"]),
+      ),
+    )
+    .groupBy(interviewAudioTable.attemptId, interviewAudioTable.kind);
+
+  // Video first; audio only where an attempt has no video at all.
+  const video = new Map<string, number>();
+  const audio = new Map<string, number>();
+  for (const row of rows) {
+    (row.kind === "answer_video" ? video : audio).set(row.attemptId, row.ms);
+  }
+  for (const id of attemptIds) {
+    const ms = video.get(id) ?? audio.get(id) ?? 0;
+    if (ms > 0) byAttempt.set(id, ms / 60000);
+  }
+  return byAttempt;
+}
+
+/**
+ * Characters of question text per attempt, for costing interviews the meter
+ * never saw.
+ *
+ * Sound only because this branch synthesises exactly one clip per question —
+ * verified against stored clips. On older data, where fixed lines were voiced
+ * per attempt, this understates what was actually spoken, which is why every
+ * figure derived from it is presented as a floor.
+ */
+async function getQuestionChars(
+  attemptIds: string[],
+): Promise<Map<string, number>> {
+  const byAttempt = new Map<string, number>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewTurnsTable.attemptId,
+      chars: sql<number>`coalesce(sum(length(${interviewTurnsTable.question})), 0)::int`,
+    })
+    .from(interviewTurnsTable)
+    .where(inArray(interviewTurnsTable.attemptId, attemptIds))
+    .groupBy(interviewTurnsTable.attemptId);
+
+  for (const row of rows) byAttempt.set(row.attemptId, row.chars);
+  return byAttempt;
+}
+
+/**
+ * Minutes of candidate audio per attempt, for the development cost badge.
+ *
+ * Read from recordings rather than a counter, because Sarvam bills
+ * speech-to-text per second of audio and the streaming path never makes a
+ * countable request — it holds a socket open, so there is nothing to increment.
+ *
+ * The VIDEO is the source, not the audio clip. Since realtime streaming
+ * replaced batch transcription, answer audio is no longer archived at all —
+ * recent interviews have zero `answer` rows — while the webcam recording still
+ * runs for every answer on every path and carries a measured duration. It also
+ * happens to be the better match: the socket streams for as long as the
+ * candidate has the microphone, which is the length of the recording.
+ *
+ * The `answer` clips remain as a fallback so interviews from the batch era
+ * still price correctly. Whichever source is used, only one is counted, so a
+ * turn that produced both cannot be billed twice.
+ */
+async function getSttMinutes(
+  attemptIds: string[],
+): Promise<Map<string, number>> {
+  const byAttempt = new Map<string, number>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewAudioTable.attemptId,
+      kind: interviewAudioTable.kind,
+      ms: sql<number>`coalesce(sum(${interviewAudioTable.durationMs}), 0)::int`,
+    })
+    .from(interviewAudioTable)
+    .where(
+      and(
+        inArray(interviewAudioTable.attemptId, attemptIds),
+        inArray(interviewAudioTable.kind, ["answer_video", "answer"]),
+      ),
+    )
+    .groupBy(interviewAudioTable.attemptId, interviewAudioTable.kind);
+
+  // Video first; audio only where an attempt has no video at all.
+  const video = new Map<string, number>();
+  const audio = new Map<string, number>();
+  for (const row of rows) {
+    (row.kind === "answer_video" ? video : audio).set(row.attemptId, row.ms);
+  }
+  for (const id of attemptIds) {
+    const ms = video.get(id) ?? audio.get(id) ?? 0;
+    if (ms > 0) byAttempt.set(id, ms / 60000);
+  }
+  return byAttempt;
+}
+
+/**
+ * Characters of question text per attempt, for costing interviews the meter
+ * never saw.
+ *
+ * Sound only because this branch synthesises exactly one clip per question —
+ * verified against stored clips. On older data, where fixed lines were voiced
+ * per attempt, this understates what was actually spoken, which is why every
+ * figure derived from it is presented as a floor.
+ */
+async function getQuestionChars(
+  attemptIds: string[],
+): Promise<Map<string, number>> {
+  const byAttempt = new Map<string, number>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewTurnsTable.attemptId,
+      chars: sql<number>`coalesce(sum(length(${interviewTurnsTable.question})), 0)::int`,
+    })
+    .from(interviewTurnsTable)
+    .where(inArray(interviewTurnsTable.attemptId, attemptIds))
+    .groupBy(interviewTurnsTable.attemptId);
+
+  for (const row of rows) byAttempt.set(row.attemptId, row.chars);
+  return byAttempt;
 }
 
 /** The first recorded answer clip per attempt, for the card thumbnail. */
