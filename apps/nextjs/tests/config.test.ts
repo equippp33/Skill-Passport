@@ -8,25 +8,19 @@ import {
   TRANSLATED_LANGUAGE_KEYS,
   resolveLanguage,
 } from "~/config/languages";
-import type { InterviewLanguageKey } from "~/config/languages";
 import {
   PROBE_SPOKEN_LANGUAGE_CODE,
-  PROBE_QUESTION_BY_LANGUAGE,
-  wrongLanguageNoticeFor,
   PROBE_SPOKEN_TEXT,
-  openerFor,
 } from "~/config/greeting";
 import { MESSAGES, t } from "~/config/messages";
-import {
-  isRepeatRequest,
-  phraseIntent,
-  yesNoIntent,
-} from "~/config/repeat-requests";
+import { isRepeatRequest } from "~/config/repeat-requests";
 import { en } from "~/config/messages/en";
 import {
   WORK_SKILLS,
   WORK_SKILL_COUNT,
   WORK_SKILL_IDS,
+  isFollowUpTurn,
+  skillForTurn,
 } from "~/config/work-skills";
 import { DEFAULT_QUESTION_COUNT } from "~/server/interview/validation";
 
@@ -137,39 +131,8 @@ describe("language probe opener", () => {
     expect(PROBE_SPOKEN_TEXT.toLowerCase()).not.toMatch(/language/);
   });
 
-  // The opener used to ask for their name and their work. Both are now
-  // collected before the interview starts — the details step and the
-  // background box — so asking again made the first thing the candidate heard
-  // a repeat of the form they had just filled in. It is a warm-up now: one
-  // easy, open question that gets them talking.
-  it("is one short, easy, open question", () => {
-    const spoken = openerFor("english", "Priya");
-    expect(spoken.toLowerCase()).not.toMatch(/your name/);
-    expect(spoken.split("?")).toHaveLength(2);
-    expect(spoken.split(/\s+/).length).toBeLessThan(35);
-  });
-
-  // The name goes in the greeting, where it falls naturally in all eleven
-  // languages — and the slot must never survive into something spoken aloud.
-  it("greets every candidate by name, in every language", () => {
-    for (const key of Object.keys(
-      PROBE_QUESTION_BY_LANGUAGE,
-    ) as InterviewLanguageKey[]) {
-      expect(PROBE_QUESTION_BY_LANGUAGE[key]).toContain("{name}");
-      expect(openerFor(key, "Priya")).toContain("Priya");
-      expect(openerFor(key, "Priya")).not.toContain("{name}");
-    }
-  });
-
-  // An attempt created without a usable name still has to read as speech.
-  it("reads naturally when there is no name", () => {
-    for (const key of Object.keys(
-      PROBE_QUESTION_BY_LANGUAGE,
-    ) as InterviewLanguageKey[]) {
-      const spoken = openerFor(key, null);
-      expect(spoken).not.toContain("{name}");
-      expect(spoken).not.toMatch(/\s,/);
-    }
+  it("still asks for a spoken introduction", () => {
+    expect(PROBE_SPOKEN_TEXT.toLowerCase()).toMatch(/name/);
   });
 });
 
@@ -212,42 +175,6 @@ describe("repeat requests", () => {
       expect(isRepeatRequest(text)).toBe(false);
     },
   );
-});
-
-/**
- * The three asks route to three different responses — the same clip again, the
- * same clip slower, or a simpler wording — so telling them apart is the whole
- * point of splitting the list.
- */
-describe("utterance intent", () => {
-  it.each([
-    ["Repeat", "repeat"],
-    ["Can you say that again?", "repeat"],
-    ["फिर से बोलिए", "repeat"],
-    ["Please speak slowly", "slower"],
-    ["थोड़ा धीरे बोलिए", "slower"],
-    ["I did not understand", "not_understood"],
-    ["samajh nahi aaya", "not_understood"],
-    ["What do you mean?", "not_understood"],
-  ] as const)("reads %s as %s", (text, intent) => {
-    expect(phraseIntent(text)).toBe(intent);
-  });
-
-  /**
-   * Order matters, and this is the case that proves it. "Say it again,
-   * slowly" contains the repeat needle too; checking repeat first would
-   * swallow it and the candidate would get the same speed back.
-   */
-  it("prefers the slow request when the phrasing also says 'again'", () => {
-    expect(phraseIntent("फिर से धीरे बोलिए")).toBe("slower");
-  });
-
-  it.each([
-    "I always arrive on time",
-    "My manager asked me to repeat the order back to the customer every time.",
-  ])("reads a real answer as an answer: %s", (text) => {
-    expect(phraseIntent(text)).toBeNull();
-  });
 });
 
 describe("message dictionaries", () => {
@@ -301,6 +228,39 @@ describe("work skill framework", () => {
     }
   });
 
+  it("covers all ten skills across a 10-question interview", () => {
+    const covered = Array.from(
+      { length: 10 },
+      (_, i) => skillForTurn(i + 1, 10).id,
+    );
+    expect(new Set(covered).size).toBe(10);
+    expect(covered[0]).toBe("reliability");
+    expect(covered[9]).toBe("customer_orientation");
+  });
+
+  it("pairs consecutive turns per skill in a 20-question interview", () => {
+    expect(skillForTurn(1, 20).id).toBe(skillForTurn(2, 20).id);
+    expect(skillForTurn(3, 20).id).not.toBe(skillForTurn(2, 20).id);
+
+    const covered = Array.from(
+      { length: 20 },
+      (_, i) => skillForTurn(i + 1, 20).id,
+    );
+    expect(new Set(covered).size).toBe(10);
+  });
+
+  it("marks the second question on a skill as a follow-up", () => {
+    expect(isFollowUpTurn(1, 20)).toBe(false);
+    expect(isFollowUpTurn(2, 20)).toBe(true);
+    expect(isFollowUpTurn(3, 20)).toBe(false);
+    // With one question per skill nothing is a follow-up.
+    expect(isFollowUpTurn(2, 10)).toBe(false);
+  });
+
+  it("never runs past the last skill", () => {
+    expect(skillForTurn(99, 10).id).toBe("customer_orientation");
+  });
+
   it("defaults to exactly one question per skill", () => {
     // No setup step, so the length is fixed by the framework itself.
     expect(DEFAULT_QUESTION_COUNT).toBe(WORK_SKILL_COUNT);
@@ -330,121 +290,5 @@ describe("UI and interview languages are independent", () => {
     expect(m.skills.reliability).toBe("Reliability");
     // ...while a session started in Marathi still drives Sarvam.
     expect(sessionLanguage("marathi").code).toBe("mr-IN");
-  });
-});
-
-describe("replies to a yes-or-no question", () => {
-  it.each([
-    ["no", "no"],
-    ["No, that's all", "no"],
-    ["नहीं", "no"],
-    ["बस इतना ही", "no"],
-    ["இல்லை", "no"],
-    ["లేదు", "no"],
-  ])("reads %j as a refusal", (text, expected) => {
-    expect(yesNoIntent(text)).toBe(expected);
-  });
-
-  it.each([
-    ["yes", "yes"],
-    ["हाँ", "yes"],
-    ["ஆமாம்", "yes"],
-    ["అవును", "yes"],
-  ])("reads %j as an acceptance", (text, expected) => {
-    expect(yesNoIntent(text)).toBe(expected);
-  });
-
-  /**
-   * The common case, and the one worth protecting: the candidate ignores the
-   * question and simply keeps answering. That continuation is the thing we
-   * were asking for, so it must not be mistaken for a yes or a no — plenty of
-   * real answers contain "no" somewhere in the middle.
-   */
-  it.each([
-    "I checked the order twice so there were no mistakes",
-    "We had to close the shop, so I stayed back and finished it",
-    "मैंने दोबारा जाँच की ताकि कोई गलती न हो",
-  ])("treats a real answer as neither: %j", (text) => {
-    expect(yesNoIntent(text)).toBeNull();
-  });
-});
-
-describe("answering in a language that was not chosen", () => {
-  // Said in the language being SPOKEN, naming the one that was picked. The
-  // other way round is the failure the candidate is already having.
-  it("speaks to the candidate in the language they are using", () => {
-    const said = wrongLanguageNoticeFor("telugu", "hindi");
-    expect(said).toContain(INTERVIEW_LANGUAGES.hindi.displayName);
-    expect(said).not.toContain("{language}");
-    // Telugu script, because that is what they are speaking.
-    expect(said).toMatch(/[ఀ-౿]/);
-  });
-
-  it("fills the slot in every language", () => {
-    for (const spoken of INTERVIEW_LANGUAGE_KEYS) {
-      const said = wrongLanguageNoticeFor(spoken, "marathi");
-      expect(said).not.toContain("{language}");
-      expect(said).toContain(INTERVIEW_LANGUAGES.marathi.displayName);
-    }
-  });
-});
-
-describe("talking to the interviewer instead of answering", () => {
-  it.each([
-    "what is your name",
-    "who are you",
-    "are you a robot",
-    "what should I say",
-    "just tell me",
-    "आपका नाम क्या है",
-    "मुझे क्या बोलूं",
-  ])("reads %j as off topic", (text) => {
-    expect(phraseIntent(text)).toBe("off_topic");
-  });
-
-  /**
-   * Order is load-bearing. "What do you mean?" is a genuine doubt and must
-   * reach the simpler wording; matching the off-topic list first would send
-   * it to the redirect instead.
-   */
-  it("does not swallow a genuine doubt", () => {
-    expect(phraseIntent("what do you mean")).toBe("not_understood");
-    expect(phraseIntent("samajh nahi aaya")).toBe("not_understood");
-  });
-
-  // A real answer that happens to mention a name must never be redirected.
-  it.each([
-    "My manager asked for my name and I gave it to him",
-    "I told the customer what I should say to the supervisor",
-  ])("leaves a real answer alone: %j", (text) => {
-    expect(phraseIntent(text)).toBeNull();
-  });
-});
-
-describe("a longer request in reply to a prompt", () => {
-  const LONG = "sorry sir please say the question again i did not understand";
-
-  // Twelve words. As an answer it is over the cap and stays an answer; as a
-  // reply to "would you like to add anything?" there is no answer to protect,
-  // and treating it as one ended the question and moved the interview on.
-  it("is missed as an answer but caught as a reply", () => {
-    expect(phraseIntent(LONG)).toBeNull();
-    expect(phraseIntent(LONG, true)).toBe("not_understood");
-  });
-});
-
-describe("yes or no, matched on whole words", () => {
-  // "no" inside "I do not know" used to read as a refusal, which threw the
-  // candidate's actual words away and advanced the interview.
-  it.each(["i do not know", "i really do not know sir"])(
-    "does not read %j as a refusal",
-    (text) => {
-      expect(yesNoIntent(text)).not.toBe("no");
-    },
-  );
-
-  it("still reads a plain refusal", () => {
-    expect(yesNoIntent("no")).toBe("no");
-    expect(yesNoIntent("nothing else")).toBe("no");
   });
 });

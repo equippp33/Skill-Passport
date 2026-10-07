@@ -9,7 +9,6 @@ import { getMessages } from "~/config/messages";
 import { uiLanguage } from "~/server/language";
 import { uuidSchema } from "~/server/interview/validation";
 import { formatDate } from "~/lib/utils";
-import { env } from "~/env";
 import { OpenToggle } from "../../open-toggle";
 import { ShareLink } from "../../share-link";
 import { CandidateGrid } from "./candidate-grid";
@@ -77,19 +76,43 @@ export default async function InterviewDetailPage({
              * four runs out of seven reads as the whole bill unless it says
              * otherwise, and the unmetered ones are interviews that predate
              * the counters, not free ones.
+             *
+             * OpenAI and Sarvam get a line each rather than one "model" line,
+             * because the fallback moves work between them and their rates are
+             * about six times apart.
+             *
+             * A "~" means part of the figure is modelled: Sarvam recorded no
+             * tokens before 6 October 2026, so for older interviews its share
+             * is reconstructed from how many questions each one got through.
+             * The alternative was ₹0.00, which reads as "Sarvam was free"
+             * rather than "nobody counted".
+             *
+             * The average is per COMPLETED interview, which is why it is not
+             * the total divided by the attempt count.
              */}
             {details.devCosts ? (
               <div className="mt-3 inline-flex flex-wrap items-stretch gap-px overflow-hidden rounded-lg border border-border-subtle bg-border-subtle text-sm">
-                {[
-                  [details.devCosts.modelLabel, details.devCosts.openai],
-                  ["TTS", details.devCosts.tts],
-                  ["STT", details.devCosts.stt],
-                ].map(([label, value]) => (
+                {(
+                  [
+                    ["OpenAI", details.devCosts.openai, false],
+                    ["Sarvam", details.devCosts.sarvam, details.devCosts.hasEstimate],
+                    ["TTS", details.devCosts.tts, false],
+                    ["STT", details.devCosts.stt, false],
+                    [
+                      "Avg / completed",
+                      details.devCosts.average ?? "₹—",
+                      details.devCosts.hasEstimate,
+                    ],
+                  ] as [string, string, boolean][]
+                ).map(([label, value, approx]) => (
                   <div key={label} className="bg-surface px-3 py-1.5">
                     <div className="text-[11px] tracking-wide text-content-muted uppercase">
                       {label}
                     </div>
-                    <div className="font-semibold tabular-nums">{value}</div>
+                    <div className="font-semibold tabular-nums">
+                      {approx ? "~" : ""}
+                      {value}
+                    </div>
                   </div>
                 ))}
                 <div className="bg-accent-soft px-3 py-1.5">
@@ -99,12 +122,12 @@ export default async function InterviewDetailPage({
                   <div
                     className="font-semibold text-accent tabular-nums"
                     title={
-                      details.devCosts.hasFloor
-                        ? "A floor: some interviews predate the meter, so their model usage is missing and the real total is higher"
+                      details.devCosts.hasEstimate
+                        ? "Part modelled: Sarvam recorded no tokens before 6 Oct 2026, so its share is reconstructed from interview length — close in aggregate, loose on any one run"
                         : "Estimated from provider list prices — see config/pricing.ts"
                     }
                   >
-                    {details.devCosts.hasFloor ? "≥" : ""}
+                    {details.devCosts.hasEstimate ? "~" : ""}
                     {details.devCosts.total}
                   </div>
                 </div>
@@ -112,10 +135,16 @@ export default async function InterviewDetailPage({
             ) : null}
             {details.devCosts ? (
               <p className="mt-1 text-xs text-content-muted">
-                {details.devCosts.metered} interview
-                {details.devCosts.metered === 1 ? "" : "s"} fully metered
-                {details.devCosts.unmetered > 0
-                  ? ` · ${details.devCosts.unmetered} priced from stored questions and answers only, so the model share is missing and the real total is higher`
+                Totals cover every attempt, retakes included
+                {details.devCosts.averageBasis > 0
+                  ? `; the average is over the ${details.devCosts.averageBasis} completed`
+                  : ""}
+                . {details.devCosts.measured} measured outright
+                {details.devCosts.estimatedCount > 0
+                  ? ` · ${details.devCosts.estimatedCount} with Sarvam's share reconstructed from interview length, since nothing recorded its tokens before 6 Oct`
+                  : ""}
+                {details.devCosts.hasFloor
+                  ? " · some speech priced from stored question text, so that part is a floor"
                   : ""}
                 . Realtime STT is billed per second of audio, so the WebSocket
                 itself costs nothing beyond the STT line.

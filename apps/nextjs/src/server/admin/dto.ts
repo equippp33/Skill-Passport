@@ -34,8 +34,13 @@ export interface AttemptSummary {
   /** How many attempts this candidate made at this interview (1 = no retake). */
   attemptCount: number;
   /**
-   * What this interview cost to run — development only, null in production and
-   * null for any interview the meter did not cover.
+   * What this CANDIDATE cost — every attempt they made here, added together.
+   * Development only, null in production and null when the meter covered none
+   * of them.
+   *
+   * The card is one per candidate (`collapseByCandidate`), so a total over the
+   * single attempt it happens to show would leave out the retakes the "N
+   * attempts" marker right beside it is announcing.
    *
    * Sent ready-formatted ("₹12.30") rather than as counters or a number, so
    * neither the rate card nor the arithmetic reaches the browser bundle.
@@ -48,15 +53,16 @@ export interface AttemptSummary {
   /** The same figure split by provider, for the card's tooltip. */
   devCostParts?: string | null;
   /**
-   * True when `devCost` is a FLOOR rather than the whole bill.
+   * True when part of `devCost` is MODELLED rather than measured.
    *
-   * An interview that ran before the meter existed still has its question text
-   * and its recorded answers, so speech can be priced exactly — but nothing
-   * recorded the model tokens, which are the larger share. Showing the speech
-   * total alone as if it were the cost would understate it roughly threefold,
-   * so the card marks it "≥" instead.
+   * Sarvam recorded no tokens before 6 October 2026, and tokens leave no trace
+   * once the reply is parsed, so those interviews can never be costed from
+   * stored data. Their Sarvam share is reconstructed from how many questions
+   * the interview actually got through — accurate in aggregate, loose on any
+   * single run — and the card marks it "~" so nobody reads a modelled figure
+   * as a measured one.
    */
-  devCostIsFloor?: boolean;
+  devCostIsEstimated?: boolean;
   createdAt: Date;
 }
 
@@ -90,15 +96,38 @@ export interface InterviewDetails {
    * cost IS the STT line; a relay connection of its own costs nothing.
    */
   devCosts?: {
-    /** "Sarvam" or "OpenAI" — whichever `AI_PROVIDER` selects. */
-    modelLabel: string;
+    /**
+     * The two model bills, separately.
+     *
+     * Not one "model" line chosen by `AI_PROVIDER`: a token costs about six
+     * times more at OpenAI than at Sarvam, and the circuit breaker moves work
+     * between them mid-interview, so a single line could only be right by
+     * luck. Either may be ₹0.00, which is a real answer — that provider did
+     * no work under this link.
+     */
     openai: string;
+    sarvam: string;
     tts: string;
     stt: string;
     total: string;
-    metered: number;
-    unmetered: number;
-    /** Some of the total is a floor — see `devCostIsFloor`. */
+    /**
+     * Per COMPLETED interview — null when none have completed.
+     *
+     * Deliberately not `total / attempts`: two in three attempts are abandoned
+     * part-way and cost a rupee or two, so that figure answers "what does an
+     * attempt cost" when the question being asked is "what does an interview
+     * cost".
+     */
+    average: string | null;
+    /** How many completed interviews `average` is over. */
+    averageBasis: number;
+    /** Attempts whose model usage was recorded outright, nothing modelled. */
+    measured: number;
+    /** Attempts whose Sarvam share had to be reconstructed. */
+    estimatedCount: number;
+    /** Some of the total is modelled — the figures carry a "~". */
+    hasEstimate: boolean;
+    /** Some of the SPEECH came from stored question text, so it is low. */
     hasFloor: boolean;
   };
 }

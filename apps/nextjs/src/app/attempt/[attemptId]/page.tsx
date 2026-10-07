@@ -12,10 +12,6 @@ import { getAttemptForCandidate } from "~/server/attempt/access";
 import { getTurns } from "~/server/attempt/service";
 import { uiMessages } from "~/server/language";
 import { isOpenAIConfigured } from "~/server/services/openai";
-import {
-  beginActivitySession,
-  recentActivity,
-} from "~/server/services/dev-activity";
 import { uuidSchema } from "~/server/interview/validation";
 import { env } from "~/env";
 import { ActiveInterview } from "./active-interview";
@@ -62,18 +58,6 @@ export default async function AttemptPage({
           aiReady={isOpenAIConfigured()}
           m={m}
           languageName="your own language"
-          languages={SELECTABLE_INTERVIEW_LANGUAGES.map((l) => ({
-            key: l.key,
-            displayName: l.displayName,
-            promptName: l.promptName,
-            symbol: l.symbol,
-          }))}
-          // English, not INTERVIEW_LANGUAGE: that env var is the default for
-          // an instance, and pre-selecting Marathi from it meant a candidate
-          // who did not read the grid carefully started an interview in a
-          // language they had not chosen. English is the safe default to
-          // deliberately change.
-          defaultLanguage="english"
           interviewTitle={interview.title}
           interviewDescription={interview.description}
         />
@@ -115,9 +99,7 @@ export default async function AttemptPage({
   );
 
   return (
-    // Fills the space the header leaves, so the interview sits centred in the
-    // viewport instead of running past the fold.
-    <main className="flex min-h-0 w-full flex-1 flex-col">
+    <main className="w-full">
       <HeaderProfile name={attempt.candidateName} />
       <PreventBackNavigation />
       <ActiveInterview

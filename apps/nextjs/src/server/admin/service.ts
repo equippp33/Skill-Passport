@@ -5,10 +5,7 @@ import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import type { User } from "lucia";
 
-import { after } from "next/server";
-
 import { db } from "~/server/db";
-import { sweepAbandonedAttempts } from "~/server/attempt/service";
 import {
   interviewAttemptsTable,
   interviewAudioTable,
@@ -25,7 +22,14 @@ import { aggregateSkillScores } from "~/lib/scoring";
 import { WORK_SKILLS } from "~/config/work-skills";
 import type { WorkSkillId } from "~/config/work-skills";
 import type { InterviewDetails } from "./dto";
-import { formatInr, interviewCost, wasMetered } from "~/config/pricing";
+import type { CostBreakdown } from "~/config/pricing";
+import {
+  estimateSarvamUsage,
+  formatInr,
+  hasModelUsage,
+  interviewCost,
+  wasMetered,
+} from "~/config/pricing";
 import { env } from "~/env";
 import { labelForCode } from "~/lib/spoken-languages";
 import type { SpokenLanguage } from "~/lib/spoken-languages";
@@ -407,6 +411,109 @@ export async function getCandidateAttempts(
   return { attempts, skills };
 }
 
+/** One attempt's line in the report page's cost strip. */
+export interface AttemptCostRow {
+  attemptId: string;
+  /** 1-based, oldest first — the same numbering the tabs use. */
+  attemptNumber: number;
+  /** Formatted total, or null when nothing was recorded for that attempt. */
+  cost: string | null;
+  /** True when Sarvam's share is modelled rather than measured. */
+  estimated: boolean;
+  isCurrent: boolean;
+}
+
+/**
+ * What this candidate cost at this interview — development only.
+ *
+ * Unlike `getCandidateAttempts` this does NOT bail at a single attempt: one
+ * attempt still has a cost, and the report page is the only place it can be
+ * read per attempt rather than per candidate. With retakes it lists each one
+ * and adds them up, which is the figure the candidate's card in the grid shows.
+ */
+export interface AttemptCosts {
+  /** The open attempt, split by provider. */
+  parts: string;
+  /** This attempt alone. */
+  current: string | null;
+  currentEstimated: boolean;
+  /** Every attempt this candidate made here, oldest first. */
+  attempts: AttemptCostRow[];
+  /** All of them together; null when nothing was recorded for any. */
+  total: string | null;
+  totalEstimated: boolean;
+}
+
+export async function getAttemptCosts(
+  adminId: string,
+  attempt: InterviewAttempt,
+): Promise<AttemptCosts | undefined> {
+  if (env.NODE_ENV !== "development") return undefined;
+
+  const studentId = attempt.externalStudentId?.trim() || null;
+  const email = attempt.candidateEmail?.trim() || null;
+  // Same identity rule as the tabs, so "Attempt 2" means the same run in both.
+  // A candidate with neither key cannot be grouped, so they are their own set
+  // of one rather than being silently pooled with every other anonymous run.
+  const identity = studentId
+    ? eq(interviewAttemptsTable.externalStudentId, studentId)
+    : email
+      ? eq(interviewAttemptsTable.candidateEmail, email)
+      : eq(interviewAttemptsTable.id, attempt.id);
+
+  const rows = await db
+    .select({
+      id: interviewAttemptsTable.id,
+      ttsCharacters: interviewAttemptsTable.ttsCharacters,
+      llmRequests: interviewAttemptsTable.llmRequests,
+      llmInputTokens: interviewAttemptsTable.llmInputTokens,
+      llmOutputTokens: interviewAttemptsTable.llmOutputTokens,
+      sarvamInputTokens: interviewAttemptsTable.sarvamInputTokens,
+      sarvamOutputTokens: interviewAttemptsTable.sarvamOutputTokens,
+    })
+    .from(interviewAttemptsTable)
+    .innerJoin(
+      interviewsTable,
+      eq(interviewAttemptsTable.interviewId, interviewsTable.id),
+    )
+    .where(
+      and(
+        eq(interviewAttemptsTable.interviewId, attempt.interviewId),
+        identity,
+        eq(interviewsTable.createdByUserId, adminId),
+      ),
+    )
+    .orderBy(
+      asc(
+        sql`coalesce(${interviewAttemptsTable.completedAt}, ${interviewAttemptsTable.createdAt})`,
+      ),
+    );
+
+  if (rows.length === 0) return undefined;
+
+  const costs = await readCosts(rows);
+  const sum = sumReadings(rows.map((r) => costs.get(r.id)));
+  const mine = costs.get(attempt.id);
+
+  return {
+    parts: describeCost(mine?.breakdown ?? sum.breakdown),
+    current: mine?.known ? formatInr(mine.breakdown.total) : null,
+    currentEstimated: mine?.estimated ?? false,
+    attempts: rows.map((r, i) => {
+      const c = costs.get(r.id);
+      return {
+        attemptId: r.id,
+        attemptNumber: i + 1,
+        cost: c?.known ? formatInr(c.breakdown.total) : null,
+        estimated: c?.estimated ?? false,
+        isCurrent: r.id === attempt.id,
+      };
+    }),
+    total: sum.known ? formatInr(sum.breakdown.total) : null,
+    totalEstimated: sum.estimated,
+  };
+}
+
 export interface AdminStats {
   interviews: number;
   openInterviews: number;
@@ -472,6 +579,151 @@ export async function getAdminStats(adminId: string): Promise<AdminStats> {
  * carries what the dialog renders and nothing else — no access tokens, no
  * transcripts.
  */
+/** The usage counters a cost reading needs, as they sit on an attempt row. */
+interface UsageRow {
+  id: string;
+  ttsCharacters: number;
+  llmRequests: number;
+  llmInputTokens: number;
+  llmOutputTokens: number;
+  sarvamInputTokens: number;
+  sarvamOutputTokens: number;
+}
+
+/** One attempt's bill, in both the formatted and the summable form. */
+export interface CostReading {
+  breakdown: CostBreakdown;
+  /** False when nothing at all was recorded, so there is no figure to show. */
+  known: boolean;
+  /** True when the Sarvam share is modelled rather than measured. */
+  estimated: boolean;
+  /** True when the speech share came from stored question text, so it is low. */
+  speechFloor: boolean;
+}
+
+/**
+ * What each of these attempts cost, development only.
+ *
+ * Two aggregates over every clip and turn involved, so callers hand it the
+ * whole set at once rather than asking per attempt.
+ *
+ * Speech and the model are known independently, and an attempt can have one
+ * without the other, so they are decided separately:
+ *
+ *   - speech recorded      → priced from the counter, exactly;
+ *   - speech not recorded  → priced from the stored question text, which this
+ *                            branch synthesises one clip per question of, so
+ *                            the characters are recoverable rather than lost;
+ *   - model recorded       → priced per provider at that provider's rate;
+ *   - model not recorded   → nothing to recover — tokens leave no trace — so
+ *                            the result is marked a FLOOR rather than passed
+ *                            off as the bill. That covers every Sarvam-brained
+ *                            interview before the Sarvam client reported its
+ *                            usage, which is most of them.
+ */
+async function readCosts(rows: UsageRow[]): Promise<Map<string, CostReading>> {
+  const out = new Map<string, CostReading>();
+  if (rows.length === 0) return out;
+
+  const ids = rows.map((r) => r.id);
+  const [sttMinutes, questionChars, turnCounts] = await Promise.all([
+    getSttMinutes(ids),
+    getQuestionChars(ids),
+    getTurnCounts(ids),
+  ]);
+
+  for (const r of rows) {
+    const speech = wasMetered(r);
+    const turns = turnCounts.get(r.id) ?? 0;
+
+    // Sarvam recorded nothing before 6 October 2026, so for everything older
+    // its share is modelled from how long the interview actually was. The
+    // alternative is ₹0.00, which is not "unknown" to anybody reading it —
+    // it is a claim that the interviewer cost nothing to run.
+    const measured = r.sarvamInputTokens > 0 || r.sarvamOutputTokens > 0;
+    const sarvam = measured
+      ? {
+          sarvamInputTokens: r.sarvamInputTokens,
+          sarvamOutputTokens: r.sarvamOutputTokens,
+        }
+      : estimateSarvamUsage(turns, r.llmRequests);
+
+    const breakdown = interviewCost({
+      sttMinutes: sttMinutes.get(r.id) ?? 0,
+      ttsCharacters: speech ? r.ttsCharacters : (questionChars.get(r.id) ?? 0),
+      openaiInputTokens: r.llmInputTokens,
+      openaiOutputTokens: r.llmOutputTokens,
+      ...sarvam,
+    });
+
+    out.set(r.id, {
+      breakdown,
+      known: hasModelUsage(r) || breakdown.total > 0,
+      estimated: !measured && sarvam.sarvamInputTokens > 0,
+      speechFloor: !speech && (questionChars.get(r.id) ?? 0) > 0,
+    });
+  }
+  return out;
+}
+
+/** Several attempts added up — a candidate's retakes, or a whole link. */
+function sumReadings(readings: (CostReading | undefined)[]): CostReading {
+  const present = readings.filter((r): r is CostReading => r !== undefined);
+  const breakdown = present.reduce<CostBreakdown>(
+    (acc, r) => ({
+      stt: acc.stt + r.breakdown.stt,
+      tts: acc.tts + r.breakdown.tts,
+      openai: acc.openai + r.breakdown.openai,
+      sarvam: acc.sarvam + r.breakdown.sarvam,
+      llm: acc.llm + r.breakdown.llm,
+      total: acc.total + r.breakdown.total,
+    }),
+    { stt: 0, tts: 0, openai: 0, sarvam: 0, llm: 0, total: 0 },
+  );
+  return {
+    breakdown,
+    known: present.some((r) => r.known),
+    // One modelled run makes the whole sum partly modelled, and one
+    // reconstructed speech bill makes it partly a floor. Both travel upward so
+    // a total never reads firmer than its softest component.
+    estimated: present.some((r) => r.estimated),
+    speechFloor: present.some((r) => r.speechFloor),
+  };
+}
+
+/**
+ * How many questions each attempt actually got through.
+ *
+ * The length of the interview is what the Sarvam estimate is keyed on: an
+ * interview abandoned at question two did not cost what one that ran to
+ * eleven did, and a flat per-interview average would charge them the same.
+ */
+async function getTurnCounts(
+  attemptIds: string[],
+): Promise<Map<string, number>> {
+  const byAttempt = new Map<string, number>();
+  if (attemptIds.length === 0) return byAttempt;
+
+  const rows = await db
+    .select({
+      attemptId: interviewTurnsTable.attemptId,
+      turns: sql<number>`count(*)::int`,
+    })
+    .from(interviewTurnsTable)
+    .where(inArray(interviewTurnsTable.attemptId, attemptIds))
+    .groupBy(interviewTurnsTable.attemptId);
+
+  for (const row of rows) byAttempt.set(row.attemptId, row.turns);
+  return byAttempt;
+}
+
+/** The per-provider split, for a badge tooltip. */
+function describeCost(c: CostBreakdown): string {
+  return `OpenAI ${formatInr(c.openai)} · Sarvam ${formatInr(
+    c.sarvam,
+  )} · TTS ${formatInr(c.tts)} · STT ${formatInr(c.stt)}`;
+}
+
 export async function getInterviewDetails(
   adminId: string,
   interviewId: string,
@@ -518,108 +770,83 @@ export async function getInterviewDetails(
     .sort((a, b) => a.candidateName.localeCompare(b.candidateName));
 
   const isDev = env.NODE_ENV === "development";
-  const [
-    spokenByAttempt,
-    thumbnailByAttempt,
-    sttMinutesByAttempt,
-    questionCharsByAttempt,
-  ] = await Promise.all([
-    getSpokenLanguages(attemptIds),
-    getThumbnailVideos(attemptIds),
-    // Only in development, and only because the cost badge needs it — these
-    // are extra aggregates over every clip and turn in the interview.
-    isDev ? getSttMinutes(attemptIds) : Promise.resolve(new Map()),
-    isDev ? getQuestionChars(attemptIds) : Promise.resolve(new Map()),
-  ]);
+  const [spokenByAttempt, thumbnailByAttempt, costByAttempt] =
+    await Promise.all([
+      getSpokenLanguages(attemptIds),
+      getThumbnailVideos(attemptIds),
+      // Costed over EVERY attempt, not the one card-worthy attempt per
+      // candidate. Somebody who took the interview three times was charged
+      // three times, and a total over only their best run is a bill nobody was
+      // sent. Development only — these are extra aggregates over every clip
+      // and turn under this link.
+      isDev
+        ? readCosts(found.attempts)
+        : Promise.resolve(new Map<string, CostReading>()),
+    ]);
 
   /**
-   * The running total for this link, split by provider. Development only.
+   * One candidate's whole bill: every attempt they made, added together.
    *
-   * Summed over the attempts the meter actually covered; the rest are counted
-   * separately rather than folded in as zero, because a total over four runs
-   * out of seven is a different claim from a total over all seven.
+   * The card stands for the CANDIDATE, not for the single attempt whose
+   * thumbnail it happens to show — `collapseByCandidate` picks one. So the
+   * badge beside "3 attempts" is what those three cost together, and the
+   * per-attempt split lives on the report page behind it.
    */
-  /** One place both the per-card badge and the header total cost from. */
-  const costOf = (a: (typeof attempts)[number]) =>
-    interviewCost(
-      {
-        sttMinutes: sttMinutesByAttempt.get(a.id) ?? 0,
-        ttsCharacters: a.ttsCharacters,
-        llmInputTokens: a.llmInputTokens,
-        llmOutputTokens: a.llmOutputTokens,
-      },
-      env.AI_PROVIDER,
+  const candidateReading = (a: InterviewAttempt): CostReading =>
+    sumReadings(
+      (attemptsByCandidate.get(candidateKey(a)) ?? [a]).map((x) =>
+        costByAttempt.get(x.id),
+      ),
     );
-
-  /**
-   * The least this interview can have cost, for one the meter never saw.
-   *
-   * Speech can be priced exactly after the fact: the question text is stored
-   * and this branch synthesises one clip per question, so the characters are
-   * known, and the answers carry their own measured durations. Only the model
-   * tokens are unrecoverable — and they are the larger share, so this is a
-   * floor and is labelled as one rather than passed off as the total.
-   */
-  const floorOf = (a: (typeof attempts)[number]) =>
-    interviewCost(
-      {
-        sttMinutes: sttMinutesByAttempt.get(a.id) ?? 0,
-        ttsCharacters: questionCharsByAttempt.get(a.id) ?? 0,
-        llmInputTokens: 0,
-        llmOutputTokens: 0,
-      },
-      env.AI_PROVIDER,
-    );
-
-  /** Whoever is running the brain today. See `AI_PROVIDER`. */
-  const modelLabel = env.AI_PROVIDER === "sarvam" ? "Sarvam" : "OpenAI";
 
   /** Metered where we can, floored where we cannot, and which is which. */
-  const readingFor = (a: (typeof attempts)[number]) => {
-    if (!isDev) return { cost: undefined, parts: undefined, floor: undefined };
-    const metered = wasMetered(a);
-    const c = metered ? costOf(a) : floorOf(a);
-    if (!metered && c.total === 0) {
-      return { cost: null, parts: null, floor: undefined };
-    }
+  const readingFor = (a: InterviewAttempt) => {
+    if (!isDev)
+      return { cost: undefined, parts: undefined, estimated: undefined };
+    const r = candidateReading(a);
+    if (!r.known) return { cost: null, parts: null, estimated: undefined };
+    const n = attemptCounts.get(candidateKey(a)) ?? 1;
     return {
-      cost: formatInr(c.total),
-      parts: `${modelLabel} ${formatInr(c.llm)} · TTS ${formatInr(
-        c.tts,
-      )} · STT ${formatInr(c.stt)}`,
-      floor: metered ? undefined : true,
+      cost: formatInr(r.breakdown.total),
+      parts:
+        n > 1
+          ? `${n} attempts · ${describeCost(r.breakdown)}`
+          : describeCost(r.breakdown),
+      estimated: r.estimated ? true : undefined,
     };
   };
 
-  const metered = isDev ? attempts.filter((a) => wasMetered(a)) : [];
   const devCosts = isDev
     ? (() => {
-        const sum = attempts.reduce(
-          (acc, a) => {
-            const c = wasMetered(a) ? costOf(a) : floorOf(a);
-            return {
-              llm: acc.llm + c.llm,
-              tts: acc.tts + c.tts,
-              stt: acc.stt + c.stt,
-              total: acc.total + c.total,
-            };
-          },
-          { llm: 0, tts: 0, stt: 0, total: 0 },
-        );
+        const all = found.attempts.map((a) => costByAttempt.get(a.id));
+        const sum = sumReadings(all);
+        // The average is per COMPLETED interview, not per attempt. Two in
+        // three attempts are abandoned part-way and cost a rupee or two, so an
+        // average over all of them answers "what does an attempt cost" when
+        // the question anybody is actually asking is "what does an interview
+        // cost".
+        const done = found.attempts
+          .filter((a) => a.status === "completed")
+          .map((a) => costByAttempt.get(a.id))
+          .filter((r) => r?.known);
+        const doneTotal = sumReadings(done).breakdown.total;
+        const measured = all.filter((r) => r?.known && !r.estimated);
         return {
-          // Named by whichever provider is actually running the brain — the
-          // label used to say OpenAI whatever `AI_PROVIDER` was set to, which
-          // meant it read "OpenAI" while quoting Sarvam's rates.
-          modelLabel: env.AI_PROVIDER === "sarvam" ? "Sarvam" : "OpenAI",
-          openai: formatInr(sum.llm),
-          tts: formatInr(sum.tts),
-          stt: formatInr(sum.stt),
-          total: formatInr(sum.total),
-          metered: metered.length,
-          unmetered: attempts.length - metered.length,
-          // True when any part of the total came from a floor, so the header
-          // can say "at least" rather than state it as the bill.
-          hasFloor: metered.length < attempts.length,
+          openai: formatInr(sum.breakdown.openai),
+          sarvam: formatInr(sum.breakdown.sarvam),
+          tts: formatInr(sum.breakdown.tts),
+          stt: formatInr(sum.breakdown.stt),
+          total: formatInr(sum.breakdown.total),
+          // Averaged over the fully metered interviews ONLY. Dividing the
+          // headline total by every attempt would mix exact runs with floors
+          // and give a per-interview figure that is neither.
+          average:
+            done.length > 0 ? formatInr(doneTotal / done.length) : null,
+          averageBasis: done.length,
+          measured: measured.length,
+          estimatedCount: all.filter((r) => r?.estimated).length,
+          hasEstimate: sum.estimated,
+          hasFloor: sum.speechFloor,
         };
       })()
     : undefined;
@@ -650,91 +877,10 @@ export async function getInterviewDetails(
       // interview — see `wasMetered`. A zero would be a claim that it was free.
       devCost: readingFor(attempt).cost,
       devCostParts: readingFor(attempt).parts,
-      devCostIsFloor: readingFor(attempt).floor,
+      devCostIsEstimated: readingFor(attempt).estimated,
       createdAt: attempt.createdAt,
     })),
-    devCostTotal,
   };
-}
-
-/**
- * Minutes of candidate audio per attempt, for the development cost badge.
- *
- * Read from recordings rather than a counter, because Sarvam bills
- * speech-to-text per second of audio and the streaming path never makes a
- * countable request — it holds a socket open, so there is nothing to increment.
- *
- * The VIDEO is the source, not the audio clip. Since realtime streaming
- * replaced batch transcription, answer audio is no longer archived at all —
- * recent interviews have zero `answer` rows — while the webcam recording still
- * runs for every answer on every path and carries a measured duration. It also
- * happens to be the better match: the socket streams for as long as the
- * candidate has the microphone, which is the length of the recording.
- *
- * The `answer` clips remain as a fallback so interviews from the batch era
- * still price correctly. Whichever source is used, only one is counted, so a
- * turn that produced both cannot be billed twice.
- */
-async function getSttMinutes(
-  attemptIds: string[],
-): Promise<Map<string, number>> {
-  const byAttempt = new Map<string, number>();
-  if (attemptIds.length === 0) return byAttempt;
-
-  const rows = await db
-    .select({
-      attemptId: interviewAudioTable.attemptId,
-      kind: interviewAudioTable.kind,
-      ms: sql<number>`coalesce(sum(${interviewAudioTable.durationMs}), 0)::int`,
-    })
-    .from(interviewAudioTable)
-    .where(
-      and(
-        inArray(interviewAudioTable.attemptId, attemptIds),
-        inArray(interviewAudioTable.kind, ["answer_video", "answer"]),
-      ),
-    )
-    .groupBy(interviewAudioTable.attemptId, interviewAudioTable.kind);
-
-  // Video first; audio only where an attempt has no video at all.
-  const video = new Map<string, number>();
-  const audio = new Map<string, number>();
-  for (const row of rows) {
-    (row.kind === "answer_video" ? video : audio).set(row.attemptId, row.ms);
-  }
-  for (const id of attemptIds) {
-    const ms = video.get(id) ?? audio.get(id) ?? 0;
-    if (ms > 0) byAttempt.set(id, ms / 60000);
-  }
-  return byAttempt;
-}
-
-/**
- * Characters of question text per attempt, for costing interviews the meter
- * never saw.
- *
- * Sound only because this branch synthesises exactly one clip per question —
- * verified against stored clips. On older data, where fixed lines were voiced
- * per attempt, this understates what was actually spoken, which is why every
- * figure derived from it is presented as a floor.
- */
-async function getQuestionChars(
-  attemptIds: string[],
-): Promise<Map<string, number>> {
-  const byAttempt = new Map<string, number>();
-  if (attemptIds.length === 0) return byAttempt;
-
-  const rows = await db
-    .select({
-      attemptId: interviewTurnsTable.attemptId,
-      chars: sql<number>`coalesce(sum(length(${interviewTurnsTable.question})), 0)::int`,
-    })
-    .from(interviewTurnsTable)
-    .where(inArray(interviewTurnsTable.attemptId, attemptIds))
-    .groupBy(interviewTurnsTable.attemptId);
-
-  for (const row of rows) byAttempt.set(row.attemptId, row.chars);
-  return byAttempt;
 }
 
 /**
@@ -974,62 +1120,4 @@ export async function listReports(adminId: string): Promise<ReportRow[]> {
     ...row,
     spokenLanguages: spoken.get(row.attemptId) ?? [],
   }));
-}
-
-/* -------------------------------------------------------------------------- */
-/*                          Development-only helpers                          */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Delete one attempt outright — recordings, turns, scores, everything.
- *
- * Development only, and deliberately so. Testing the interview flow leaves a
- * long tail of half-finished attempts that make the candidate grid unreadable,
- * and there is no sound product reason to let an admin destroy a real
- * candidate's assessment from a hover button: a completed interview is
- * evidence about a person, and the wrong click would be unrecoverable.
- *
- * The stored objects go first. The database rows cascade from the attempt, so
- * deleting that first would strip the storage keys out from under us and leave
- * the video sitting in the bucket with nothing pointing at it.
- */
-export async function deleteAttemptInDev(
-  adminId: string,
-  attemptId: string,
-): Promise<void> {
-  if (env.NODE_ENV !== "development") {
-    throw new Error("Attempts can only be deleted in development.");
-  }
-
-  // Scoped to interviews this admin owns, exactly like every other read here.
-  const attempt = await db
-    .select({ id: interviewAttemptsTable.id })
-    .from(interviewAttemptsTable)
-    .innerJoin(
-      interviewsTable,
-      eq(interviewsTable.id, interviewAttemptsTable.interviewId),
-    )
-    .where(
-      and(
-        eq(interviewAttemptsTable.id, attemptId),
-        eq(interviewsTable.createdByUserId, adminId),
-      ),
-    )
-    .limit(1);
-  if (attempt.length === 0) return;
-
-  const clips = await db
-    .select({ storageKey: interviewAudioTable.storageKey })
-    .from(interviewAudioTable)
-    .where(eq(interviewAudioTable.attemptId, attemptId));
-
-  await Promise.all(
-    clips.map((clip) =>
-      deleteAudioObject(clip.storageKey).catch(() => undefined),
-    ),
-  );
-
-  await db
-    .delete(interviewAttemptsTable)
-    .where(eq(interviewAttemptsTable.id, attemptId));
 }

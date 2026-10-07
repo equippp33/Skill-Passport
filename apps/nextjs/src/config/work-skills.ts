@@ -248,14 +248,31 @@ export function isFollowUpTurn(
 /* -------------------------------------------------------------------------- */
 
 /**
- * Turn 1 of every attempt is the language probe, so the interview proper runs
- * from turn 2. Keeping the arithmetic here means no caller has to remember the
- * offset.
- *
- * Nothing else about turn numbering is fixed any more. Questions used to map
- * to skills by arithmetic on the turn number; they are now prepared in advance
- * and each delivered turn records the plan entry it came from, because a
- * follow-up inserted mid-interview shifts every turn number after it and would
- * have misfiled the entire remainder.
+ * Turn 1 of every attempt is the language probe, so the skill questions run
+ * from turn 2. Keeping the arithmetic here means no caller has to remember
+ * the offset.
  */
 export const LANGUAGE_PROBE_TURN = 1;
+
+/** Total turns a candidate answers: the probe plus one question per skill. */
+export function totalTurns(questionCount: number): number {
+  return questionCount + 1;
+}
+
+/** The skill a turn assesses, or null for the language probe. */
+export function skillForAttemptTurn(
+  turnNumber: number,
+  questionCount: number,
+): WorkSkill | null {
+  if (turnNumber <= LANGUAGE_PROBE_TURN) return null;
+  return skillForTurn(turnNumber - LANGUAGE_PROBE_TURN, questionCount);
+}
+
+/** True when this turn follows up on the same skill as the previous one. */
+export function isAttemptFollowUp(
+  turnNumber: number,
+  questionCount: number,
+): boolean {
+  if (turnNumber <= LANGUAGE_PROBE_TURN + 1) return false;
+  return isFollowUpTurn(turnNumber - LANGUAGE_PROBE_TURN, questionCount);
+}

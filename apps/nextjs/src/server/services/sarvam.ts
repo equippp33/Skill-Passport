@@ -3,7 +3,6 @@ import { recordUsage } from "~/server/interview/usage";
 
 import { env } from "~/env";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
-import { recordUsage } from "~/server/interview/usage";
 import { timed } from "./timing";
 
 const kb = (bytes: number) => `${Math.round(bytes / 1024)}KB`;
@@ -32,15 +31,6 @@ const TTS_RETRY_OPTS = { attempts: 1, baseDelayMs: 300 };
 
 /** bulbul:v3 caps at 2500 chars; stay well under and never send more. */
 const TTS_MAX_CHARS = 1500;
-
-/**
- * The interviewer's natural speaking rate.
- *
- * 1.0 is the model's own pace. A candidate who wants it slower asks, and that
- * is handled on the client with `playbackRate` so it applies to clips that
- * were voiced before they asked — re-synthesising would only fix the next one.
- */
-const DEFAULT_TTS_PACE = 1;
 
 function authHeaders(): Record<string, string> {
   // Header name per Sarvam docs. Never logged — see `logProviderFailure`.
@@ -176,9 +166,6 @@ export async function transcribeAudio(input: {
           : null,
     };
   };
-
-  // Billed per request against the audio sent, so both are recorded.
-  recordUsage({ sttRequests: 1, sttAudioBytes: input.audio.length });
 
   return timed(
     "stt.sarvam",
@@ -362,10 +349,6 @@ export async function generateSpeech(
 
     return { audio, mimeType: "audio/mpeg" };
   };
-
-  // `clipped`, not the caller's text: TTS is billed on what is sent, and
-  // anything past TTS_MAX_CHARS was cut before the request.
-  recordUsage({ ttsCharacters: clipped.length });
 
   let out: SpeechResult | null = null;
   return timed(

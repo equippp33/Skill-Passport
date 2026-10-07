@@ -13,12 +13,7 @@ import type { WorkSkillId } from "~/config/work-skills";
 import type { InterviewAttempt, InterviewTurn } from "~/server/db/schema";
 import { aggregateSkillScores } from "~/lib/scoring";
 import { spokenLanguages } from "~/lib/spoken-languages";
-import {
-  formatDate,
-  formatDateTime,
-  formatDuration,
-  formatSpan,
-} from "~/lib/utils";
+import { formatDate, formatDateTime, formatDuration } from "~/lib/utils";
 
 /**
  * The interview report.
@@ -98,45 +93,13 @@ export function AttemptReport({
                   : "—"
               }
             />
-            {/* Wall-clock from first question to submission, so a rushed or
-                an abandoned-and-resumed sitting is visible at a glance. */}
             <Detail
-              label="Duration"
-              value={formatSpan(attempt.startedAt, attempt.completedAt)}
+              label="Left the tab"
+              value={
+                attempt.awayCount > 0 ? `${attempt.awayCount} times` : "no"
+              }
             />
             <Detail label="Completed" value={formatDate(attempt.completedAt)} />
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {/* What this interview cost to run.
-          Admin only, and shown in the units each provider actually bills in
-          rather than converted to money: rates differ per account and change,
-          so the arithmetic belongs in whatever sheet is doing the costing. */}
-      {showCandidate ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Provider usage</CardTitle>
-            <p className="mt-1 text-sm text-content-muted">
-              Counted as the interview ran. Speech is billed per request and per
-              character; the model per token.
-            </p>
-          </CardHeader>
-          <CardContent className="grid gap-x-6 gap-y-2 sm:grid-cols-3">
-            <Detail
-              label="Speech to text"
-              value={`${attempt.sttRequests} requests · ${Math.round(
-                attempt.sttAudioBytes / 1024,
-              ).toLocaleString()} KB audio`}
-            />
-            <Detail
-              label="Text to speech"
-              value={`${attempt.ttsCharacters.toLocaleString()} characters`}
-            />
-            <Detail
-              label="Model"
-              value={`${attempt.llmRequests} requests · ${attempt.llmInputTokens.toLocaleString()} in / ${attempt.llmOutputTokens.toLocaleString()} out`}
-            />
           </CardContent>
         </Card>
       ) : null}
@@ -196,10 +159,24 @@ export function AttemptReport({
               <CardHeader>
                 <CardTitle>{m.result.summary}</CardTitle>
               </CardHeader>
-              <CardContent>
-                <p className="text-sm leading-relaxed" lang={langCode}>
+              <CardContent className="space-y-3">
+                <p className="text-sm leading-relaxed" lang="en">
                   {attempt.summary}
                 </p>
+                {/*
+                 * What the candidate reads, when the interview was not in
+                 * English. Shown to the reviewer too — the person deciding
+                 * should be able to see the words that will reach the
+                 * candidate, not just the English they were made from.
+                 */}
+                {attempt.summaryTranslated && attempt.reportLanguage ? (
+                  <p
+                    className="border-l-2 border-border-strong pl-3 text-sm leading-relaxed text-content-muted"
+                    lang={langCode}
+                  >
+                    {attempt.summaryTranslated}
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
           ) : null}
@@ -208,6 +185,7 @@ export function AttemptReport({
             <ListCard
               title={m.result.strengths}
               items={attempt.strengths}
+              translated={attempt.strengthsTranslated ?? undefined}
               empty={m.result.noStrengths}
               marker="✓"
               markerClass="text-success"
@@ -216,6 +194,7 @@ export function AttemptReport({
             <ListCard
               title={m.result.improvements}
               items={attempt.improvements}
+              translated={attempt.improvementsTranslated ?? undefined}
               empty={m.result.noImprovements}
               marker="→"
               markerClass="text-warning"
@@ -245,39 +224,13 @@ export function AttemptReport({
                           ? m.skills[turn.skillId as WorkSkillId]
                           : `Question ${turn.turnNumber}`}
                     </CardTitle>
-                    <div className="flex items-center gap-2">
-                      {/*
-                       * Flagged by the scorer as something other than an
-                       * attempt at the question. Shown to a reviewer and
-                       * nothing more: the mark below still stands, and
-                       * nobody is failed by a model's opinion of their tone.
-                       */}
-                      {turn.concern !== "none" ? (
-                        <span
-                          title={
-                            turn.concern === "inappropriate"
-                              ? "Flagged for review: the scorer read this as abusive or inappropriate."
-                              : "Flagged for review: the scorer read this as not an answer to the question."
-                          }
-                          className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
-                            turn.concern === "inappropriate"
-                              ? "bg-danger/10 text-danger"
-                              : "bg-warning/10 text-warning"
-                          }`}
-                        >
-                          {turn.concern === "inappropriate"
-                            ? "Inappropriate"
-                            : "Off topic"}
-                        </span>
-                      ) : null}
-                      <span
-                        className={`text-sm font-semibold tabular-nums ${scoreTone(
-                          turn.score,
-                        )}`}
-                      >
-                        {turn.score === null ? "—" : `${turn.score}/10`}
-                      </span>
-                    </div>
+                    <span
+                      className={`text-sm font-semibold tabular-nums ${scoreTone(
+                        turn.score,
+                      )}`}
+                    >
+                      {turn.score === null ? "—" : `${turn.score}/10`}
+                    </span>
                   </div>
                   <p className="mt-1 text-base font-medium" lang={langCode}>
                     {turn.question}
@@ -319,13 +272,7 @@ export function AttemptReport({
                           showCandidate ? "" : `?attempt=${attempt.id}`
                         }`}
                         aria-label={m.result.yourAnswer}
-                        // Mirrored to match the self-view the candidate was
-                        // looking at while they recorded. A webcam file is not
-                        // mirrored, so playing it straight shows everyone the
-                        // reverse of the face they watched themselves make —
-                        // which reads as wrong to the person in it and to
-                        // anyone who met them.
-                        className="aspect-video max-h-[400px] w-full -scale-x-100 rounded-lg border border-border-subtle bg-content/90 object-contain"
+                        className="aspect-video max-h-[400px] w-full rounded-lg border border-border-subtle bg-content/90 object-contain"
                       />
                       {/* Says which answer this clip is, so a recording can
                         never be read as belonging to the wrong question. */}
@@ -467,6 +414,7 @@ function ListCard({
   marker,
   markerClass,
   lang,
+  translated,
 }: {
   title: string;
   items: string[] | null;
@@ -474,6 +422,14 @@ function ListCard({
   marker: string;
   markerClass: string;
   lang?: string;
+  /**
+   * The same points in the candidate's language, index for index.
+   *
+   * Paired with each English line rather than listed separately, so a reviewer
+   * can see at a glance that the two say the same thing — which is the only
+   * way to notice if they ever stop doing so.
+   */
+  translated?: string[];
 }) {
   return (
     <Card>
@@ -488,7 +444,17 @@ function ListCard({
                 <span aria-hidden className={markerClass}>
                   {marker}
                 </span>
-                <span>{item}</span>
+                <span>
+                  <span lang="en">{item}</span>
+                  {translated?.[i] ? (
+                    <span
+                      className="mt-0.5 block text-content-muted"
+                      lang={lang}
+                    >
+                      {translated[i]}
+                    </span>
+                  ) : null}
+                </span>
               </li>
             ))}
           </ul>

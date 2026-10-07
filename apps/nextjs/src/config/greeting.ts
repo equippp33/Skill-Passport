@@ -4,12 +4,7 @@ import type { InterviewLanguageKey } from "./languages";
 /**
  * The language probe: turn 1 of every attempt.
  *
- * The opener is a warm-up, nothing more. It no longer asks their name or
- * what they do: both are collected before the interview starts (the details
- * step and the background box), and asking again made the first thing the
- * candidate heard a repeat of a form they had just filled in.
- *
- * The opener says nothing about language. Telling a
+ * The opener is asked in English and says nothing about language. Telling a
  * candidate to "answer in whichever language you like" makes the choice feel
  * like a test in itself; a real interviewer just asks the question. Whatever
  * language the candidate replies in is the answer, and Sarvam identifies it
@@ -23,8 +18,8 @@ import type { InterviewLanguageKey } from "./languages";
 export const PROBE_SPOKEN_LANGUAGE_CODE = INTERVIEW_LANGUAGES.english.code;
 
 export const PROBE_SPOKEN_TEXT =
-  "Hello {name}, and welcome. Let's start with something easy — what do you " +
-  "enjoy most about what you are doing right now?";
+  "Hello, and welcome to your interview. To begin, please tell me your name " +
+  "and a little about the work you have done.";
 
 /**
  * Shown on the pre-start page, NOT with the question itself.

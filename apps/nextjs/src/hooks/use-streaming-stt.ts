@@ -79,6 +79,7 @@ export function useStreamingStt({
   turnSilenceMs = 2500,
   noAnswerStages = [],
   onSpeechStart,
+  onUtterance,
   onSilenceStage,
   onFinalTurn,
   onFailed,
@@ -105,7 +106,21 @@ export function useStreamingStt({
    */
   noAnswerStages?: number[];
   onSpeechStart?: () => void;
-  onSilenceStage?: (index: number) => void;
+  /**
+   * Everything the candidate has said on this turn so far, after each
+   * completed utterance.
+   *
+   * Exists so a spoken REQUEST — "say that again", "skip this one" — can be
+   * acted on the moment it is heard, instead of sitting there until the
+   * candidate presses Next. Asking someone to press Next to have their "can
+   * you repeat that?" noticed rather defeats the asking.
+   *
+   * The whole transcript rather than the latest fragment, deliberately: the
+   * phrase lists only match utterances of a few words, so a real answer is
+   * automatically too long to be mistaken for a request.
+   */
+  onUtterance?: (fullTranscript: string) => void;
+  onSilenceStage?: (index: number, hasSpoken: boolean) => void;
   /** The whole answer, once the candidate has finished the turn. */
   onFinalTurn: (transcript: string) => void;
   /** The relay/upstream failed — caller should fall back to the batch path. */
@@ -138,16 +153,25 @@ export function useStreamingStt({
 
   const onFinalTurnRef = useRef(onFinalTurn);
   const onSpeechStartRef = useRef(onSpeechStart);
+  const onUtteranceRef = useRef(onUtterance);
   const onSilenceStageRef = useRef(onSilenceStage);
   const onFailedRef = useRef(onFailed);
   const speakingRef = useRef(speaking);
   useEffect(() => {
     onFinalTurnRef.current = onFinalTurn;
     onSpeechStartRef.current = onSpeechStart;
+    onUtteranceRef.current = onUtterance;
     onSilenceStageRef.current = onSilenceStage;
     onFailedRef.current = onFailed;
     speakingRef.current = speaking;
-  }, [onFinalTurn, onSpeechStart, onSilenceStage, onFailed, speaking]);
+  }, [
+    onFinalTurn,
+    onSpeechStart,
+    onUtterance,
+    onSilenceStage,
+    onFailed,
+    speaking,
+  ]);
 
   useEffect(() => {
     if (!active || !stream || !relayUrl) return;
@@ -173,10 +197,27 @@ export function useStreamingStt({
     // (which was making short follow-ups auto-submit on the AI's own voice).
     let lastSpeakingAt = Date.now();
 
-    // The no-answer ladder: runs until the candidate first speaks. Elapsed time
-    // since recording started; each stage fires once. Reset on speech_start.
+    /**
+     * The no-answer ladder.
+     *
+     * Silence is measured from when the candidate last STOPPED speaking, not
+     * from when recording began, and the rungs re-arm every time they speak
+     * again. This used to be a one-way latch — a single `vad.speech_start`
+     * set `spoke = true` and disabled the ladder for the rest of the question.
+     * One cough, one "umm", or the student literally saying "can you repeat
+     * that?" was enough: after that they could sit in silence indefinitely and
+     * nothing would ever check on them, prompt them, or move the interview on.
+     *
+     * `everSpoke` is kept separately because it answers a different question.
+     * Somebody who has said nothing needs "did you understand the question?";
+     * somebody who answered and then went quiet does not — they need the
+     * backstop that eventually moves things along. The caller decides, so both
+     * facts are handed to it.
+     */
     const startedAt = Date.now();
-    let spoke = false;
+    let talking = false;
+    let everSpoke = false;
+    let quietSince = startedAt;
     const firedSilenceStages = new Set<number>();
 
     const fireTurn = () => {
@@ -236,9 +277,12 @@ export function useStreamingStt({
           }
           switch (msg.event) {
             case "vad.speech_start":
-              // They spoke — end the no-answer ladder for good and clear any
-              // pending turn-end from an earlier pause.
-              spoke = true;
+              // Speaking now: pause the ladder and let every rung arm again,
+              // so the next stretch of silence is treated on its own merits
+              // rather than as a continuation of one already handled.
+              talking = true;
+              everSpoke = true;
+              firedSilenceStages.clear();
               setSilentSeconds(null);
               if (turnEndTimer) {
                 clearTimeout(turnEndTimer);
@@ -258,9 +302,16 @@ export function useStreamingStt({
             case "transcript.final":
               if (msg.text && msg.text.trim()) finals.push(msg.text.trim());
               setPartial("");
-              transcriptRef.current = finals.join(" ").replace(/\s+/g, " ").trim();
+              transcriptRef.current = finals
+                .join(" ")
+                .replace(/\s+/g, " ")
+                .trim();
+              onUtteranceRef.current?.(transcriptRef.current);
               break;
             case "vad.speech_end":
+              // Quiet again: this is the moment the silence clock restarts.
+              talking = false;
+              quietSince = Date.now();
               // End the turn only if they stay quiet — a pause for thought
               // that resumes cancels this via the next speech_start.
               if (turnEndTimer) clearTimeout(turnEndTimer);
@@ -315,20 +366,24 @@ export function useStreamingStt({
           for (let i = 0; i < pcm.length; i += MAX_FRAME_SAMPLES) {
             const frame = pcm.subarray(i, i + MAX_FRAME_SAMPLES);
             ws.send(
-              JSON.stringify({ event: "audio_input", audio: pcm16ToBase64(frame) }),
+              JSON.stringify({
+                event: "audio_input",
+                audio: pcm16ToBase64(frame),
+              }),
             );
           }
         }, FLUSH_MS);
 
         // No-answer ladder: escalate while the candidate has said nothing.
         silenceTimer = setInterval(() => {
-          if (spoke) return;
-          const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+          // Mid-sentence: not silence.
+          if (talking) return;
+          const elapsed = Math.floor((Date.now() - quietSince) / 1000);
           setSilentSeconds(elapsed);
           for (let i = 0; i < noAnswerStages.length; i += 1) {
             if (elapsed >= noAnswerStages[i]! && !firedSilenceStages.has(i)) {
               firedSilenceStages.add(i);
-              onSilenceStageRef.current?.(i);
+              onSilenceStageRef.current?.(i, everSpoke);
             }
           }
         }, 500);

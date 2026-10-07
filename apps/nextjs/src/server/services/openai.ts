@@ -5,10 +5,9 @@ import OpenAI from "openai";
 import { z } from "zod";
 
 import { env } from "~/env";
-import type { WorkSkill, WorkSkillId } from "~/config/work-skills";
+import type { WorkSkill } from "~/config/work-skills";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
 import { timed } from "./timing";
-import { recordUsage } from "~/server/interview/usage";
 import { requestStructuredViaSarvam } from "./sarvam-chat";
 import type { SarvamChatKind } from "./sarvam-chat";
 import { transliterateToNative } from "./sarvam";
@@ -100,21 +99,37 @@ export const turnEvaluationSchema = z.object({
   /** English rendering of `nextQuestion`; empty when already English. */
   questionTranslation: z.string().max(600),
   interviewComplete: z.boolean(),
-  /**
-   * Whether this was an attempt at the question at all.
-   *
-   * Asked of the model that is already scoring the turn, so it costs no extra
-   * call and no extra wait. A word list cannot cover abuse across eleven
-   * languages; this can, and it is only ever a flag for a human reviewer.
-   *
-   * Optional rather than defaulted: a default would make zod's input and
-   * output types diverge, and every place that rebuilds one of these by
-   * spreading would stop type-checking. Absent means `none`, applied where it
-   * is stored.
-   */
-  concern: z.enum(["none", "off_topic", "inappropriate"]).optional(),
 });
 export type TurnEvaluation = z.infer<typeof turnEvaluationSchema>;
+
+export const translatedReportSchema = z.object({
+  summary: z.string().min(1).max(2000),
+  strengths: z.array(z.string().min(1).max(400)).max(6),
+  improvements: z.array(z.string().min(1).max(400)).max(6),
+});
+export type TranslatedReport = z.infer<typeof translatedReportSchema>;
+
+const TRANSLATED_REPORT_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["summary", "strengths", "improvements"],
+  properties: {
+    summary: {
+      type: "string",
+      description: "The summary, translated. Same meaning, nothing added.",
+    },
+    strengths: {
+      type: "array",
+      items: { type: "string" },
+      description: "Each strength, translated, in the same order.",
+    },
+    improvements: {
+      type: "array",
+      items: { type: "string" },
+      description: "Each improvement, translated, in the same order.",
+    },
+  },
+};
 
 export const interviewSummarySchema = z.object({
   overallScore: z.number().int().min(0).max(100),
@@ -142,7 +157,6 @@ const TURN_JSON_SCHEMA = {
     "nextQuestion",
     "questionTranslation",
     "interviewComplete",
-    "concern",
   ],
   properties: {
     score: {
@@ -182,12 +196,6 @@ const TURN_JSON_SCHEMA = {
         "Plain English translation of nextQuestion. Empty string when the interview language is English or nextQuestion is null.",
     },
     interviewComplete: { type: "boolean" },
-    concern: {
-      type: "string",
-      enum: ["none", "off_topic", "inappropriate"],
-      description:
-        "none for any genuine attempt at the question, however weak or brief. off_topic when the candidate chatted, asked the interviewer something, or talked about something unrelated. inappropriate for abuse, threats or sexual content. Default to none when unsure.",
-    },
   },
 } as const;
 
@@ -366,14 +374,15 @@ async function requestStructured<T>(args: {
       // Sarvam. Opening it here disables a healthy provider for minutes and
       // dumps every call onto the fallback (which may itself be rate-limited).
       // Only a real outage (timeout / network / 5xx / auth) trips the breaker.
-      const contentError =
-        error instanceof ProviderError && error.contentError;
+      const contentError = error instanceof ProviderError && error.contentError;
       if (!contentError) {
         sarvamOpenUntil = Date.now() + SARVAM_BREAKER_COOLDOWN_MS; // trip it
       }
       console.warn(
         `[llm] sarvam ${args.schemaName} failed (${
-          contentError ? "content quirk, breaker kept closed" : "outage, breaker open"
+          contentError
+            ? "content quirk, breaker kept closed"
+            : "outage, breaker open"
         }); using openai: ${error instanceof Error ? error.message : "unknown"}`,
       );
       return openaiFallback();
@@ -470,203 +479,6 @@ async function ensureEnglishEvaluation(text: string): Promise<string> {
  * question in front of them. `history` is passed so the model does not repeat
  * itself; it is allowed to be empty for the opening question.
  */
-/* -------------------------------------------------------------------------- */
-/*                          Batch preparation                                 */
-/* -------------------------------------------------------------------------- */
-
-export interface PreparedQuestion {
-  /** The skill this assesses, or null for an unscored comfort question. */
-  skillId: WorkSkillId | null;
-  question: string;
-  translation: string | null;
-  /** The same question, restated for someone who did not follow it. */
-  easier: string;
-  easierTranslation: string | null;
-  /** Follow-ups that work whatever the candidate said. Two, in a fixed order. */
-  probes: { text: string; translation: string | null }[];
-}
-
-export const preparedBatchSchema = z.object({
-  questions: z
-    .array(
-      z.object({
-        skillId: z.string(),
-        question: z.string().min(1).max(600),
-        questionTranslation: z.string().max(600),
-        easierQuestion: z.string().min(1).max(600),
-        easierQuestionTranslation: z.string().max(600),
-        probeExample: z.string().min(1).max(400),
-        probeOutcome: z.string().min(1).max(400),
-      }),
-    )
-    // Generous rather than exact. This is a guard against a runaway
-    // response, not a restatement of how many questions we asked for: the
-    // caller takes the ones it wants and ignores the rest, so a model that
-    // returns one extra should not cost the whole batch a retry.
-    .max(16),
-});
-
-const PREPARED_BATCH_JSON_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["questions"],
-  properties: {
-    questions: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: [
-          "skillId",
-          "question",
-          "questionTranslation",
-          "easierQuestion",
-          "easierQuestionTranslation",
-          "probeExample",
-          "probeOutcome",
-        ],
-        properties: {
-          skillId: {
-            type: "string",
-            description:
-              'The work skill id given for this question, copied exactly. Use "comfort" for a warm-up question.',
-          },
-          question: {
-            type: "string",
-            description: "The question, in the interview language.",
-          },
-          questionTranslation: {
-            type: "string",
-            description:
-              "Plain English translation. Empty string when the interview is already English.",
-          },
-          easierQuestion: {
-            type: "string",
-            description:
-              "The SAME question, shorter and simpler, the way a person rephrases when someone did not follow. Never answers it, hints at an answer, or asks something different.",
-          },
-          easierQuestionTranslation: {
-            type: "string",
-            description: "Plain English translation of easierQuestion.",
-          },
-          probeExample: {
-            type: "string",
-            description:
-              "A follow-up asking for ONE concrete instance — when, where, what actually happened. Must work whatever they answered.",
-          },
-          probeOutcome: {
-            type: "string",
-            description:
-              "A follow-up asking what the result was, or what they would do differently. Must work whatever they answered.",
-          },
-        },
-      },
-    },
-  },
-} as const;
-
-/**
- * Write a batch of questions, each with a simpler restatement and two
- * follow-up probes, before the candidate reaches them.
- *
- * This is what lets the interview run without a model call in it. Everything
- * the interviewer might say for these turns is written here, once, and voiced
- * in the background; the interview itself then only ever picks between things
- * that already exist.
- *
- * A batch rather than one question at a time because the model can see its own
- * siblings and avoid writing four variations of "tell me about a time you were
- * late". Batches stay small — four skills — because output grows fast in a
- * non-Latin script and the provider budgets are per call.
- *
- * The two probes are named and differently shaped on purpose. A `probes: []`
- * array reliably produces two paraphrases of "tell me more"; asking separately
- * for a concrete instance and for the outcome produces two questions worth
- * asking.
- */
-export async function prepareQuestions(args: {
-  ctx: InterviewContext;
-  /** The skills to write for, in order. Empty means comfort questions. */
-  skills: WorkSkill[];
-  /** How many warm-up questions to write when `skills` is empty. */
-  comfortCount?: number;
-  /** Everything already asked, so this batch does not repeat it. */
-  history: PriorTurn[];
-}): Promise<PreparedQuestion[]> {
-  const { ctx, skills, comfortCount = 0, history } = args;
-  const isComfort = skills.length === 0;
-
-  const expected = isComfort ? comfortCount : skills.length;
-
-  const brief = isComfort
-    ? [
-        `Write EXACTLY ${comfortCount} WARM-UP questions to open the interview.`,
-        `They are NOT scored. Their only job is to get a nervous person`,
-        `talking: easy, personal, impossible to get wrong. Ask about what`,
-        `they are studying, what they enjoy, a normal day. Never about a`,
-        `weakness, a failure, or anything they must justify.`,
-        `Set skillId to "comfort" for every one.`,
-      ]
-    : [
-        `Write EXACTLY ${skills.length} questions — ONE for each of the skills`,
-        `below, in this order. Do not write questions for any other skill.`,
-        `Copy the skill id into skillId exactly as given.`,
-        "",
-        skills.map((skill) => skillBlock(skill)).join("\n\n"),
-      ];
-
-  const result = await requestStructured({
-    instructions: interviewerRules(ctx),
-    input: [
-      contextBlock(ctx),
-      // The framework names all ten work skills. Sending it alongside a
-      // request for two warm-up questions had the model write one question
-      // per skill instead — so it goes only to the batches that are actually
-      // about skills.
-      ...(isComfort ? [] : ["", frameworkBlock()]),
-      ...(history.length > 0
-        ? [
-            "",
-            "## Questions already asked (never repeat these, or anything close)",
-            historyBlock(history),
-          ]
-        : []),
-      "",
-      ...brief,
-      "",
-      `For EVERY question also write easierQuestion (the same question,`,
-      `simpler) and two follow-ups: probeExample and probeOutcome. The`,
-      `follow-ups are asked AFTER an answer you cannot see, so they must make`,
-      `sense whatever the candidate said — keep them short and general.`,
-      "",
-      `Return exactly ${expected} entries in "questions".`,
-    ].join("\n"),
-    schemaName: "prepared_questions",
-    jsonSchema: PREPARED_BATCH_JSON_SCHEMA,
-    validator: preparedBatchSchema,
-    kind: "preparation",
-  });
-
-  return result.questions.map((row, index) => {
-    const translate = (value: string): string | null => {
-      if (ctx.language.promptName === "English") return null;
-      const trimmed = value.trim();
-      return trimmed.length > 0 ? trimmed : null;
-    };
-    return {
-      skillId: isComfort ? null : (skills[index]?.id ?? null),
-      question: row.question.trim(),
-      translation: translate(row.questionTranslation),
-      easier: row.easierQuestion.trim(),
-      easierTranslation: translate(row.easierQuestionTranslation),
-      probes: [
-        { text: row.probeExample.trim(), translation: translate("") },
-        { text: row.probeOutcome.trim(), translation: translate("") },
-      ],
-    };
-  });
-}
-
 export async function generateQuestion(args: {
   ctx: InterviewContext;
   skill: WorkSkill;
@@ -1279,4 +1091,61 @@ export async function rephraseQuestionSimpler(
         ? null
         : english || null,
   };
+}
+
+/**
+ * The closing report, in the language the candidate answered in.
+ *
+ * A SEPARATE call rather than asking the report prompt for two languages at
+ * once. That prompt has been through a fight to keep its output in English —
+ * see the rules it carries — and giving it a second language to juggle is
+ * exactly the pressure that made it drift before. Here the English is already
+ * written and fixed; this only restates it.
+ *
+ * Translating rather than re-generating also means the two versions cannot
+ * disagree about the same candidate, which they could if each were written
+ * independently from the transcript.
+ */
+export async function translateReport(args: {
+  languageName: string;
+  summary: string;
+  strengths: string[];
+  improvements: string[];
+}): Promise<TranslatedReport> {
+  return requestStructured({
+    instructions: [
+      `You translate an assessment report into ${args.languageName} so the`,
+      `candidate can read it in their own language.`,
+      ``,
+      `Translate meaning, not words. This is feedback a person will read about`,
+      `themselves, so it must sound like it was written for them rather than`,
+      `run through a dictionary — natural, warm, and plain.`,
+      ``,
+      `Keep ordinary workplace words that Indians normally say in English`,
+      `(team, project, manager, customer, interview, feedback) in English.`,
+      `Keep the same number of strengths and improvements, in the same order.`,
+      `Add nothing, soften nothing, and leave out nothing: a report that`,
+      `flatters in one language and not the other is worse than no translation.`,
+    ].join("\n"),
+    input: [
+      `Translate into ${args.languageName}.`,
+      ``,
+      untrusted(
+        "REPORT",
+        JSON.stringify(
+          {
+            summary: args.summary,
+            strengths: args.strengths,
+            improvements: args.improvements,
+          },
+          null,
+          2,
+        ),
+      ),
+    ].join("\n"),
+    schemaName: "translated_report",
+    jsonSchema: TRANSLATED_REPORT_JSON_SCHEMA,
+    validator: translatedReportSchema,
+    kind: "conversation",
+  });
 }

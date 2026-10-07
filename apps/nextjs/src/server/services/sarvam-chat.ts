@@ -3,8 +3,8 @@ import "server-only";
 import type { z } from "zod";
 
 import { env } from "~/env";
-import { ProviderError, isRetryableStatus, withRetry } from "./errors";
 import { recordUsage } from "~/server/interview/usage";
+import { ProviderError, isRetryableStatus, withRetry } from "./errors";
 
 /**
  * Sarvam chat completions — the interview "brain".
@@ -59,21 +59,7 @@ const ANALYSIS_RETRY_OPTS = { attempts: 2, baseDelayMs: 500 };
 const CONVERSATION_MAX_TOKENS = 1500;
 const ANALYSIS_MAX_TOKENS = 8000;
 
-/**
- * Preparation writes a batch — four questions, each with a simpler wording and
- * two probes — so it needs far more room than one live turn, and far more
- * time.
- *
- * Deliberately its own budget rather than a wider `CONVERSATION_MAX_TOKENS`:
- * that ceiling guards the candidate's critical path and should stay tight even
- * though preparation is about to take most of the work off it. Nobody is
- * waiting on these except the wave scheduler, so a long timeout is free.
- */
-const PREPARATION_MAX_TOKENS = 4000;
-const PREPARATION_TIMEOUT_MS = 120_000;
-const PREPARATION_RETRY_OPTS = { attempts: 2, baseDelayMs: 1000 };
-
-export type SarvamChatKind = "conversation" | "analysis" | "preparation";
+export type SarvamChatKind = "conversation" | "analysis";
 
 function authHeaders(): Record<string, string> {
   // Sarvam's chat endpoint is OpenAI-compatible and takes a bearer token,
@@ -89,30 +75,9 @@ function logProviderFailure(op: string, status: number, bodyExcerpt: string) {
 }
 
 function modelFor(kind: SarvamChatKind): string {
-  // Preparation uses the conversational model: it is writing questions, which
-  // is the thing that model is good at, and the reasoning model's budget goes
-  // mostly on thinking rather than output.
   return kind === "analysis"
     ? env.SARVAM_ANALYSIS_MODEL
     : env.SARVAM_CHAT_MODEL;
-}
-
-function maxTokensFor(kind: SarvamChatKind): number {
-  if (kind === "analysis") return ANALYSIS_MAX_TOKENS;
-  if (kind === "preparation") return PREPARATION_MAX_TOKENS;
-  return CONVERSATION_MAX_TOKENS;
-}
-
-function timeoutFor(kind: SarvamChatKind): number {
-  if (kind === "analysis") return ANALYSIS_TIMEOUT_MS;
-  if (kind === "preparation") return PREPARATION_TIMEOUT_MS;
-  return CHAT_TIMEOUT_MS;
-}
-
-function retryOptsFor(kind: SarvamChatKind) {
-  if (kind === "analysis") return ANALYSIS_RETRY_OPTS;
-  if (kind === "preparation") return PREPARATION_RETRY_OPTS;
-  return CHAT_RETRY_OPTS;
 }
 
 /**
@@ -178,6 +143,11 @@ interface ChatResponse {
     message?: { content?: string | null };
     finish_reason?: string;
   }[];
+  /**
+   * Sarvam's endpoint is OpenAI-compatible and returns this on every 200,
+   * under OpenAI's older `prompt_tokens` / `completion_tokens` names rather
+   * than the Responses API's `input_tokens` / `output_tokens`.
+   */
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -197,7 +167,7 @@ export async function requestStructuredViaSarvam<T>(args: {
   kind: SarvamChatKind;
 }): Promise<T> {
   const { kind } = args;
-  const timeoutMs = timeoutFor(kind);
+  const timeoutMs = kind === "analysis" ? ANALYSIS_TIMEOUT_MS : CHAT_TIMEOUT_MS;
 
   const run = async (): Promise<T> => {
     const controller = new AbortController();
@@ -218,7 +188,8 @@ export async function requestStructuredViaSarvam<T>(args: {
             },
             { role: "user", content: args.input },
           ],
-          max_tokens: maxTokensFor(kind),
+          max_tokens:
+            kind === "analysis" ? ANALYSIS_MAX_TOKENS : CONVERSATION_MAX_TOKENS,
           response_format: { type: "json_object" },
         }),
       });
@@ -263,12 +234,15 @@ export async function requestStructuredViaSarvam<T>(args: {
       .json()
       .catch(() => null)) as ChatResponse | null;
 
-    // Recorded even when the reply turns out to be unusable below: it was
-    // still generated, and still billed.
+    // Metered here, before the content is validated, because the bill does not
+    // care whether we could use the answer. A reply that comes back off-format
+    // and is thrown away was still charged for, and a counter that only
+    // records the usable calls understates every interview that had a bad one
+    // — which is the interview most worth looking at.
     recordUsage({
-      llmRequests: 1,
-      llmInputTokens: json?.usage?.prompt_tokens ?? 0,
-      llmOutputTokens: json?.usage?.completion_tokens ?? 0,
+      sarvamRequests: 1,
+      sarvamInputTokens: json?.usage?.prompt_tokens ?? 0,
+      sarvamOutputTokens: json?.usage?.completion_tokens ?? 0,
     });
 
     const choice = json?.choices?.[0];
@@ -321,5 +295,8 @@ export async function requestStructuredViaSarvam<T>(args: {
     return result.data;
   };
 
-  return withRetry(run, retryOptsFor(kind));
+  return withRetry(
+    run,
+    kind === "analysis" ? ANALYSIS_RETRY_OPTS : CHAT_RETRY_OPTS,
+  );
 }

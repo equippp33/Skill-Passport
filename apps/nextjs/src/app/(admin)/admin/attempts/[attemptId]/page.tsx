@@ -5,12 +5,14 @@ import { notFound } from "next/navigation";
 import { AttemptReport } from "~/components/attempt-report";
 import { Alert } from "~/components/ui";
 import {
+  getAttemptCosts,
   getAttemptForAdmin,
   getCandidateAttempts,
   getClipDurations,
   requireAdmin,
 } from "~/server/admin/service";
 import { AttemptComparison } from "./attempt-comparison";
+import { AttemptCost } from "./attempt-cost";
 import { getTurns } from "~/server/attempt/service";
 import { uiMessages } from "~/server/language";
 import { uuidSchema } from "~/server/interview/validation";
@@ -42,14 +44,15 @@ export default async function AdminAttemptPage({
   if (!found) notFound();
 
   const { attempt, interview } = found;
-  const [turns, clipDurations, appOrigin, candidateAttempts] = await Promise.all(
-    [
+  const [turns, clipDurations, appOrigin, candidateAttempts, costs] =
+    await Promise.all([
       getTurns(attempt.id),
       getClipDurations(attempt.id),
       appUrl(),
       getCandidateAttempts(admin.id, attempt),
-    ],
-  );
+      // Undefined in production, so the strip below simply does not render.
+      getAttemptCosts(admin.id, attempt),
+    ]);
   const m = uiMessages();
   const fromQuery = from ? `?from=${encodeURIComponent(from)}` : "";
   const fromParam = from ? `&from=${encodeURIComponent(from)}` : "";
@@ -179,6 +182,8 @@ export default async function AdminAttemptPage({
             </Link>
           </div>
         ) : null}
+
+        {costs ? <AttemptCost costs={costs} /> : null}
       </div>
 
       {comparing ? (

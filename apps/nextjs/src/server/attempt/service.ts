@@ -6,9 +6,7 @@ import { db } from "~/server/db";
 import { withUsageScope } from "~/server/interview/usage";
 import {
   interviewAttemptsTable,
-  interviewsTable,
   interviewAudioTable,
-  interviewTurnVariantsTable,
   interviewTurnsTable,
   interviewsTable,
 } from "~/server/db/schema";
@@ -19,6 +17,7 @@ import type {
 } from "~/server/db/schema";
 import { resolveInterviewLanguage } from "~/config/languages";
 import type { InterviewLanguageKey } from "~/config/languages";
+import type { TranslatedReport } from "~/server/services/openai";
 import { OPENING_BY_KEY } from "~/config/greeting";
 import {
   LANGUAGE_PROBE_TURN,
@@ -37,10 +36,13 @@ import {
 import { aggregateSkillScores } from "~/lib/scoring";
 import { ProviderError, toUserMessage } from "~/server/services/errors";
 import {
+  classifyUtterance,
   evaluateAnswerAndGetNextQuestion,
+  generateDoubtResponse,
   generateInterviewSummary,
-  prepareQuestions,
+  translateReport,
   generateQuestion,
+  scoreAndMaybeFollowUp,
   translateQuestion,
 } from "~/server/services/openai";
 import type { InterviewContext, PriorTurn } from "~/server/services/openai";
@@ -51,9 +53,6 @@ import { timed } from "~/server/services/timing";
 import { loadAudioBytes, storeAudio } from "~/server/interview/audio";
 import { deleteAudioObject } from "~/server/interview/storage";
 import { generateToken } from "~/server/admin/service";
-import { withUsageScope } from "~/server/interview/usage";
-import { recentActivity } from "~/server/services/dev-activity";
-import type { ActivityEvent } from "~/server/services/dev-activity";
 
 /**
  * Candidate attempt orchestration.
@@ -298,29 +297,13 @@ async function priorAttemptsContext(
  * Read fresh each time rather than cached, so it is correct after a retry.
  */
 async function introductionFor(attemptId: string): Promise<string | null> {
-  const [attempt, probe] = await Promise.all([
-    db.query.interviewAttemptsTable.findFirst({
-      where: eq(interviewAttemptsTable.id, attemptId),
-      columns: { candidateBackground: true },
-    }),
-    db.query.interviewTurnsTable.findFirst({
-      where: and(
-        eq(interviewTurnsTable.attemptId, attemptId),
-        eq(interviewTurnsTable.kind, "language_probe"),
-      ),
-    }),
-  ]);
-
-  // Both when both exist. The typed background is available from the very
-  // first question, before anything has been spoken or transcribed, which is
-  // the whole reason it is collected up front; the spoken opener then adds
-  // what they chose to say out loud. Neither replaces the other.
-  const parts = [
-    attempt?.candidateBackground?.trim(),
-    probe?.answerTranscript?.trim(),
-  ].filter((part): part is string => Boolean(part));
-
-  return parts.length > 0 ? parts.join("\n\n") : null;
+  const probe = await db.query.interviewTurnsTable.findFirst({
+    where: and(
+      eq(interviewTurnsTable.attemptId, attemptId),
+      eq(interviewTurnsTable.kind, "language_probe"),
+    ),
+  });
+  return probe?.answerTranscript ?? null;
 }
 
 function toHistory(turns: InterviewTurn[]): PriorTurn[] {
@@ -380,13 +363,6 @@ async function startAttemptInner(attemptId: string): Promise<void> {
     .set({
       status: "in_progress",
       currentQuestionNumber: LANGUAGE_PROBE_TURN,
-      language: language.key,
-      needsLanguageChoice: false,
-      candidateCourse: about.course?.trim() || null,
-      candidateExperience: about.experience?.trim() || null,
-      // Composed as well as stored separately, so `introductionFor` and every
-      // report that already reads this column keep working unchanged.
-      candidateBackground: composeBackground(about) || null,
       startedAt: new Date(),
       updatedAt: new Date(),
     })
@@ -400,8 +376,6 @@ async function startAttemptInner(attemptId: string): Promise<void> {
 
   // Another request won the race; it created the opener.
   if (!claimed) return;
-
-  const opener = openerFor(language.key, firstNameOf(attempt.candidateName));
 
   await db.insert(interviewTurnsTable).values({
     attemptId,
@@ -822,19 +796,6 @@ export interface AnswerAudio {
   mimeType: string;
   /** Length the recorder measured, for the admin's per-answer marker. */
   durationMs?: number | null;
-  /**
-   * Whether the browser's level meter heard an actual word in this recording.
-   *
-   * The deciding fact about whether an answer exists, and deliberately not the
-   * transcriber's opinion. Handed near-silence, Sarvam returns fluent
-   * plausible sentences — one interview ran eight questions deep on "Okay, so"
-   * invented from an empty room, scoring every one of them and moving on each
-   * time. The microphone cannot imagine a word; the model can.
-   *
-   * Absent on the recovery path, where there is no meter to ask — those fall
-   * back to trusting the transcript, which is the old behaviour.
-   */
-  heardSpeech?: boolean;
 }
 
 /**
@@ -1119,38 +1080,17 @@ async function processTurnScoped(
     }
 
     if (!transcript || transcript.trim().length < 2) {
-      /**
-       * A noise, but not words.
-       *
-       * The microphone heard something — this path is only reached when the
-       * level meter said so — and the transcriber found nothing in it. That is
-       * a cough, a sneeze, a cleared throat, a chair scraping. Asking "are you
-       * okay?" is what a person in the room would do, and it is a far better
-       * reply than re-reading the question at somebody who is spluttering.
-       *
-       * The question stays on screen and the microphone stays open, so they
-       * simply carry on when they are ready.
-       *
-       * The probe still fails — with no words there is no language to detect.
-       * ponytail: no cap here — somebody coughing into a hot mic gets asked
-       * every time; add a counter if that ever bites.
-       */
-      if (isProbe && !attempt.language) {
+      // Silence on a real question: re-ask it rather than throw a "check your
+      // microphone" error at someone who is just thinking or did not catch it.
+      // The probe still fails — with no words there is no language to detect.
+      // ponytail: no re-ask cap — a permanently silent mic re-asks every 15s;
+      // add a counter + move-on-after-N here if that ever bites.
+      if (isProbe) {
         await failTurn(
           attemptId,
           turnId,
           "We could not hear an answer in that recording. Please check your microphone and record again.",
         );
-        return;
-      }
-
-      const checkIn = await fillerAudioId(
-        attemptId,
-        "areYouOkay",
-        turn.turnNumber + turn.directiveSeq,
-      );
-      if (checkIn) {
-        await issueDirective(turnId, "play_filler", checkIn);
       } else {
         await repeatTurn(attemptId, turnId);
       }
@@ -1260,544 +1200,44 @@ async function completeProbe(args: {
 /*                           Question preparation                             */
 /* -------------------------------------------------------------------------- */
 
-/* -------------------------------------------------------------------------- */
-/*                                 Directives                                 */
-/* -------------------------------------------------------------------------- */
-
 /**
- * One instruction for the browser: play this, then do that.
- *
- * The interview used to signal a replay implicitly — same turn number, status
- * back to `awaiting_answer` — and the browser inferred the rest. That worked
- * while replaying the question was the only thing the server could ask for. It
- * cannot express "play the simpler wording", "play a follow-up probe" or "say
- * a short acknowledgement", because all of those leave the turn number and the
- * status exactly where they were.
- *
- * So the instruction is explicit, and `seq` is what makes it safe: the browser
- * polls once a second and will see the same directive many times, so it acts
- * when the number changes rather than when the shape looks new.
+ * Generate and voice one skill question and insert it, WITHOUT making it the
+ * current question. Idempotent: a turn that already exists (because it was
+ * prepared ahead of time) is left as it is.
  */
-export interface TurnDirective {
-  seq: number;
-  action: "replay" | "play_easier" | "play_probe" | "play_filler" | "advance";
-  /** Clip to play. Null means there is nothing to say, only something to do. */
-  audioId: string | null;
-  /** 1.0 normally; lower after the candidate has asked for it slower. */
-  speechRate: number;
-  /** Whether to start recording again once the clip has finished. */
-  resumeRecording: boolean;
-}
-
 /**
- * Tell the browser to do something, and make sure it notices.
+ * Generations currently in flight, keyed by attempt and turn.
  *
- * Bumping `directiveSeq` in SQL rather than reading and writing it keeps two
- * concurrent branches — a silence timer and a submitted answer arriving at
- * once — from issuing the same number twice, which would make the second
- * instruction invisible.
+ * Questions are prepared an answer ahead, so two callers can want the same
+ * turn at once: the look-ahead starts turn N+2, and a candidate who answers
+ * quickly has `deliverTurn` reach for N+2 before that finishes. Without
+ * this both would call OpenAI and Sarvam, and one insert would then be
+ * dropped by `onConflictDoNothing` — after its clip had been generated,
+ * paid for and stored with nothing left pointing at it.
+ *
+ * Sharing the promise makes the second caller wait for the first instead.
+ * In-process only, which covers the case that actually happens; the
+ * conflict clause below remains the backstop across instances.
  */
-async function issueDirective(
-  turnId: string,
-  action: TurnDirective["action"],
-  audioId: string | null,
-): Promise<void> {
-  await db
-    .update(interviewTurnsTable)
-    .set({
-      directiveAction: action,
-      directiveAudioId: audioId,
-      directiveSeq: sql`${interviewTurnsTable.directiveSeq} + 1`,
-      status: action === "advance" ? "completed" : "awaiting_answer",
-      processingStartedAt: null,
-      errorMessage: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(interviewTurnsTable.id, turnId));
-}
+const questionsInFlight = new Map<string, Promise<void>>();
 
-/**
- * The clip for one of a turn's prepared variants, falling back sensibly.
- *
- * Never returns nothing when something exists: an unvoiced or failed variant
- * falls back to the question's own clip, because hearing the question again is
- * far better than hearing silence. Null only when the turn itself has no
- * audio, which the browser already handles by showing the text and a retry.
- */
-async function variantAudioId(
-  attemptId: string,
-  planIndex: number | null,
-  role: "primary" | "easier" | "probe",
-  ordinal: number,
-  fallbackAudioId: string | null,
-): Promise<string | null> {
-  if (planIndex === null) return fallbackAudioId;
-
-  const variant = await db.query.interviewTurnVariantsTable.findFirst({
-    where: and(
-      eq(interviewTurnVariantsTable.attemptId, attemptId),
-      eq(interviewTurnVariantsTable.planIndex, planIndex),
-      eq(interviewTurnVariantsTable.role, role),
-      eq(interviewTurnVariantsTable.ordinal, ordinal),
-    ),
-  });
-
-  if (variant?.audioStatus === "ready" && variant.audioId) {
-    return variant.audioId;
-  }
-  return fallbackAudioId;
-}
-
-/* -------------------------------------------------------------------------- */
-/*                          Preparing the interview                           */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Run work in the background without letting it take the caller down with it.
- *
- * `after()` is the right tool inside a request — it keeps the work within the
- * server's lifetime and the platform waits for it — but it THROWS when there
- * is no request scope, and it is called from deep in this service, which also
- * runs from scripts, jobs and tests. Left bare, a background nicety takes out
- * the thing it was decorating: preparation failing to schedule would stop an
- * interview from starting at all.
- *
- * So: use `after` when it is available, fall back to a detached promise when
- * it is not. The container is long-lived (a standalone Next server, not a
- * function that freezes between requests), so a detached promise still runs to
- * completion.
- *
- * The work itself is wrapped too. Every caller here is doing something
- * optional — writing questions ahead of time — and none of it should surface
- * to a candidate as an error.
- */
-function scheduleBackground(label: string, work: () => Promise<void>): void {
-  const run = async () => {
-    try {
-      await work();
-    } catch (error) {
-      console.error(
-        `[attempt] background ${label} failed: ${
-          error instanceof Error ? error.message : "unknown"
-        }`,
-      );
-    }
-  };
-
-  try {
-    after(run);
-  } catch {
-    void run();
-  }
-}
-
-/**
- * How many warm-up questions follow the fixed opener.
- *
- * The opener is itself a comfort question — fixed text, already voiced, so it
- * costs nothing — which makes three easy questions in total before anything is
- * scored. Enough for a nervous candidate to hear their own voice and discover
- * that nothing bad happens.
- */
-const COMFORT_QUESTION_COUNT = 2;
-
-/**
- * How much slower "say it slowly" makes the interviewer.
- *
- * Applied in the browser with `playbackRate`, so it reaches clips that were
- * voiced before the candidate asked. Not lower than this: the voice is already
- * synthesised at its natural pace, and stacking a heavy slowdown on top makes
- * it sound drugged rather than clear.
- */
-const SLOWER_SPEECH_RATE = 0.85;
-
-/**
- * How many prepared follow-ups one question may spend.
- *
- * Two. A third is the point at which digging stops being interest and
- * starts being interrogation, and there are only two probes written per
- * question anyway.
- */
-const MAX_FOLLOW_UPS = 2;
-
-/**
- * Which skills each wave writes.
- *
- * Not one big batch. Preparing all ten up front means paying for the whole
- * interview including the ones abandoned at question three — which
- * `sweepAbandonedAttempts` exists because they are. Each wave fits a single
- * provider call comfortably and lands while the candidate is still answering
- * the questions before it.
- */
-const SKILL_WAVES: number[][] = [
-  [0, 1, 2],
-  [3, 4, 5, 6],
-  [7, 8, 9],
-];
-
-/**
- * Where a skill sits in the plan.
- *
- * Plan 1 is the fixed opener, 2..(1 + COMFORT_QUESTION_COUNT) are the prepared
- * warm-ups, and the skills follow in framework order.
- */
-function planIndexForSkill(skillIndex: number): number {
-  return 1 + COMFORT_QUESTION_COUNT + 1 + skillIndex;
-}
-
-/**
- * Write one batch of prepared questions and their variants.
- *
- * Idempotent per plan position: the unique index on
- * (attemptId, planIndex, role, ordinal) means a wave that runs twice — a retry,
- * or two requests racing — inserts nothing the second time rather than
- * doubling the interview.
- */
-async function storePreparedQuestions(
-  attemptId: string,
-  prepared: PreparedQuestion[],
-  planIndexOf: (index: number) => number,
-): Promise<void> {
-  const rows: (typeof interviewTurnVariantsTable.$inferInsert)[] = [];
-
-  prepared.forEach((row, index) => {
-    const planIndex = planIndexOf(index);
-    rows.push({
-      attemptId,
-      planIndex,
-      role: "primary",
-      ordinal: 0,
-      text: row.question,
-      translation: row.translation,
-    });
-    rows.push({
-      attemptId,
-      planIndex,
-      role: "easier",
-      ordinal: 0,
-      text: row.easier,
-      translation: row.easierTranslation,
-    });
-    row.probes.forEach((probe, probeIndex) => {
-      rows.push({
-        attemptId,
-        planIndex,
-        role: "probe",
-        ordinal: probeIndex,
-        text: probe.text,
-        translation: probe.translation,
-      });
-    });
-  });
-
-  if (rows.length === 0) return;
-  await db
-    .insert(interviewTurnVariantsTable)
-    .values(rows)
-    .onConflictDoNothing();
-}
-
-/**
- * Plan index reserved for the fixed lines.
- *
- * Zero, because they belong to the attempt rather than to any question: the
- * same "okay" serves every turn. Filing them here means the voicing backfill
- * and the missing-clip fallback both work on them unchanged.
- */
-const FILLER_PLAN_INDEX = 0;
-
-/**
- * Write every fixed line the interview might say.
- *
- * All of them, up front, on the first wave. They are short — the whole set is
- * about the length of two questions — and needing one is always urgent: an
- * "okay" that arrives after the silence it was meant to cover is worse than no
- * "okay" at all.
- */
-async function storeFillers(
-  attemptId: string,
-  language: InterviewLanguageKey,
-  /** Filled into the lines that address the candidate — see `{name}`. */
-  name: string | null,
-): Promise<void> {
-  const rows: (typeof interviewTurnVariantsTable.$inferInsert)[] = [];
-
-  for (const [kind, options] of Object.entries(FILLERS[language])) {
-    options.forEach((text, index) => {
-      rows.push({
-        attemptId,
-        planIndex: FILLER_PLAN_INDEX,
-        role: "filler",
-        ordinal: index,
-        slug: kind,
-        // Checking on someone by name is the whole point of the line; the
-        // space goes with the slot when there is no name to put in it.
-        text: name
-          ? text.replace("{name}", name)
-          : text.replace("{name}, ", "").replace(" {name}", ""),
-      });
-    });
-  }
-
-  if (rows.length === 0) return;
-  await db
-    .insert(interviewTurnVariantsTable)
-    .values(rows)
-    .onConflictDoNothing();
-}
-
-/**
- * Say all the fixed lines again, in the language just chosen.
- *
- * They are written once, at the start, in whatever language the interview
- * opened in — so without this a candidate who switches to Hindi keeps being
- * asked "is everything alright?" and "did you not follow the question?" in
- * English. Those lines exist to reassure somebody who is struggling, and
- * arriving in the language they just told us they cannot follow is the worst
- * possible moment to get it wrong.
- *
- * The old rows go, along with their clips: they are attempt-scoped and nothing
- * will ever point at them again, so leaving them behind is storage paid for
- * and never read. Discarding runs in the background because the candidate is
- * waiting on the switch and a bucket delete is not their problem.
- */
-async function refreshFillersForLanguage(
-  attemptId: string,
-  language: InterviewLanguage & { key: InterviewLanguageKey },
-  name: string | null,
-): Promise<void> {
-  const stale = await db.query.interviewTurnVariantsTable.findMany({
-    where: and(
-      eq(interviewTurnVariantsTable.attemptId, attemptId),
-      eq(interviewTurnVariantsTable.role, "filler"),
-    ),
-    columns: { audioId: true },
-  });
-
-  await db
-    .delete(interviewTurnVariantsTable)
-    .where(
-      and(
-        eq(interviewTurnVariantsTable.attemptId, attemptId),
-        eq(interviewTurnVariantsTable.role, "filler"),
-      ),
-    );
-
-  await storeFillers(attemptId, language.key, name);
-  await voicePendingVariants(attemptId, language.code);
-
-  scheduleBackground(`discard old fillers for ${attemptId}`, async () => {
-    for (const row of stale) {
-      if (row.audioId) await discardAudioClip(row.audioId);
-    }
-  });
-}
-
-/**
- * The clip for a fixed line, varied so it is not the same syllable every time.
- *
- * `seed` is something that already differs per turn, so a candidate hears
- * "okay", then "right", then "got it" rather than the same word eleven times —
- * which is precisely what made the previous acknowledgement sound mechanical.
- */
-async function fillerAudioId(
-  attemptId: string,
-  kind: FillerKind,
-  seed: number,
-): Promise<string | null> {
-  const ready = await db.query.interviewTurnVariantsTable.findMany({
-    where: and(
-      eq(interviewTurnVariantsTable.attemptId, attemptId),
-      eq(interviewTurnVariantsTable.role, "filler"),
-      eq(interviewTurnVariantsTable.slug, kind),
-      eq(interviewTurnVariantsTable.audioStatus, "ready"),
-    ),
-    orderBy: asc(interviewTurnVariantsTable.ordinal),
-  });
-  if (ready.length === 0) return null;
-  return ready[Math.abs(seed) % ready.length]?.audioId ?? null;
-}
-
-/**
- * The "okay" said the moment an answer ends.
- *
- * Handed back with the upload receipt rather than with the next question,
- * because the point of it is the gap in between. A candidate who stops talking
- * into silence cannot tell whether they were heard; the client complaint that
- * the interviewer "takes a lot of time thinking" was mostly this — the waiting
- * was audible as nothing at all.
- */
-export async function acknowledgementClip(
-  attemptId: string,
-  seed: number,
-): Promise<string | null> {
-  return fillerAudioId(attemptId, "okay", seed);
-}
-
-/**
- * Voice everything written but not yet spoken.
- *
- * Six at a time. The TTS timeout is short and does not retry, so a wider fan
- * turns a rate-limit burst into lost clips rather than queued ones; six was
- * measured at about a second for six clips, fast enough that the backlog never
- * gets ahead of the candidate.
- *
- * The order is not incidental: the simpler wording of a question is needed at
- * that question's own silence prompt, so it must not sit behind the follow-up
- * probes of a question four turns later.
- */
-async function voicePendingVariants(
-  attemptId: string,
-  languageCode: string,
-): Promise<void> {
-  const ROLE_PRIORITY: Record<string, number> = {
-    primary: 0,
-    easier: 1,
-    probe: 2,
-  };
-
-  const pending = await db.query.interviewTurnVariantsTable.findMany({
-    where: and(
-      eq(interviewTurnVariantsTable.attemptId, attemptId),
-      eq(interviewTurnVariantsTable.audioStatus, "pending"),
-    ),
-  });
-  if (pending.length === 0) return;
-
-  pending.sort(
-    (a, b) =>
-      a.planIndex - b.planIndex ||
-      (ROLE_PRIORITY[a.role] ?? 9) - (ROLE_PRIORITY[b.role] ?? 9) ||
-      a.ordinal - b.ordinal,
-  );
-
-  const CONCURRENCY = 6;
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const variant = pending[cursor++];
-      if (!variant) return;
-      const audioId = await synthesiseQuestionAudio(
-        attemptId,
-        variant.text,
-        languageCode,
-      );
-      await db
-        .update(interviewTurnVariantsTable)
-        .set({
-          audioId,
-          // A failure is recorded rather than retried forever: delivery falls
-          // back to the question's own clip, and hearing the question again
-          // beats hearing silence.
-          audioStatus: audioId ? "ready" : "failed",
-          updatedAt: new Date(),
-        })
-        .where(eq(interviewTurnVariantsTable.id, variant.id));
-    }
-  };
-
-  await Promise.all(
-    Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker),
-  );
-}
-
-/**
- * Write and voice one wave of the interview.
- *
- * Waves are triggered by progress rather than by a clock: the first goes out
- * while the candidate is still hearing the opener, and each later one while
- * they are answering a question several turns before it is needed.
- *
- * Best-effort throughout. A wave that fails leaves `preparationStatus` at
- * `failed`, and delivery falls back to writing that one question on demand —
- * slower for that turn, but an interview that continues.
- */
-async function prepareWave(
+function buildAndInsertQuestion(
   attemptId: string,
   interview: Interview,
-  waveIndex: number,
+  turnNumber: number,
 ): Promise<void> {
-  const attempt = await reload(attemptId);
-  if (!attempt.language) return;
+  const key = `${attemptId}:${turnNumber}`;
+  const existing = questionsInFlight.get(key);
+  if (existing) return existing;
 
-  const language = resolveInterviewLanguage(attempt.language);
-  const existing = await db.query.interviewTurnVariantsTable.findMany({
-    where: eq(interviewTurnVariantsTable.attemptId, attemptId),
-    columns: { planIndex: true },
-  });
-  const done = new Set(existing.map((v) => v.planIndex));
+  const work = generateAndInsertQuestion(
+    attemptId,
+    interview,
+    turnNumber,
+  ).finally(() => questionsInFlight.delete(key));
 
-  const ctx = contextFor(attempt, interview, await introductionFor(attemptId));
-  const priorTurns = await getTurns(attemptId);
-
-  try {
-    if (waveIndex === 0) {
-      // The fixed lines first: they are needed from the very first answer,
-      // and they are cheap enough that ordering them ahead of the questions
-      // costs nothing measurable.
-      await storeFillers(
-        attemptId,
-        language.key,
-        firstNameOf(attempt.candidateName),
-      );
-
-      const comfortPlans = Array.from(
-        { length: COMFORT_QUESTION_COUNT },
-        (_, i) => i + 2,
-      );
-      if (!comfortPlans.every((plan) => done.has(plan))) {
-        const comfort = await prepareQuestions({
-          ctx,
-          skills: [],
-          comfortCount: COMFORT_QUESTION_COUNT,
-          history: toHistory(priorTurns),
-        });
-        await storePreparedQuestions(
-          attemptId,
-          comfort.slice(0, COMFORT_QUESTION_COUNT),
-          (index) => index + 2,
-        );
-      }
-    }
-
-    const band = SKILL_WAVES[waveIndex];
-    if (band && !band.every((i) => done.has(planIndexForSkill(i)))) {
-      const skills = band.map((i) => WORK_SKILLS[i]!);
-      const questions = await prepareQuestions({
-        ctx,
-        skills,
-        history: toHistory(priorTurns),
-      });
-      await storePreparedQuestions(attemptId, questions, (index) =>
-        planIndexForSkill(band[index] ?? 0),
-      );
-    }
-
-    await db
-      .update(interviewAttemptsTable)
-      .set({ preparationStatus: "questions_ready", updatedAt: new Date() })
-      .where(eq(interviewAttemptsTable.id, attemptId));
-
-    await voicePendingVariants(attemptId, language.code);
-
-    await db
-      .update(interviewAttemptsTable)
-      .set({ preparationStatus: "audio_ready", updatedAt: new Date() })
-      .where(eq(interviewAttemptsTable.id, attemptId));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown";
-    console.error(
-      `[attempt] preparation wave ${waveIndex} failed for ${attemptId}: ${message}`,
-    );
-    await db
-      .update(interviewAttemptsTable)
-      .set({
-        preparationStatus: "failed",
-        preparationError: message.slice(0, 500),
-        updatedAt: new Date(),
-      })
-      .where(eq(interviewAttemptsTable.id, attemptId));
-  }
+  questionsInFlight.set(key, work);
+  return work;
 }
 
 /** The primary (non-follow-up) skill turns asked so far. */
@@ -1924,9 +1364,6 @@ async function generateAndInsertQuestion(
       kind: "skill",
       skillId: skill.id,
       isFollowUp: false,
-      // Filed under the plan entry it stands in for, so the simpler wording
-      // and probes a wave DID manage to write are still reachable from it.
-      planIndex: planIndexForSkill(skillNumberOf(skill.id) - 1),
       question: generated.question,
       questionTranslation: generated.translation,
       questionAudioId,
@@ -1964,7 +1401,8 @@ async function discardAudioClip(audioId: string): Promise<void> {
 }
 
 /**
- * Make a question current.
+ * Prepare the NEXT question in the background, so it is ready the instant the
+ * candidate finishes the one in front of them.
  *
  * Only non-follow-up questions can be prepared ahead — a follow-up has to be
  * built from an answer that does not exist yet. Best-effort: if it fails, the
@@ -2008,11 +1446,21 @@ async function deliverTurn(
   attemptId: string,
   interview: Interview,
   turnNumber: number,
+  /**
+   * Whether to wait for the look-ahead before returning.
+   *
+   * True from the background pipeline, where waiting keeps the work inside
+   * the `after()` window that is keeping the process alive. False from a
+   * request the candidate is sitting in front of — they need THIS question,
+   * not the one after it, and making them wait on a second OpenAI and TTS
+   * round trip is the opposite of what preparing ahead is for.
+   */
+  awaitPrefetch = true,
 ): Promise<void> {
   const turns = await getTurns(attemptId);
   if (!turns.some((t) => t.turnNumber === turnNumber)) {
     if (!nextPrimarySkill(turns)) return;
-    await generateAndInsertQuestion(attemptId, interview, turnNumber);
+    await buildAndInsertQuestion(attemptId, interview, turnNumber);
   }
 
   await db
@@ -2024,12 +1472,30 @@ async function deliverTurn(
     })
     .where(eq(interviewAttemptsTable.id, attemptId));
 
-  // Top up the plan well before it runs out. Keyed on how many skill
-  // questions have actually been asked rather than the turn number, because a
-  // follow-up shifts turn numbers but does not advance the plan.
-  const asked = primaryTurns(turns).length;
-  const nextWave = SKILL_WAVES.findIndex(
-    (band) => band.length > 0 && asked < (band[0] ?? 0) + 1,
+  const lookAhead = prefetchNextQuestion(attemptId, interview, turnNumber);
+  if (awaitPrefetch) await lookAhead;
+}
+
+/**
+ * Insert a follow-up the model just produced from the answer, voice it, make
+ * it current, and start preparing the primary after it.
+ *
+ * A follow-up keeps the current turn's skill and never spawns another — so the
+ * question after it is a plain primary, safe to prepare ahead.
+ */
+async function deliverFollowUp(
+  attempt: InterviewAttempt,
+  interview: Interview,
+  currentTurn: InterviewTurn,
+  followUpQuestion: string,
+  followUpTranslation: string | null,
+): Promise<void> {
+  const nextTurnNumber = currentTurn.turnNumber + 1;
+  const language = resolveInterviewLanguage(attempt.language!);
+  const questionAudioId = await synthesiseQuestionAudio(
+    attempt.id,
+    followUpQuestion,
+    language.code,
   );
 
   // A next primary may have been prefetched into this slot while the candidate
@@ -2044,7 +1510,8 @@ async function deliverTurn(
     ),
   });
   if (prepared) {
-    if (prepared.questionAudioId) await discardAudioClip(prepared.questionAudioId);
+    if (prepared.questionAudioId)
+      await discardAudioClip(prepared.questionAudioId);
     await db
       .delete(interviewTurnsTable)
       .where(eq(interviewTurnsTable.id, prepared.id));
@@ -2170,7 +1637,6 @@ async function writeScoredTurn(
     evaluation: string;
     strengths: string[];
     improvements: string[];
-    concern?: "none" | "off_topic" | "inappropriate";
   },
 ): Promise<void> {
   await db
@@ -2182,8 +1648,6 @@ async function writeScoredTurn(
       evaluation: evaluation.evaluation,
       strengths: evaluation.strengths,
       improvements: evaluation.improvements,
-      // Absent means none — see the note on the field in `openai.ts`.
-      concern: evaluation.concern ?? "none",
       status: "completed",
       errorMessage: null,
       processingStartedAt: null,
@@ -2266,7 +1730,7 @@ async function handleAnsweredTurn(args: {
   transcript: string;
   languageCode: string | null;
 }): Promise<void> {
-  const { attempt, interview, turn, languageCode } = args;
+  const { attempt, interview, turn, transcript, languageCode } = args;
 
   const skillId = turn.skillId as WorkSkillId | null;
   const priorTurns = await db.query.interviewTurnsTable.findMany({
@@ -2372,206 +1836,46 @@ async function handleAnsweredTurn(args: {
     return;
   }
 
-  await deliverTurn(attempt.id, interview, turn.turnNumber + 1);
-}
-
-/**
- * Mark a turn answered without scoring it yet.
- *
- * Scoring is a provider call and the candidate is waiting, so the transcript
- * is written now and the marks land later — see `scheduleScoring`.
- */
-async function writeAnsweredTurn(
-  turnId: string,
-  transcript: string,
-  languageCode: string | null,
-): Promise<void> {
   await db
     .update(interviewTurnsTable)
     .set({
       answerTranscript: transcript,
       detectedLanguageCode: languageCode,
       status: "completed",
+      errorMessage: null,
       processingStartedAt: null,
       updatedAt: new Date(),
     })
-    .where(eq(interviewTurnsTable.id, turnId));
-}
+    .where(eq(interviewTurnsTable.id, turn.id));
 
-/**
- * Score an answer in the background.
- *
- * Never on the candidate's path. `trackScoring` is what lets the final report
- * wait for marks that are still in flight, so a fast finisher does not get a
- * report missing their last answer.
- */
-function scheduleScoring(
-  attempt: InterviewAttempt,
-  interview: Interview,
-  turn: InterviewTurn,
-  transcript: string,
-  languageCode: string | null,
-): void {
-  if (turn.kind !== "skill" || !turn.skillId) return;
+  await deliverTurn(attempt.id, interview, turn.turnNumber + 1);
 
-  const scoring = (async () => {
-    try {
-      await scoreTurn({
-        attempt,
-        interview,
-        turn,
-        transcript,
-        languageCode,
-      });
-    } catch (error) {
-      console.error(
-        `[attempt] scoring failed turn=${turn.id}: ${
-          error instanceof Error ? error.message : "unknown"
-        }`,
-      );
-      await db
-        .update(interviewTurnsTable)
-        .set({
-          errorMessage: "This answer could not be scored automatically.",
-          updatedAt: new Date(),
-        })
-        .where(eq(interviewTurnsTable.id, turn.id));
-    }
-  })();
-
-  trackScoring(attempt.id, scoring);
-}
-
-/**
- * End an attempt the candidate walked away from.
- *
- * Without this an abandoned interview sits at "in progress" for ever: the
- * admin list shows a candidate who left twenty minutes ago as still going,
- * and the work they DID do is never scored or reported, because scoring and
- * the summary only run when the last question is answered.
- *
- * It finalises exactly as a completed interview does, so whatever they got
- * through is transcribed, scored and written up — an interview abandoned at
- * question seven is a report on seven questions, not a blank row.
- *
- * Idempotent, and a no-op once an attempt has finished: it is called from a
- * page the candidate may be closing, so it can arrive twice or arrive late.
- */
-async function abandonAttemptInner(
-  attempt: InterviewAttempt,
-  interview: Interview,
-): Promise<void> {
-  if (attempt.status === "completed" || attempt.status === "failed") return;
-  if (attempt.status === "not_started") return;
-
-  /**
-   * The interview ended when they stopped, not when we noticed.
-   *
-   * `updatedAt` is the last sign of life: the page pings every 20 seconds
-   * while it is open, so this is within a heartbeat of the moment the tab
-   * closed. Read before `settleScoring`, which can take a while and would
-   * otherwise drag the timestamp forward.
-   */
-  const endedAt = attempt.leftAt ?? attempt.updatedAt;
-
-  /**
-   * Close it first, then write the report.
-   *
-   * `finaliseAttempt` scores what is outstanding and asks for a summary, which
-   * is several provider calls and can run to half a minute. Leaving the status
-   * alone for that long is what kept an abandoned interview showing as "In
-   * progress" on the admin list — and kept its duration ticking up, since a
-   * running interview is measured against the clock rather than against an end
-   * that had not been written yet.
-   *
-   * Both writes are idempotent, and `finaliseAttempt` sets the same end time
-   * again when it lands, so a crash in between still leaves a closed attempt
-   * with an honest duration.
-   */
-  await db
-    .update(interviewAttemptsTable)
-    .set({ status: "completed", completedAt: endedAt, updatedAt: new Date() })
-    .where(eq(interviewAttemptsTable.id, attempt.id));
-
-  // Anything still being scored in the background belongs in the report.
-  await settleScoring(attempt.id);
-  await finaliseAttempt(attempt.id, interview, endedAt);
-}
-
-/**
- * How long an interview can sit untouched before it counts as walked away
- * from.
- *
- * The interview page pings every 20 seconds while it is open, so `updatedAt`
- * moves whether or not the candidate is doing anything. That makes silence
- * unambiguous — it is a closed tab, a dead connection or a flat battery, not
- * someone thinking — and lets this be two minutes rather than the ten it
- * needed when a turn changing was the only sign of life.
- *
- * Still six heartbeats' worth of grace, so a brief network drop or a reload
- * does not end an interview someone is sitting in.
- */
-const ABANDONED_AFTER_MS = 2 * 60 * 1000;
-
-/**
- * How long to wait after a browser has told us it is closing.
- *
- * Far shorter than `ABANDONED_AFTER_MS`, because this is not an inference from
- * silence — the tab said so on its way out. The grace is only here to cover a
- * reload, which fires the same event: come back within it and the heartbeat
- * clears `leftAt` and nothing happens.
- */
-const LEFT_GRACE_MS = 30 * 1000;
-
-/**
- * Finalise interviews nobody is sitting in any more.
- *
- * The leave button covers the candidate who says they are going. This covers
- * the one who closed the tab, lost their connection, or ran out of battery —
- * no client cooperation, because there is none to be had. Without it those
- * attempts show as "in progress" in the admin list for ever and are never
- * scored, which is what made every abandoned interview look stuck.
- *
- * Called from the admin screens that display attempts, so the list corrects
- * itself when someone looks at it rather than needing a scheduler. Failures
- * are swallowed on purpose: this is a tidy-up, and it must never take down
- * the page that triggered it.
- */
-export async function sweepAbandonedAttempts(
-  interviewsById: Map<string, Interview>,
-  attempts: InterviewAttempt[],
-): Promise<void> {
-  const now = Date.now();
-  const silentCutoff = now - ABANDONED_AFTER_MS;
-  const leftCutoff = now - LEFT_GRACE_MS;
-
-  /**
-   * Two ways to have gone: said so, or simply stopped.
-   *
-   * A browser that reported itself closing is taken at its word after a few
-   * seconds. Everything else still has to go quiet for the full couple of
-   * minutes, because silence alone could be a slow network or a candidate
-   * staring at the ceiling.
-   */
-  const stale = attempts.filter((a) => {
-    if (a.status !== "in_progress" && a.status !== "processing") return false;
-    if (a.leftAt) return a.leftAt.getTime() < leftCutoff;
-    return a.updatedAt.getTime() < silentCutoff;
+  // The candidate has already moved on, so a scoring failure must not fail the
+  // turn — an unscored answer is shown as such in the report and no more.
+  const scoring = scoreTurn({
+    attempt,
+    interview,
+    turn,
+    transcript,
+    languageCode,
+  }).catch(async (error) => {
+    console.error(
+      `[attempt] background scoring failed attempt=${attempt.id} turn=${turn.id}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+    await db
+      .update(interviewTurnsTable)
+      .set({
+        errorMessage: "This answer could not be scored automatically.",
+        updatedAt: new Date(),
+      })
+      .where(eq(interviewTurnsTable.id, turn.id))
+      .catch(() => undefined);
   });
 
-  for (const attempt of stale) {
-    const interview = interviewsById.get(attempt.interviewId);
-    if (!interview) continue;
-    try {
-      await abandonAttempt(attempt, interview);
-    } catch (error) {
-      console.error(
-        `[attempt] sweep could not finalise ${attempt.id}: ${
-          error instanceof Error ? error.message : "unknown"
-        }`,
-      );
-    }
-  }
+  trackScoring(attempt.id, scoring);
+  await scoring;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2581,16 +1885,6 @@ export async function sweepAbandonedAttempts(
 async function finaliseAttempt(
   attemptId: string,
   interview: Interview,
-  /**
-   * When the interview actually ended, if that is not now.
-   *
-   * The sweep finalises abandoned attempts whenever an admin next loads the
-   * dashboard, which can be hours after the candidate closed the tab. Stamping
-   * `completedAt` with the sweep's clock made the reported duration "how long
-   * until somebody looked at the admin page" — one attempt read as 2 hr 12 min
-   * for six minutes of interview.
-   */
-  endedAt?: Date,
 ): Promise<void> {
   const attempt = await reload(attemptId);
   const turns = await getTurns(attemptId);
@@ -2642,6 +1936,42 @@ async function finaliseAttempt(
       "The detailed summary could not be generated, but the per-question feedback below is complete.";
   }
 
+  /**
+   * The same report in the candidate's own language.
+   *
+   * English stays canonical — reviewers read it, the partner API has always
+   * returned it, and the scoring prompts are tuned to produce it. This is a
+   * translation of that, so the two can never say different things.
+   *
+   * Best-effort and deliberately last: it runs after the English report is in
+   * hand, and every failure path leaves `translated` null rather than throwing.
+   * A candidate must never lose their report because a translation call timed
+   * out. Skipped entirely for an English interview, where there is nothing to
+   * translate.
+   */
+  let translated: TranslatedReport | null = null;
+  const reportLanguage =
+    attempt.language && attempt.language !== "english"
+      ? attempt.language
+      : null;
+
+  if (reportLanguage && summary) {
+    try {
+      translated = await translateReport({
+        languageName: resolveInterviewLanguage(reportLanguage).promptName,
+        summary,
+        strengths,
+        improvements,
+      });
+    } catch (error) {
+      console.error(
+        `[attempt] report translation failed attempt=${attemptId}: ${
+          error instanceof Error ? error.message : "unknown"
+        }`,
+      );
+    }
+  }
+
   await db
     .update(interviewAttemptsTable)
     .set({
@@ -2650,7 +1980,13 @@ async function finaliseAttempt(
       summary,
       strengths,
       improvements,
-      completedAt: endedAt ?? new Date(),
+      summaryTranslated: translated?.summary ?? null,
+      strengthsTranslated: translated?.strengths ?? null,
+      improvementsTranslated: translated?.improvements ?? null,
+      // Only set when there IS a translation, so this doubles as the flag for
+      // "a translated report exists" rather than "the interview had a language".
+      reportLanguage: translated ? reportLanguage : null,
+      completedAt: new Date(),
       updatedAt: new Date(),
     })
     .where(eq(interviewAttemptsTable.id, attemptId));
@@ -2811,106 +2147,11 @@ export interface AttemptStatus {
     errorMessage: string | null;
     skillId: WorkSkillId | null;
   } | null;
-  /**
-   * What the browser should play or do next, when there is something.
-   *
-   * Null for the ordinary case of a fresh question, which the turn itself
-   * already describes.
-   */
-  directive: TurnDirective | null;
-  /**
-   * Clips for this turn the browser may need without asking: the simpler
-   * wording, and the fillers the silence ladder plays. Handed over with the
-   * question so a timer never has to wait on a round trip.
-   */
-  clips: {
-    easier: string | null;
-    whatHappened: string | null;
-    didNotGet: string | null;
-    noProblem: string | null;
-    closing: string | null;
-  };
-  /**
-   * Which service served each leg (brain, STT, TTS) recently. Development
-   * only — always an empty array in production, so it never reaches a real
-   * candidate's browser. See `~/server/services/dev-activity`.
-   */
-  devActivity: ActivityEvent[];
-}
-
-/**
- * Attempts whose preparation this process has already picked back up.
- *
- * The poll asks once a second; without this, a stranded clip would start a new
- * voicing run on every one of those.
- */
-const reVoicing = new Set<string>();
-
-/**
- * How long a written-but-unvoiced clip may sit before we assume the run that
- * was going to voice it is not coming back.
- *
- * A whole wave is voiced in about a second, so a minute is not impatience — it
- * is long enough that the only rows still waiting are ones whose process died
- * holding them.
- */
-const STRANDED_PREPARATION_MS = 60_000;
-
-/**
- * Pick up preparation that was interrupted.
- *
- * Waves run in the background, and a deploy or a crash mid-wave leaves the
- * questions written but silent. Nothing would ever come back for them: the
- * wave that owned them has gone, and the next one is triggered by progress the
- * candidate has already made. The interview survives — delivery falls back to
- * the question's own clip — but quietly loses its simpler wordings and probes
- * for the rest of the session.
- *
- * Gated so the ordinary case costs nothing: preparation is `audio_ready`
- * between waves, which is nearly always, and the query below never runs.
- */
-async function reVoiceStrandedClips(attempt: InterviewAttempt): Promise<void> {
-  if (attempt.status !== "in_progress" || !attempt.language) return;
-  if (attempt.preparationStatus === "audio_ready") return;
-  if (reVoicing.has(attempt.id)) return;
-
-  const stranded = await db.query.interviewTurnVariantsTable.findFirst({
-    where: and(
-      eq(interviewTurnVariantsTable.attemptId, attempt.id),
-      eq(interviewTurnVariantsTable.audioStatus, "pending"),
-      lt(
-        interviewTurnVariantsTable.updatedAt,
-        new Date(Date.now() - STRANDED_PREPARATION_MS),
-      ),
-    ),
-    columns: { id: true },
-  });
-  if (!stranded) return;
-
-  const language = resolveInterviewLanguage(attempt.language);
-  reVoicing.add(attempt.id);
-  scheduleBackground(`re-voice preparation for ${attempt.id}`, async () => {
-    try {
-      await withUsageScope(attempt.id, () =>
-        voicePendingVariants(attempt.id, language.code),
-      );
-      await db
-        .update(interviewAttemptsTable)
-        .set({ preparationStatus: "audio_ready", updatedAt: new Date() })
-        .where(eq(interviewAttemptsTable.id, attempt.id));
-    } finally {
-      // Released whatever happened. A clip that genuinely cannot be voiced is
-      // marked `failed` by the voicer and will not be found again; one that
-      // failed transiently deserves the next poll's attempt.
-      reVoicing.delete(attempt.id);
-    }
-  });
 }
 
 /**
  * Poll target. Also recovers a turn abandoned mid-processing so the UI can
- * offer a retry instead of spinning forever, and picks up preparation whose
- * background run did not survive.
+ * offer a retry instead of spinning forever.
  */
 export async function getAttemptStatus(
   attemptId: string,
@@ -2936,8 +2177,6 @@ export async function getAttemptStatus(
     turns = await getTurns(attemptId);
   }
 
-  await reVoiceStrandedClips(attempt);
-
   const current =
     turns.find((t) => t.turnNumber === attempt.currentQuestionNumber) ?? null;
 
@@ -2960,44 +2199,6 @@ export async function getAttemptStatus(
     ? skillNumberOf(current.skillId as WorkSkillId)
     : 0;
 
-  /**
-   * Only the clips this moment could need.
-   *
-   * The browser polls every second for the length of the interview, so each
-   * lookup here is a query per candidate per second. The ladder's clips are
-   * dead weight unless somebody is being listened to, and the closing line is
-   * dead weight until the interview is over — so neither is fetched until it
-   * is.
-   */
-  const listening = current?.status === "awaiting_answer";
-  const [easier, whatHappened, didNotGet, noProblem, closing] =
-    await Promise.all([
-      current
-        ? variantAudioId(
-            attempt.id,
-            current.planIndex,
-            "easier",
-            0,
-            current.questionAudioId,
-          )
-        : null,
-      // Seeded by turn so the check-in is not the identical wording at every
-      // question, which is what made the old acknowledgement grate.
-      listening && current
-        ? fillerAudioId(attempt.id, "whatHappened", current.turnNumber)
-        : null,
-      listening && current
-        ? fillerAudioId(attempt.id, "didNotGet", current.turnNumber)
-        : null,
-      listening && current
-        ? fillerAudioId(attempt.id, "noProblem", current.turnNumber)
-        : null,
-      attempt.status === "completed"
-        ? fillerAudioId(attempt.id, "closing", 0)
-        : null,
-    ]);
-  const clips = { easier, whatHappened, didNotGet, noProblem, closing };
-
   return {
     attemptStatus: attempt.status,
     currentQuestionNumber: attempt.currentQuestionNumber,
@@ -3019,39 +2220,7 @@ export async function getAttemptStatus(
           skillId: (current.skillId as WorkSkillId | null) ?? null,
         }
       : null,
-    directive:
-      current && current.directiveAction
-        ? {
-            seq: current.directiveSeq,
-            action: current.directiveAction,
-            audioId: current.directiveAudioId,
-            speechRate: attempt.speechRate,
-            resumeRecording: current.directiveAction !== "advance",
-          }
-        : null,
-    clips,
-    devActivity: recentActivity(),
   };
-}
-
-/**
- * The browser is closing. Note when, so the sweep knows they really went.
- *
- * Deliberately does not finalise anything: this arrives as a beacon during
- * unload, which also fires on a reload and on a restored tab, and ending
- * somebody's interview on that evidence alone would be unrecoverable. The
- * timestamp is a claim; `sweepAbandonedAttempts` decides what it means.
- */
-export async function recordLeft(attemptId: string): Promise<void> {
-  await db
-    .update(interviewAttemptsTable)
-    .set({ leftAt: new Date() })
-    .where(
-      and(
-        eq(interviewAttemptsTable.id, attemptId),
-        inArray(interviewAttemptsTable.status, ["in_progress", "processing"]),
-      ),
-    );
 }
 
 /** Light proctoring signal: increment in SQL, no read-modify-write race. */
@@ -3063,67 +2232,4 @@ export async function recordAway(attemptId: string): Promise<void> {
       updatedAt: new Date(),
     })
     .where(eq(interviewAttemptsTable.id, attemptId));
-}
-
-/* -------------------------------------------------------------------------- */
-/*                               Usage accounting                             */
-/* -------------------------------------------------------------------------- */
-
-/**
- * The public entry points, each wrapped so everything it calls is billed to
- * the right attempt.
- *
- * One scope here covers every provider leg beneath it — STT, TTS and both
- * model paths — without an attempt id in any of their signatures, and without
- * anyone having to remember to pass one when a new leg is added. See
- * `~/server/interview/usage`.
- */
-
-export function startAttempt(
-  attemptId: string,
-  languageKey: string,
-  about: { course: string | null; experience: string | null },
-): Promise<void> {
-  return withUsageScope(attemptId, () =>
-    startAttemptInner(attemptId, languageKey, about),
-  );
-}
-
-export function regenerateQuestionAudio(
-  attempt: InterviewAttempt,
-  turnNumber: number,
-): Promise<boolean> {
-  return withUsageScope(attempt.id, () =>
-    regenerateQuestionAudioInner(attempt, turnNumber),
-  );
-}
-
-export function processTurn(
-  attemptId: string,
-  turnId: string,
-  interview: Interview,
-  answer?: AnswerAudio,
-): Promise<void> {
-  return withUsageScope(attemptId, () =>
-    processTurnInner(attemptId, turnId, interview, answer),
-  );
-}
-
-export function chooseLanguage(
-  attempt: InterviewAttempt,
-  interview: Interview,
-  languageKey: string,
-): Promise<void> {
-  return withUsageScope(attempt.id, () =>
-    chooseLanguageInner(attempt, interview, languageKey),
-  );
-}
-
-export function abandonAttempt(
-  attempt: InterviewAttempt,
-  interview: Interview,
-): Promise<void> {
-  return withUsageScope(attempt.id, () =>
-    abandonAttemptInner(attempt, interview),
-  );
 }

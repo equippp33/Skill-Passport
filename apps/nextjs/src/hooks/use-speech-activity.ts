@@ -162,8 +162,6 @@ export function useSpeechActivity({
     // to the speakers would feed it straight back into the recording.
 
     const samples = new Uint8Array(analyser.fftSize);
-    // Each answer climbs the ladder from the bottom.
-    doneRef.current = new Set();
     const startedAt = Date.now();
     let lastVoiceAt = Date.now();
     // What this room's own noise is measuring right now. Learned from the quiet

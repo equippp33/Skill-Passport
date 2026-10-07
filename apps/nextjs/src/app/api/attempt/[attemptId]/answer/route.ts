@@ -7,7 +7,6 @@ import {
 import { getAttemptForCandidate } from "~/server/attempt/access";
 import {
   AttemptError,
-  acknowledgementClip,
   processTurn,
   submitAnswer,
 } from "~/server/attempt/service";
@@ -161,30 +160,11 @@ export async function POST(
           segments,
           mimeType,
           durationMs,
-          heardSpeech,
         });
       });
     }
 
-    /**
-     * The receipt carries the interviewer's "okay".
-     *
-     * Not a poll away: by the time the next poll came back the silence this
-     * exists to fill would already have happened. Seeded by turn so it is not
-     * the identical syllable eleven times.
-     */
-    return NextResponse.json(
-      {
-        status: "processing",
-        // Withheld when nothing was said: "got it" after a silence is the
-        // interviewer agreeing with itself, and it is what made an empty room
-        // sound like a conversation.
-        acknowledgementAudioId: heardSpeech
-          ? await acknowledgementClip(found.attempt.id, turnNumber)
-          : null,
-      },
-      { status: 202 },
-    );
+    return NextResponse.json({ status: "processing" }, { status: 202 });
   } catch (error) {
     if (error instanceof AttemptError) {
       const status =

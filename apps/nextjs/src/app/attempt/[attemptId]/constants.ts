@@ -1,5 +1,3 @@
-import type { SilenceStage } from "~/hooks/use-speech-activity";
-
 /**
  * Client-side interview timings.
  *

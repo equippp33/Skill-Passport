@@ -26,17 +26,30 @@ import { interviewAttemptsTable } from "~/server/db/schema";
  * request that reaches a provider records nothing rather than guessing an
  * attempt to bill.
  *
+ * The `llmRequests` / `llm*Tokens` fields are the OPENAI side; `sarvam*` is
+ * Sarvam's. See `interview_attempts` in the schema for why they are separate.
+ *
  * Speech-to-text is deliberately NOT counted here. Sarvam bills it per second
  * of audio, and the streaming path never makes a request at all — it holds a
  * socket. Minutes are read from the recorded answer clips instead, which are
  * stored whichever transcription path ran.
  */
 
+/**
+ * Model tokens are reported against the provider that actually served the
+ * call, not against whichever one `AI_PROVIDER` names. Those differ every time
+ * the Sarvam breaker falls back to OpenAI, and the two are priced about six
+ * times apart, so collapsing them into one pair of counters would quietly
+ * misprice exactly the calls that are hardest to notice.
+ */
 interface UsageDelta {
   ttsCharacters?: number;
   llmRequests?: number;
   llmInputTokens?: number;
   llmOutputTokens?: number;
+  sarvamRequests?: number;
+  sarvamInputTokens?: number;
+  sarvamOutputTokens?: number;
 }
 
 const scope = new AsyncLocalStorage<{ attemptId: string }>();
@@ -72,6 +85,15 @@ export function recordUsage(delta: UsageDelta): void {
   }
   if (delta.llmOutputTokens) {
     set.llmOutputTokens = sql`${interviewAttemptsTable.llmOutputTokens} + ${delta.llmOutputTokens}`;
+  }
+  if (delta.sarvamRequests) {
+    set.sarvamRequests = sql`${interviewAttemptsTable.sarvamRequests} + ${delta.sarvamRequests}`;
+  }
+  if (delta.sarvamInputTokens) {
+    set.sarvamInputTokens = sql`${interviewAttemptsTable.sarvamInputTokens} + ${delta.sarvamInputTokens}`;
+  }
+  if (delta.sarvamOutputTokens) {
+    set.sarvamOutputTokens = sql`${interviewAttemptsTable.sarvamOutputTokens} + ${delta.sarvamOutputTokens}`;
   }
   if (Object.keys(set).length === 0) return;
 

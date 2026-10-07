@@ -24,11 +24,11 @@ import {
 } from "~/server/attempt/actions";
 import { env } from "~/env";
 import { useStreamingStt } from "~/hooks/use-streaming-stt";
+import { isRepeatRequest, isSkipRequest } from "~/config/repeat-requests";
 import {
   MAX_ANSWER_SECONDS,
   MIN_ANSWER_BLOB_BYTES,
   AUTO_START_BACKSTOP_MS,
-  ASIDE_MAX_MS,
   MIN_ANSWER_SECONDS,
   NO_ANSWER_STAGES,
   POLL_INTERVAL_MS,
@@ -46,7 +46,7 @@ interface TurnView {
   status: "awaiting_answer" | "processing" | "completed" | "failed";
   errorMessage: string | null;
   skillId: WorkSkillId | null;
-  kind: "language_probe" | "comfort" | "skill";
+  kind: "language_probe" | "skill";
   questionTranslation: string | null;
 }
 
@@ -58,32 +58,6 @@ interface StatusResponse {
   turn: TurnView | null;
   isComplete: boolean;
   nextQuestionAudioId: string | null;
-  directive: Directive | null;
-  clips: {
-    easier: string | null;
-    whatHappened: string | null;
-    didNotGet: string | null;
-    noProblem: string | null;
-    closing: string | null;
-  };
-  /** Development only — empty in production. See `DevActivityPanel`. */
-  devActivity?: ActivityEvent[];
-}
-
-/**
- * One instruction from the server: play this, then do that.
- *
- * Replaces inferring intent from the shape of the turn. "Say it again", "say
- * the simpler version", "ask a follow-up" and "just acknowledge" all leave the
- * turn number and status untouched, so they were indistinguishable; `seq` is
- * how the browser tells a new instruction from the same one polled again.
- */
-interface Directive {
-  seq: number;
-  action: "replay" | "play_easier" | "play_probe" | "play_filler" | "advance";
-  audioId: string | null;
-  speechRate: number;
-  resumeRecording: boolean;
 }
 
 type Phase = "answering" | "submitting" | "processing" | "error";
@@ -446,55 +420,6 @@ export function ActiveInterview({
     return () => window.removeEventListener("beforeunload", handler);
   }, [phase, recorder.isRecording, recorder.hasRecording]);
 
-  /**
-   * "Still here."
-   *
-   * The only thing that tells the server this interview is still being sat.
-   * Turns can go minutes without changing while a candidate thinks, so
-   * without this a live interview and an abandoned one look identical, and a
-   * closed tab stayed "in progress" until a long timeout expired. See the
-   * ping route and `sweepAbandonedAttempts`.
-   *
-   * Deliberately unconditional — it runs while answering, while processing
-   * and while the question is being read out, because all three are a
-   * candidate still being present.
-   */
-  /**
-   * "I am closing."
-   *
-   * The last thing this page can say. Without it the server has to infer a
-   * closed tab from missing heartbeats, which takes a couple of minutes — and
-   * for all of that time the interview reads as running on the admin list and
-   * its duration keeps climbing.
-   *
-   * `sendBeacon` rather than `fetch`, because the browser is already tearing
-   * the page down: a beacon is queued by the browser itself and survives the
-   * document, where an ordinary request is cancelled. `pagehide` rather than
-   * `beforeunload`, because Safari and mobile browsers often skip the latter.
-   *
-   * This also fires on a reload, which is exactly why the server only records
-   * the time rather than acting on it — the next heartbeat takes it back.
-   */
-  useEffect(() => {
-    const leaving = () => {
-      navigator.sendBeacon?.(`/api/attempt/${attemptId}/left`);
-    };
-    window.addEventListener("pagehide", leaving);
-    return () => window.removeEventListener("pagehide", leaving);
-  }, [attemptId]);
-
-  useEffect(() => {
-    const beat = () => {
-      void fetch(`/api/attempt/${attemptId}/ping`, {
-        method: "POST",
-        keepalive: true,
-      }).catch(() => undefined);
-    };
-    beat();
-    const id = setInterval(beat, 20_000);
-    return () => clearInterval(id);
-  }, [attemptId]);
-
   /* --------------------------------- polling -------------------------------- */
 
   const stopPolling = useCallback(() => {
@@ -504,59 +429,6 @@ export function ActiveInterview({
     }
     pollStartedAtRef.current = null;
   }, []);
-
-  /**
-   * Say a short line aside from the question — a reassurance over a silence,
-   * or the goodbye at the end.
-   *
-   * The candidate hears it from its own element; the recording gets a separate
-   * decoded copy through the mix bus. That is the same two-path arrangement
-   * the question uses, and for the same reason: routing the element itself
-   * into the audio graph is irreversible, and has twice left the interview
-   * silent.
-   *
-   * The microphone is not muted for it. If the reassurance is what they
-   * needed, they should be able to start talking over it.
-   *
-   * Resolves when the line has been said — or, capped, when it plainly is not
-   * going to be. Nothing here is worth making a candidate wait on.
-   */
-  const speakAside = useCallback(
-    async (audioId: string | null): Promise<void> => {
-      const el = interjectionRef.current;
-      if (!audioId || !el) return;
-
-      const src = `/api/media/${audioId}?attempt=${attemptId}`;
-      setInterjecting(true);
-      el.src = src;
-      el.playbackRate = speechRateRef.current;
-      el.preservesPitch = true;
-
-      try {
-        await el.play();
-      } catch {
-        // Autoplay blocked. The clock must start again regardless, or the
-        // silence ladder stays frozen for the rest of the answer.
-        setInterjecting(false);
-        return;
-      }
-
-      void playIntoRecording(src);
-
-      await new Promise<void>((resolve) => {
-        const finish = () => {
-          el.removeEventListener("ended", finish);
-          el.removeEventListener("error", finish);
-          clearTimeout(cap);
-          resolve();
-        };
-        const cap = setTimeout(finish, ASIDE_MAX_MS);
-        el.addEventListener("ended", finish);
-        el.addEventListener("error", finish);
-      });
-    },
-    [attemptId, playIntoRecording],
-  );
 
   /** Leave for the results now, abandoning any recordings still uploading. */
   const goToResult = useCallback(() => {
@@ -650,17 +522,9 @@ export function ActiveInterview({
         // the results after a short cap whatever happens, and the "See your
         // results" button (shown while saving) lets them skip immediately. The
         // assessment is already scored server-side; the video is best-effort.
-        //
-        // The goodbye is said over the upload rather than before it. An
-        // interview that ends with the screen simply changing feels like the
-        // call dropped; one that ends with someone thanking you feels like it
-        // finished. Either way the wait is the upload's, not the clip's.
-        await Promise.all([
-          speakAside(data.clips.closing),
-          Promise.race([
-            flushRecordings(),
-            new Promise((resolve) => setTimeout(resolve, 10_000)),
-          ]),
+        await Promise.race([
+          flushRecordings(),
+          new Promise((resolve) => setTimeout(resolve, 10_000)),
         ]);
         router.replace(`/attempt/${attemptId}/result`);
         return;
@@ -765,7 +629,6 @@ export function ActiveInterview({
     genericError,
     flushRecordings,
     allowReplay,
-    speakAside,
   ]);
 
   useEffect(() => {
@@ -848,20 +711,6 @@ export function ActiveInterview({
           setPhase("error");
           return;
         }
-
-        /**
-         * Say "okay" the instant the answer is accepted.
-         *
-         * Before the upload is queued and before polling starts, because its
-         * whole job is the moment in between: a candidate who stops talking
-         * into silence cannot tell whether anything heard them.
-         */
-        const receipt = (await response.json().catch(() => null)) as {
-          acknowledgementAudioId?: string | null;
-        } | null;
-        // Null when nothing was said — there is nothing to acknowledge, and
-        // "got it" after a silence is the interviewer talking to itself.
-        void speakAside(receipt?.acknowledgementAudioId ?? null);
 
         // Queue the clip and upload it in the background NOW, while the
         // candidate reads and answers the next question — so nothing is left
@@ -960,6 +809,8 @@ export function ActiveInterview({
   // advanceOpening, reached via a ref so the silence-fallback timer can call the
   // latest version without a definition-order cycle.
   const advanceOpeningRef = useRef<(text: string) => void>(() => undefined);
+  /** Reached from `handleUtterance`, which is declared above `handleAdvance`. */
+  const handleAdvanceRef = useRef<() => void>(() => undefined);
 
   /** Play the Nth opening bit clip (mutes the mic while it plays). */
   const playOpeningBit = useCallback(
@@ -1085,20 +936,65 @@ export function ActiveInterview({
   }, [attemptId, genericError, stopFiller, resetRecorder, recorder]);
 
   /**
-   * The silence ladder, while the candidate has said NOTHING. Stages come from
-   * NO_ANSWER_STAGES = [15, 30, 60]:
+   * The silence ladder. Stages come from NO_ANSWER_STAGES = [15, 30, 60],
+   * counted from the moment the candidate last stopped speaking:
    *   0 (15s) → spoken "did you understand the question?" check-in;
    *   1 (30s) → nothing here — the visible countdown is derived in the render;
    *   2 (60s) → auto-skip and move on.
-   * Any speech resets the ladder before these fire.
+   *
+   * `hasSpoken` separates two situations the old code could not tell apart,
+   * because it switched the whole ladder off at the first sound. Somebody who
+   * has said nothing is probably stuck on the question, so ask whether they
+   * followed it. Somebody who answered and then went quiet is not stuck — they
+   * have simply not pressed Next — and asking them whether they understood a
+   * question they have just answered is worse than saying nothing. They still
+   * get the 60-second backstop, which is what stops a finished-but-unsubmitted
+   * answer sitting there for ever.
    */
   const handleSilenceStage = useCallback(
-    (i: number) => {
-      if (i === 0) playCheckIn();
-      else if (i === 2) void autoSkip();
+    (i: number, hasSpoken: boolean) => {
+      if (i === 0) {
+        if (!hasSpoken) playCheckIn();
+        return;
+      }
+      if (i !== 2) return;
+      /**
+       * The backstop, and it must not cost anybody their answer.
+       *
+       * `handleAdvance` is the same thing the Next button does: submit what
+       * was transcribed, or skip only when there is genuinely nothing. Calling
+       * `autoSkip` directly here would discard a complete answer from somebody
+       * whose only mistake was not pressing a button — and this rung is newly
+       * reachable after speech, so that would have been a real loss rather
+       * than a theoretical one.
+       */
+      handleAdvanceRef.current();
     },
-    [playCheckIn, autoSkip],
+    [playCheckIn],
   );
+
+  /**
+   * A spoken request, acted on the moment it is heard.
+   *
+   * "Say that again" and "skip this one" are instructions, not answers. The
+   * server already knows what to do with them — it replays the question, or
+   * moves on — but only once a transcript reaches it, and the only thing that
+   * sends one is the candidate pressing Next. So a student who asked for a
+   * repeat and then waited, which is exactly what asking for a repeat means,
+   * got nothing at all.
+   *
+   * Safe against false positives by construction: the phrase lists refuse to
+   * match anything longer than eight words, and this is handed the WHOLE
+   * transcript so far, so a real answer that happens to contain "repeat" is
+   * already too long to qualify. The opening turn is left alone — it runs its
+   * own scripted sequence.
+   */
+  const handleUtterance = useCallback((text: string) => {
+    const active = turnRef.current;
+    if (!active || active.kind === "language_probe") return;
+    if (isRepeatRequest(text) || isSkipRequest(text))
+      handleAdvanceRef.current();
+  }, []);
 
   /**
    * The candidate taps "Next" when they are done.
@@ -1149,16 +1045,6 @@ export function ActiveInterview({
    * countdown shown — when they go quiet, the answer is sent and the next
    * question comes on its own.
    */
-  /** A rung of the ladder was reached: say its line. Ids are clip names. */
-  const handleSilenceStage = useCallback(
-    (id: string) => {
-      void speakAside(
-        clipsRef.current[id as keyof StatusResponse["clips"]] ?? null,
-      );
-    },
-    [speakAside],
-  );
-
   const speech = useSpeechActivity({
     stream: recorder.stream,
     // Off entirely when streaming — Sarvam does the endpointing then. Only the
@@ -1174,7 +1060,7 @@ export function ActiveInterview({
     // then a long skip backstop) still runs so a silent screen isn't permanent.
     onSilence: () => undefined,
     noAnswerStages: NO_ANSWER_STAGES,
-    onNoAnswerStage: (i) => handleSilenceStage(i),
+    onNoAnswerStage: (i) => handleSilenceStage(i, false),
   });
 
   // Realtime STT: stream the mic to the relay and let Sarvam decide when the
@@ -1194,11 +1080,16 @@ export function ActiveInterview({
     onFailed: () => setStreamFailed(true),
     // The no-answer ladder still runs — check in, then a long skip backstop.
     noAnswerStages: NO_ANSWER_STAGES,
-    onSilenceStage: (i) => handleSilenceStage(i),
+    onSilenceStage: (i, hasSpoken) => handleSilenceStage(i, hasSpoken),
+    onUtterance: handleUtterance,
   });
 
   // Reach streaming.rearm / streaming.getTranscript from handlers declared above
   // `streaming` without a definition-order cycle.
+  useEffect(() => {
+    handleAdvanceRef.current = handleAdvance;
+  }, [handleAdvance]);
+
   useEffect(() => {
     streamRearmRef.current = streaming.rearm;
     getTranscriptRef.current = streaming.getTranscript;
@@ -1257,11 +1148,6 @@ export function ActiveInterview({
     // that has already ended plays the question again, over the candidate's
     // answer, and the microphone records it.
     if (playedForTurnRef.current === turnNumber) return;
-    // One voice at a time. The "okay" for the previous answer can still be
-    // playing when the next question lands — on a fast turn it arrives within
-    // a second — and two clips over each other is worse than either alone.
-    // Clearing `interjecting` re-runs this effect, so nothing is lost.
-    if (interjecting) return;
     playedForTurnRef.current = turnNumber;
     questionShownAtRef.current = performance.now();
     // The question has arrived — cut the filler so the two never overlap.
@@ -1506,20 +1392,6 @@ export function ActiveInterview({
               {turn.questionTranslation}
             </p>
           ) : null}
-
-          {/*
-           * The silence ladder's voice. Always mounted, never given a `src`
-           * by React — `speakInterjection` sets it — so mounting it cannot
-           * disturb the question player beside it.
-           */}
-          <audio
-            ref={interjectionRef}
-            hidden
-            // Whatever happens, the clock must start again: a stuck `true`
-            // here would freeze the ladder and the answer with it.
-            onEnded={() => setInterjecting(false)}
-            onError={() => setInterjecting(false)}
-          />
 
           {turn.questionAudioId ? (
             <audio

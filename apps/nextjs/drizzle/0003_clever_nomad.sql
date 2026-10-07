@@ -1,1 +1,0 @@
-ALTER TABLE "interview_attempts" ADD COLUMN "candidate_background" text;

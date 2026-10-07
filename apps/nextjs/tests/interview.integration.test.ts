@@ -34,8 +34,7 @@ import {
   startAttempt,
   submitAnswer,
 } from "~/server/attempt/service";
-import { openerFor } from "~/config/greeting";
-import { LANGUAGE_PROBE_TURN } from "~/config/work-skills";
+import { LANGUAGE_PROBE_TURN, skillForAttemptTurn } from "~/config/work-skills";
 
 /**
  * Integration tests for the admin/candidate split.
@@ -215,10 +214,7 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
 
   it("starts every attempt with an unscored language probe", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
 
     const turns = await getTurns(attemptId);
     expect(turns).toHaveLength(1);
@@ -228,44 +224,36 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
     expect(turns[0]!.skillId).toBeNull();
   });
 
-  it("uses the language the candidate chose, from the very first question", async () => {
-    // The probe used to decide the language from the candidate's first
-    // answer, leaving it null until then. It is now chosen before the
-    // interview starts, so the opener is already spoken in it.
+  it("leaves the language unset until the probe is answered", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "hindi", { course: null, experience: null });
+    await startAttempt(attemptId);
 
     const attempt = await db.query.interviewAttemptsTable.findFirst({
       where: eq(interviewAttemptsTable.id, attemptId),
     });
-    expect(attempt?.language).toBe("hindi");
+    expect(attempt?.language).toBeNull();
     expect(attempt?.needsLanguageChoice).toBe(false);
-
-    // Greeted by their own first name, in the language they chose.
-    const turns = await getTurns(attemptId);
-    expect(turns[0]!.question).toBe(openerFor("hindi", "Candidate"));
-    expect(turns[0]!.question).toContain("Candidate");
   });
 
   it("is idempotent when started twice", async () => {
     const { attemptId } = await newAttempt(alice);
-    await Promise.all([
-      startAttempt(attemptId, "english", { course: null, experience: null }),
-      startAttempt(attemptId, "english", { course: null, experience: null }),
-    ]);
+    await Promise.all([startAttempt(attemptId), startAttempt(attemptId)]);
 
     const turns = await getTurns(attemptId);
     expect(turns).toHaveLength(1);
+  });
+
+  it("puts the skill questions after the probe", () => {
+    expect(skillForAttemptTurn(1, 10)).toBeNull();
+    expect(skillForAttemptTurn(2, 10)?.id).toBe("reliability");
+    expect(skillForAttemptTurn(11, 10)?.id).toBe("customer_orientation");
   });
 
   /* ------------------------------ turn claiming ---------------------------- */
 
   it("processes a turn once even when submitted twice", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
     const attempt = (await db.query.interviewAttemptsTable.findFirst({
       where: eq(interviewAttemptsTable.id, attemptId),
     }))!;
@@ -288,10 +276,7 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
 
   it("survives concurrent submissions of the same turn", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
     const attempt = (await db.query.interviewAttemptsTable.findFirst({
       where: eq(interviewAttemptsTable.id, attemptId),
     }))!;
@@ -311,10 +296,7 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
 
   it("rejects an answer for a turn that is not the active one", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
     const attempt = (await db.query.interviewAttemptsTable.findFirst({
       where: eq(interviewAttemptsTable.id, attemptId),
     }))!;
@@ -330,10 +312,7 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
 
   it("rejects an answer once the attempt is complete", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
     await db
       .update(interviewAttemptsTable)
       .set({ status: "completed", completedAt: new Date() })
@@ -382,10 +361,7 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
    */
   it("relays a webcam recording to storage and links it to the turn", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
 
     const ticket = await createAnswerVideoUpload({
       attemptId,
@@ -417,10 +393,7 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
 
   it("discards an empty recording instead of linking it", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
 
     const ticket = await createAnswerVideoUpload({
       attemptId,
@@ -448,10 +421,7 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
   // that was reserved for it. The next upload clears them.
   it("clears rows left behind by an abandoned upload", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
 
     const abandoned = await createAnswerVideoUpload({
       attemptId,
@@ -477,10 +447,7 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
 
   it("keeps a linked recording when a later upload starts", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
 
     const ticket = await createAnswerVideoUpload({
       attemptId,
@@ -509,14 +476,8 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
   it("refuses to relay a recording belonging to another attempt", async () => {
     const mine = await newAttempt(alice);
     const theirs = await newAttempt(mallory);
-    await startAttempt(mine.attemptId, "english", {
-      course: null,
-      experience: null,
-    });
-    await startAttempt(theirs.attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(mine.attemptId);
+    await startAttempt(theirs.attemptId);
 
     const ticket = await createAnswerVideoUpload({
       attemptId: theirs.attemptId,
@@ -544,10 +505,7 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
 
   it("reports all ten skills, marking unassessed ones as null", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
 
     const scores = aggregateSkillScores(await getTurns(attemptId));
     expect(scores).toHaveLength(10);
@@ -557,10 +515,7 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
 
   it("does not count the probe as an answered skill question", async () => {
     const { attemptId } = await newAttempt(alice);
-    await startAttempt(attemptId, "english", {
-      course: null,
-      experience: null,
-    });
+    await startAttempt(attemptId);
 
     await db
       .update(interviewTurnsTable)
