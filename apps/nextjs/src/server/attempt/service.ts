@@ -33,7 +33,7 @@ import {
   isSkipRequest,
   isSlowerRequest,
 } from "~/config/repeat-requests";
-import { aggregateSkillScores } from "~/lib/scoring";
+import { adjustScore, aggregateSkillScores } from "~/lib/scoring";
 import { ProviderError, toUserMessage } from "~/server/services/errors";
 import {
   classifyUtterance,
@@ -1691,9 +1691,18 @@ async function scoreTurn(args: {
   turn: InterviewTurn;
   transcript: string;
   languageCode: string | null;
+  /**
+   * A context built by the caller.
+   *
+   * Identical for every turn of one attempt, and building it costs three
+   * queries — one of which walks this candidate's earlier attempts. A
+   * re-score does eleven turns, so building it per turn meant thirty-three
+   * queries to produce eleven copies of the same object.
+   */
+  ctx?: InterviewContext;
 }): Promise<void> {
   const { attempt, interview, turn, transcript, languageCode } = args;
-  const ctx = await buildContext(attempt, interview);
+  const ctx = args.ctx ?? (await buildContext(attempt, interview));
 
   const priorTurns = await db.query.interviewTurnsTable.findMany({
     where: and(
@@ -1770,7 +1779,7 @@ async function writeScoredTurn(
     .set({
       answerTranscript: transcript,
       detectedLanguageCode: languageCode,
-      score: evaluation.score,
+      score: adjustScore(evaluation.score),
       evaluation: evaluation.evaluation,
       strengths: evaluation.strengths,
       improvements: evaluation.improvements,
@@ -2206,6 +2215,9 @@ export async function resendResult(
  * score. Skipped / unscored turns keep their null score, and it CANNOT add a
  * follow-up that never happened — it only re-grades what was actually said.
  */
+/** How many answers to re-score at once. See `rescoreAttemptInner`. */
+const RESCORE_CONCURRENCY = 4;
+
 export function rescoreAttempt(attemptId: string): Promise<void> {
   return withUsageScope(attemptId, () => rescoreAttemptInner(attemptId));
 }
@@ -2224,16 +2236,45 @@ async function rescoreAttemptInner(attemptId: string): Promise<void> {
     : null;
   const turns = await getTurns(attemptId);
 
-  for (const turn of turns) {
-    // Only answered, previously-scored skill turns (probes/follow-ups included).
-    // Skipped turns keep their null score; empty transcripts are left alone.
-    if (turn.kind !== "skill" || turn.status !== "completed") continue;
-    if (turn.score === null) continue;
+  // Only answered, previously-scored skill turns (probes/follow-ups included).
+  // Skipped turns keep their null score; empty transcripts are left alone.
+  const eligible = turns.flatMap((turn) => {
+    if (turn.kind !== "skill" || turn.status !== "completed") return [];
+    if (turn.score === null) return [];
     const transcript = turn.answerTranscript?.trim();
-    if (!transcript) continue;
+    return transcript ? [{ turn, transcript }] : [];
+  });
 
-    await scoreTurn({ attempt, interview, turn, transcript, languageCode });
+  // Built once for the whole attempt rather than once per turn.
+  const ctx = await buildContext(attempt, interview);
+
+  /**
+   * Scored in parallel, a few at a time.
+   *
+   * Re-scoring one turn reads only the QUESTIONS AND ANSWERS of the turns
+   * before it — never their scores — and none of those change here, so the
+   * turns do not depend on each other and the sequential loop this replaces
+   * was pure waiting. Eleven answers at ten to forty seconds each is three
+   * minutes of an admin watching a spinner for work that has no order to it.
+   *
+   * Batched rather than all at once: a dozen simultaneous analysis calls is
+   * how one button press trips a rate limit and opens the circuit breaker for
+   * everybody mid-interview.
+   */
+  const failures: unknown[] = [];
+  for (let i = 0; i < eligible.length; i += RESCORE_CONCURRENCY) {
+    const settled = await Promise.allSettled(
+      eligible
+        .slice(i, i + RESCORE_CONCURRENCY)
+        .map(({ turn, transcript }) =>
+          scoreTurn({ attempt, interview, turn, transcript, languageCode, ctx }),
+        ),
+    );
+    for (const r of settled) if (r.status === "rejected") failures.push(r.reason);
   }
+  // Surfaced only after every turn has had its go, so one bad answer does not
+  // cost the rest their re-score.
+  if (failures.length > 0) throw failures[0];
 
   await finaliseAttempt(attemptId, interview);
 }
