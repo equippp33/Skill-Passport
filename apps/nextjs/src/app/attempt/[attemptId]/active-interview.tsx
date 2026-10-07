@@ -974,6 +974,45 @@ export function ActiveInterview({
   );
 
   /**
+   * Say the question again, from the browser, asking the server nothing.
+   *
+   * The clip is already here — this is the same element that played it a
+   * moment ago, preloaded — so a repeat costs one `play()` call.
+   *
+   * It used to cost a full round trip. "Phir se boliye" was submitted as
+   * though it were the answer; the server recognised the phrase, recorded a
+   * replay, and the browser only found out on its next poll. Several seconds
+   * to re-play audio already sitting in memory, and the length varied with
+   * the network and where the poll happened to land — which is why the same
+   * request sometimes felt instant and sometimes did not.
+   *
+   * Worse, the microphone had already reopened by then, so everything the
+   * candidate said while waiting was captured as part of their answer.
+   *
+   * The transcript is re-armed rather than kept: a request to repeat is an
+   * instruction, not an answer, and leaving it in means it gets scored as one.
+   *
+   * Returns false when the clip cannot be played at all — no audio for this
+   * turn, or the browser refusing playback — so the caller can fall back to
+   * the server path rather than silently doing nothing.
+   */
+  const replayQuestion = useCallback((): boolean => {
+    const el = audioRef.current;
+    if (!el || !turnRef.current?.questionAudioId) return false;
+    // Mid-sentence already: asking again while it is speaking means they did
+    // not notice it start, not that they want it a third time.
+    if (!el.paused) return true;
+    streamRearmRef.current();
+    try {
+      el.currentTime = 0;
+      void el.play().catch(() => undefined);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  /**
    * A spoken request, acted on the moment it is heard.
    *
    * "Say that again" and "skip this one" are instructions, not answers. The
@@ -989,12 +1028,22 @@ export function ActiveInterview({
    * already too long to qualify. The opening turn is left alone — it runs its
    * own scripted sequence.
    */
-  const handleUtterance = useCallback((text: string) => {
-    const active = turnRef.current;
-    if (!active || active.kind === "language_probe") return;
-    if (isRepeatRequest(text) || isSkipRequest(text))
-      handleAdvanceRef.current();
-  }, []);
+  const handleUtterance = useCallback(
+    (text: string) => {
+      const active = turnRef.current;
+      if (!active || active.kind === "language_probe") return;
+      if (isRepeatRequest(text)) {
+        // Served from here. Only a clip that will not play falls through to
+        // the server, which can still do it the slow way.
+        if (!replayQuestion()) handleAdvanceRef.current();
+        return;
+      }
+      // Skipping genuinely needs the server — it is the only thing that can
+      // retire this turn and hand back the next one.
+      if (isSkipRequest(text)) handleAdvanceRef.current();
+    },
+    [replayQuestion],
+  );
 
   /**
    * The candidate taps "Next" when they are done.
