@@ -55,6 +55,32 @@ export async function appUrl(): Promise<string> {
   return `http://localhost:${process.env.PORT ?? "3000"}`;
 }
 
+/**
+ * The origin to reach THIS server on, for a request it makes to itself.
+ *
+ * Different question from `appUrl`, which answers "where do humans find us"
+ * and is therefore pinned to the public domain. The PDF export drives a
+ * headless browser back into this app to photograph one of its own pages, and
+ * for that the only correct answer is the server actually handling the
+ * request. Using the public origin there meant a developer running locally
+ * exported a PDF of the DEPLOYED site: their own changes could not appear in
+ * the file no matter what they did, and nothing said so.
+ *
+ * Only a LOCAL request host is honoured. Host is supplied by the client, so
+ * believing it in general would let a forged header aim the render anywhere;
+ * a forged "localhost" merely points this server at itself, which is where it
+ * was going. Everything else falls through to `appUrl` unchanged, so no
+ * deployment behaves differently from before.
+ */
+export async function selfOrigin(): Promise<string> {
+  const fromRequest = await originFromRequest();
+  if (fromRequest) {
+    const { host } = new URL(fromRequest);
+    if (isLocal(host)) return fromRequest;
+  }
+  return appUrl();
+}
+
 /** An absolute URL for a path on this app. */
 export async function absoluteUrl(path: string): Promise<string> {
   const base = await appUrl();

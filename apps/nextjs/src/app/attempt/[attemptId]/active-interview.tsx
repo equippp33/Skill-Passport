@@ -24,6 +24,7 @@ import {
 } from "~/server/attempt/actions";
 import { env } from "~/env";
 import { useStreamingStt } from "~/hooks/use-streaming-stt";
+import { isRepeatRequest, isSkipRequest } from "~/config/repeat-requests";
 import {
   MAX_ANSWER_SECONDS,
   MIN_ANSWER_BLOB_BYTES,
@@ -808,6 +809,8 @@ export function ActiveInterview({
   // advanceOpening, reached via a ref so the silence-fallback timer can call the
   // latest version without a definition-order cycle.
   const advanceOpeningRef = useRef<(text: string) => void>(() => undefined);
+  /** Reached from `handleUtterance`, which is declared above `handleAdvance`. */
+  const handleAdvanceRef = useRef<() => void>(() => undefined);
 
   /** Play the Nth opening bit clip (mutes the mic while it plays). */
   const playOpeningBit = useCallback(
@@ -933,20 +936,65 @@ export function ActiveInterview({
   }, [attemptId, genericError, stopFiller, resetRecorder, recorder]);
 
   /**
-   * The silence ladder, while the candidate has said NOTHING. Stages come from
-   * NO_ANSWER_STAGES = [15, 30, 60]:
+   * The silence ladder. Stages come from NO_ANSWER_STAGES = [15, 30, 60],
+   * counted from the moment the candidate last stopped speaking:
    *   0 (15s) → spoken "did you understand the question?" check-in;
    *   1 (30s) → nothing here — the visible countdown is derived in the render;
    *   2 (60s) → auto-skip and move on.
-   * Any speech resets the ladder before these fire.
+   *
+   * `hasSpoken` separates two situations the old code could not tell apart,
+   * because it switched the whole ladder off at the first sound. Somebody who
+   * has said nothing is probably stuck on the question, so ask whether they
+   * followed it. Somebody who answered and then went quiet is not stuck — they
+   * have simply not pressed Next — and asking them whether they understood a
+   * question they have just answered is worse than saying nothing. They still
+   * get the 60-second backstop, which is what stops a finished-but-unsubmitted
+   * answer sitting there for ever.
    */
   const handleSilenceStage = useCallback(
-    (i: number) => {
-      if (i === 0) playCheckIn();
-      else if (i === 2) void autoSkip();
+    (i: number, hasSpoken: boolean) => {
+      if (i === 0) {
+        if (!hasSpoken) playCheckIn();
+        return;
+      }
+      if (i !== 2) return;
+      /**
+       * The backstop, and it must not cost anybody their answer.
+       *
+       * `handleAdvance` is the same thing the Next button does: submit what
+       * was transcribed, or skip only when there is genuinely nothing. Calling
+       * `autoSkip` directly here would discard a complete answer from somebody
+       * whose only mistake was not pressing a button — and this rung is newly
+       * reachable after speech, so that would have been a real loss rather
+       * than a theoretical one.
+       */
+      handleAdvanceRef.current();
     },
-    [playCheckIn, autoSkip],
+    [playCheckIn],
   );
+
+  /**
+   * A spoken request, acted on the moment it is heard.
+   *
+   * "Say that again" and "skip this one" are instructions, not answers. The
+   * server already knows what to do with them — it replays the question, or
+   * moves on — but only once a transcript reaches it, and the only thing that
+   * sends one is the candidate pressing Next. So a student who asked for a
+   * repeat and then waited, which is exactly what asking for a repeat means,
+   * got nothing at all.
+   *
+   * Safe against false positives by construction: the phrase lists refuse to
+   * match anything longer than eight words, and this is handed the WHOLE
+   * transcript so far, so a real answer that happens to contain "repeat" is
+   * already too long to qualify. The opening turn is left alone — it runs its
+   * own scripted sequence.
+   */
+  const handleUtterance = useCallback((text: string) => {
+    const active = turnRef.current;
+    if (!active || active.kind === "language_probe") return;
+    if (isRepeatRequest(text) || isSkipRequest(text))
+      handleAdvanceRef.current();
+  }, []);
 
   /**
    * The candidate taps "Next" when they are done.
@@ -1012,7 +1060,7 @@ export function ActiveInterview({
     // then a long skip backstop) still runs so a silent screen isn't permanent.
     onSilence: () => undefined,
     noAnswerStages: NO_ANSWER_STAGES,
-    onNoAnswerStage: (i) => handleSilenceStage(i),
+    onNoAnswerStage: (i) => handleSilenceStage(i, false),
   });
 
   // Realtime STT: stream the mic to the relay and let Sarvam decide when the
@@ -1032,11 +1080,16 @@ export function ActiveInterview({
     onFailed: () => setStreamFailed(true),
     // The no-answer ladder still runs — check in, then a long skip backstop.
     noAnswerStages: NO_ANSWER_STAGES,
-    onSilenceStage: (i) => handleSilenceStage(i),
+    onSilenceStage: (i, hasSpoken) => handleSilenceStage(i, hasSpoken),
+    onUtterance: handleUtterance,
   });
 
   // Reach streaming.rearm / streaming.getTranscript from handlers declared above
   // `streaming` without a definition-order cycle.
+  useEffect(() => {
+    handleAdvanceRef.current = handleAdvance;
+  }, [handleAdvance]);
+
   useEffect(() => {
     streamRearmRef.current = streaming.rearm;
     getTranscriptRef.current = streaming.getTranscript;

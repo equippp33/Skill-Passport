@@ -41,6 +41,13 @@ const OPENAI_OUTPUT_USD_PER_MTOK = 8.0;
 /**
  * What an interview used.
  *
+ * Model tokens are split by the provider that actually served the call rather
+ * than totalled, because the same token costs about six times more at OpenAI
+ * than at Sarvam (₹176 against ₹29.28 per million input). One combined figure
+ * could only be priced by assuming a provider, and that assumption is wrong
+ * for every call the Sarvam circuit breaker handed to OpenAI — the calls that
+ * are least visible and most expensive.
+ *
  * Speech-to-text is counted in MINUTES OF AUDIO rather than requests, because
  * that is how Sarvam bills it — and because the streaming path does not make
  * requests at all, it holds a socket open. The minutes come from the recorded
@@ -50,13 +57,18 @@ const OPENAI_OUTPUT_USD_PER_MTOK = 8.0;
 export interface InterviewUsage {
   sttMinutes: number;
   ttsCharacters: number;
-  llmInputTokens: number;
-  llmOutputTokens: number;
+  openaiInputTokens: number;
+  openaiOutputTokens: number;
+  sarvamInputTokens: number;
+  sarvamOutputTokens: number;
 }
 
 export interface CostBreakdown {
   stt: number;
   tts: number;
+  openai: number;
+  sarvam: number;
+  /** The model bill whoever served it — `openai + sarvam`. */
   llm: number;
   total: number;
 }
@@ -64,31 +76,79 @@ export interface CostBreakdown {
 /**
  * Rupees for one interview, split by leg.
  *
- * `provider` decides which model rates apply. Speech is Sarvam either way —
- * only the brain moves.
+ * Each provider's tokens are priced at that provider's own rate, so there is
+ * nothing to tell this function about which brain is configured: an interview
+ * that ran half on each is costed correctly without being asked.
  */
-export function interviewCost(
-  usage: InterviewUsage,
-  provider: "sarvam" | "openai",
-): CostBreakdown {
+export function interviewCost(usage: InterviewUsage): CostBreakdown {
   const stt = usage.sttMinutes * SARVAM_STT_INR_PER_MINUTE;
   const tts = usage.ttsCharacters * SARVAM_TTS_INR_PER_CHAR;
 
-  const llm =
-    provider === "openai"
-      ? ((usage.llmInputTokens * OPENAI_INPUT_USD_PER_MTOK +
-          usage.llmOutputTokens * OPENAI_OUTPUT_USD_PER_MTOK) /
-          1_000_000) *
-        USD_TO_INR
-      : (usage.llmInputTokens * SARVAM_INPUT_INR_PER_MTOK +
-          usage.llmOutputTokens * SARVAM_OUTPUT_INR_PER_MTOK) /
-        1_000_000;
+  const openai =
+    ((usage.openaiInputTokens * OPENAI_INPUT_USD_PER_MTOK +
+      usage.openaiOutputTokens * OPENAI_OUTPUT_USD_PER_MTOK) /
+      1_000_000) *
+    USD_TO_INR;
 
-  return { stt, tts, llm, total: stt + tts + llm };
+  const sarvam =
+    (usage.sarvamInputTokens * SARVAM_INPUT_INR_PER_MTOK +
+      usage.sarvamOutputTokens * SARVAM_OUTPUT_INR_PER_MTOK) /
+    1_000_000;
+
+  const llm = openai + sarvam;
+  return { stt, tts, openai, sarvam, llm, total: stt + tts + llm };
+}
+
+/* ------------------------- Reconstructing Sarvam ------------------------- */
+
+/**
+ * Sarvam's tokens were not recorded until 6 October 2026, because the Sarvam
+ * client never called `recordUsage` — the OpenAI client was the only caller.
+ * Tokens leave no trace once the response is parsed, so those interviews can
+ * never be costed from stored data. They can, however, be MODELLED, and a
+ * modelled figure is far closer to the truth than the ₹0.00 that stood there
+ * before, which read as "Sarvam was free".
+ *
+ * The constants below are fitted on the 331 interviews that ran on OpenAI and
+ * so were metered exactly. Both providers go through the same
+ * `requestStructured` contract with the same instructions and the same input,
+ * so a turn costs about the same number of tokens whoever answers it.
+ *
+ * Fitted: 1.95 requests per turn, 5,015 input and 165 output tokens per turn.
+ * Validated by fitting on half those interviews and predicting the other half:
+ * the aggregate came out 0.3% low on input and 3.4% high on output. Per
+ * interview it is far looser — about 30% — so this belongs on a total across
+ * many runs, and a single interview's figure should be read as an order of
+ * magnitude.
+ *
+ * It UNDERSTATES slightly: Sarvam's system message carries an extra
+ * `describeShape(jsonSchema)` block that OpenAI's does not.
+ */
+const REQUESTS_PER_TURN = 1.95;
+const INPUT_TOKENS_PER_REQUEST = 5015 / REQUESTS_PER_TURN;
+const OUTPUT_TOKENS_PER_REQUEST = 165 / REQUESTS_PER_TURN;
+
+/**
+ * What Sarvam must have done on an interview that did not record it.
+ *
+ * `openaiRequests` is subtracted because those turns are already costed
+ * exactly from stored tokens — an interview the breaker handed to OpenAI
+ * part-way through must not be billed twice for the same turns. An interview
+ * that ran wholly on OpenAI leaves nothing over, which is the right answer.
+ */
+export function estimateSarvamUsage(
+  turns: number,
+  openaiRequests: number,
+): { sarvamInputTokens: number; sarvamOutputTokens: number } {
+  const unbilled = Math.max(0, turns * REQUESTS_PER_TURN - openaiRequests);
+  return {
+    sarvamInputTokens: Math.round(unbilled * INPUT_TOKENS_PER_REQUEST),
+    sarvamOutputTokens: Math.round(unbilled * OUTPUT_TOKENS_PER_REQUEST),
+  };
 }
 
 /**
- * Whether the meter was running for this interview.
+ * Whether the SPEECH meter was running for this interview.
  *
  * Every interview synthesises at least its opening question, so a run with no
  * TTS characters was never metered — it predates the counters, or predates one
@@ -98,6 +158,30 @@ export function interviewCost(
  */
 export function wasMetered(usage: { ttsCharacters: number }): boolean {
   return usage.ttsCharacters > 0;
+}
+
+/**
+ * Whether the MODEL meter was running, which is a separate question.
+ *
+ * No interview can run without the model: it writes every question and scores
+ * every answer. So zero tokens never means a cheap interview, it means nobody
+ * was counting — which was true of every Sarvam-brained interview until the
+ * Sarvam client started reporting its usage, because only the OpenAI client
+ * ever called `recordUsage`. Those runs have exact speech costs and a missing
+ * model share, so they are shown as a floor rather than as the bill.
+ */
+export function hasModelUsage(usage: {
+  llmInputTokens: number;
+  llmOutputTokens: number;
+  sarvamInputTokens: number;
+  sarvamOutputTokens: number;
+}): boolean {
+  return (
+    usage.llmInputTokens > 0 ||
+    usage.llmOutputTokens > 0 ||
+    usage.sarvamInputTokens > 0 ||
+    usage.sarvamOutputTokens > 0
+  );
 }
 
 /**

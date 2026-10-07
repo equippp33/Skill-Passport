@@ -220,6 +220,25 @@ export const interviewAttemptsTable = pgTable(
     summary: text("summary"),
     strengths: text("strengths").array(),
     improvements: text("improvements").array(),
+
+    /**
+     * The same report in the language the candidate answered in.
+     *
+     * The English above stays canonical: it is what reviewers read, what the
+     * scoring prompts are tuned to produce, and what the partner API has
+     * always returned. These are a translation OF it rather than a separately
+     * written report, so the two can never say different things about the same
+     * candidate.
+     *
+     * Null when the interview was in English, and null when the translation
+     * failed — it is best-effort, and a missing translation must never cost
+     * somebody their report. Read `reportLanguage` to know which it is.
+     */
+    summaryTranslated: text("summary_translated"),
+    strengthsTranslated: text("strengths_translated").array(),
+    improvementsTranslated: text("improvements_translated").array(),
+    /** Language key of the translation above, or null if there isn't one. */
+    reportLanguage: text("report_language"),
     errorMessage: text("error_message"),
 
     /** Times the candidate left the tab, as a light proctoring signal. */
@@ -239,6 +258,18 @@ export const interviewAttemptsTable = pgTable(
      * there is nothing to count here; minutes come from the recorded answer
      * clips instead.
      *
+     * Model tokens are counted PER PROVIDER rather than in one pair of
+     * columns, because the two are priced an order of magnitude apart —
+     * roughly ₹29 against ₹176 per million input tokens. A single total
+     * cannot be costed without assuming which provider produced it, and that
+     * assumption is wrong every time the Sarvam breaker falls back to OpenAI
+     * mid-interview, which is precisely when it is least visible.
+     *
+     * The `llm_*` columns are the OpenAI side. They keep their old names
+     * because every token ever recorded in them came from the OpenAI client
+     * — it was the only caller of `recordUsage` — so reading them as OpenAI
+     * is correct for the history as well as for what follows.
+     *
      * Incremented in SQL (`x = x + n`) rather than read-modify-written, so the
      * concurrent legs of one turn cannot lose each other's counts.
      */
@@ -246,6 +277,9 @@ export const interviewAttemptsTable = pgTable(
     llmRequests: integer("llm_requests").notNull().default(0),
     llmInputTokens: integer("llm_input_tokens").notNull().default(0),
     llmOutputTokens: integer("llm_output_tokens").notNull().default(0),
+    sarvamRequests: integer("sarvam_requests").notNull().default(0),
+    sarvamInputTokens: integer("sarvam_input_tokens").notNull().default(0),
+    sarvamOutputTokens: integer("sarvam_output_tokens").notNull().default(0),
 
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -299,6 +333,16 @@ export const interviewTurnsTable = pgTable(
 
     score: smallint("score"),
     evaluation: text("evaluation"),
+    /**
+     * The same evaluation in the language the candidate answered in.
+     *
+     * `evaluation` is held to English on purpose — the prompt says so twice
+     * and `ensureEnglishEvaluation` rescues the ones that drift — because
+     * reviewers read English. But the candidate reads the report too, and
+     * feedback they cannot read is not feedback. Null for English interviews,
+     * where the original already serves, and null where the translation failed.
+     */
+    evaluationTranslated: text("evaluation_translated"),
     strengths: text("strengths").array(),
     improvements: text("improvements").array(),
 

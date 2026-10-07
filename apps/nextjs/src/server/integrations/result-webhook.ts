@@ -13,10 +13,7 @@ import type {
   InterviewTurn,
 } from "~/server/db/schema";
 import type { SkillScore } from "~/lib/scoring";
-import {
-  presignReportUrl,
-  putReportPdf,
-} from "~/server/interview/storage";
+import { presignReportUrl, putReportPdf } from "~/server/interview/storage";
 import { renderAttemptReportPdf } from "./report-pdf";
 
 /**
@@ -94,6 +91,25 @@ export function buildResultPayload(
     summary: args.summary,
     strengths: args.strengths,
     improvements: args.improvements,
+    /**
+     * The same report in the language the candidate answered in, for partners
+     * who pass it on to the student rather than reading it themselves.
+     *
+     * A nested object rather than parallel `summaryHindi` fields so a partner
+     * can hand the whole thing to a student without picking it apart, and so
+     * `null` says plainly "there is no translation" — because the interview was
+     * in English, or because the translation did not come back. The English
+     * above is always present either way, so nothing here can break an existing
+     * integration that ignores it.
+     */
+    translated: attempt.reportLanguage
+      ? {
+          language: attempt.reportLanguage,
+          summary: attempt.summaryTranslated,
+          strengths: attempt.strengthsTranslated ?? [],
+          improvements: attempt.improvementsTranslated ?? [],
+        }
+      : null,
     introduction: intro,
     questions,
     startedAt: attempt.startedAt?.toISOString() ?? null,
@@ -129,7 +145,9 @@ export async function deliverResult(args: ResultPayloadArgs): Promise<boolean> {
   }
 
   const body = JSON.stringify({ ...buildResultPayload(args), reportUrl });
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   if (env.INTEGRATION_RESULT_WEBHOOK_KEY) {
     headers.Authorization = `Bearer ${env.INTEGRATION_RESULT_WEBHOOK_KEY}`;
   }

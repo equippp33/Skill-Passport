@@ -17,6 +17,7 @@ import type {
 } from "~/server/db/schema";
 import { resolveInterviewLanguage } from "~/config/languages";
 import type { InterviewLanguageKey } from "~/config/languages";
+import type { TranslatedReport } from "~/server/services/openai";
 import { OPENING_BY_KEY } from "~/config/greeting";
 import {
   LANGUAGE_PROBE_TURN,
@@ -39,6 +40,8 @@ import {
   evaluateAnswerAndGetNextQuestion,
   generateDoubtResponse,
   generateInterviewSummary,
+  translateEvaluations,
+  translateReport,
   generateQuestion,
   scoreAndMaybeFollowUp,
   translateQuestion,
@@ -171,6 +174,7 @@ function contextFor(
   interview: Interview,
   introduction?: string | null,
   priorAttempts?: string | null,
+  previouslyAsked?: string[],
 ): InterviewContext {
   if (!attempt.language) {
     throw new AttemptError(
@@ -185,6 +189,7 @@ function contextFor(
     candidateCourse: attempt.candidateCourse,
     candidateIntroduction: introduction ?? null,
     priorAttempts: priorAttempts ?? null,
+    previouslyAsked: previouslyAsked ?? [],
   };
 }
 
@@ -197,11 +202,126 @@ async function buildContext(
   attempt: InterviewAttempt,
   interview: Interview,
 ): Promise<InterviewContext> {
-  const [introduction, priorAttempts] = await Promise.all([
+  const [introduction, priorAttempts, previouslyAsked] = await Promise.all([
     introductionFor(attempt.id),
     priorAttemptsContext(attempt),
+    previouslyAskedQuestions(attempt),
   ]);
-  return contextFor(attempt, interview, introduction, priorAttempts);
+  return contextFor(
+    attempt,
+    interview,
+    introduction,
+    priorAttempts,
+    previouslyAsked,
+  );
+}
+
+/**
+ * Every question this candidate has already been asked at this interview, in
+ * English, across all their earlier attempts.
+ *
+ * Three things are deliberately WIDER than `priorAttemptsContext`:
+ *
+ *   - every status, not just `completed`. A candidate who abandoned halfway
+ *     and came back still heard those questions, and re-asking them is exactly
+ *     the complaint;
+ *   - every turn, answered or not. A question they sat silent through or
+ *     skipped is still one they have had;
+ *   - follow-ups included, since those are questions too.
+ *
+ * Read in English (`questionTranslation`, falling back to the question itself)
+ * so a retake in a different language still avoids the same ground — the
+ * stored text would otherwise be in a script the comparison could not relate.
+ *
+ * Best-effort: a failure here means a retake that might repeat itself, which
+ * is worth far less than a retake that cannot start at all.
+ */
+async function previouslyAskedQuestions(
+  attempt: InterviewAttempt,
+): Promise<string[]> {
+  const studentId = attempt.externalStudentId?.trim() || null;
+  const email = attempt.candidateEmail?.trim() || null;
+  if (!studentId && !email) return [];
+
+  // The same identity a retake is counted by everywhere else.
+  const sameCandidate = studentId
+    ? eq(interviewAttemptsTable.externalStudentId, studentId)
+    : eq(interviewAttemptsTable.candidateEmail, email!);
+
+  try {
+    const priors = await db.query.interviewAttemptsTable.findMany({
+      columns: { id: true },
+      where: and(
+        sameCandidate,
+        eq(interviewAttemptsTable.interviewId, attempt.interviewId),
+        ne(interviewAttemptsTable.id, attempt.id),
+      ),
+      orderBy: asc(interviewAttemptsTable.createdAt),
+    });
+    if (priors.length === 0) return [];
+
+    const turns = await db.query.interviewTurnsTable.findMany({
+      columns: { question: true, questionTranslation: true },
+      where: and(
+        inArray(
+          interviewTurnsTable.attemptId,
+          priors.slice(-MAX_PRIOR_ATTEMPTS).map((p) => p.id),
+        ),
+        eq(interviewTurnsTable.kind, "skill"),
+      ),
+      orderBy: asc(interviewTurnsTable.turnNumber),
+    });
+
+    const seen = new Set<string>();
+    const asked: string[] = [];
+    for (const t of turns) {
+      const text = (t.questionTranslation?.trim() || t.question || "").trim();
+      if (!text) continue;
+      const key = normaliseForCompare(text);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      asked.push(text);
+    }
+    return asked;
+  } catch (error) {
+    console.error(
+      `[attempt] previously-asked lookup failed: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+    return [];
+  }
+}
+
+/** Lowercase, punctuation-free, single-spaced — for comparing two questions. */
+function normaliseForCompare(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Are these two questions the same question?
+ *
+ * Word overlap rather than string equality, because the English a question
+ * comes back as is not stable: the fixed pool is stored verbatim for English,
+ * Hindi and Marathi, but every other language renders it through the model, so
+ * the "same" question returns slightly reworded each time. Comparing exactly
+ * would say they differ and let the repeat straight through.
+ *
+ * 0.6 is well clear of both ends in the eleven-question pool: distinct entries
+ * share only stopwords, while a re-rendered one keeps nearly all its content
+ * words.
+ */
+function sameQuestion(a: string, b: string): boolean {
+  const left = new Set(normaliseForCompare(a).split(" ").filter(Boolean));
+  const right = new Set(normaliseForCompare(b).split(" ").filter(Boolean));
+  if (left.size === 0 || right.size === 0) return false;
+  let shared = 0;
+  for (const word of left) if (right.has(word)) shared += 1;
+  return shared / (left.size + right.size - shared) >= 0.6;
 }
 
 /** How much of each prior answer to carry over — enough for gist, not the lot. */
@@ -1291,10 +1411,18 @@ async function pickReadinessQuestion(
   ctx: InterviewContext,
   languageKey: string | null,
 ): Promise<{ question: string; translation: string | null }> {
-  const q =
-    WORK_READINESS_QUESTIONS[
-      Math.floor(Math.random() * WORK_READINESS_QUESTIONS.length)
-    ]!;
+  // Drop the ones this candidate has already had. The opener is the first
+  // thing they hear, so repeating it makes a retake feel identical before a
+  // single generated question has been reached — and unlike the AI questions,
+  // nothing here was stopping it: the pick was a bare random index.
+  const asked = ctx.previouslyAsked ?? [];
+  const unused = WORK_READINESS_QUESTIONS.filter(
+    (candidate) => !asked.some((prior) => sameQuestion(prior, candidate.en)),
+  );
+  // Eleven questions against a retake limit of three, so this should never
+  // empty. If it somehow does, repeating one beats failing to ask anything.
+  const pool = unused.length > 0 ? unused : WORK_READINESS_QUESTIONS;
+  const q = pool[Math.floor(Math.random() * pool.length)]!;
   if (languageKey === "hindi") return { question: q.hi, translation: q.en };
   if (languageKey === "marathi") return { question: q.mr, translation: q.en };
   if (languageKey === "english" || !languageKey)
@@ -1508,7 +1636,8 @@ async function deliverFollowUp(
     ),
   });
   if (prepared) {
-    if (prepared.questionAudioId) await discardAudioClip(prepared.questionAudioId);
+    if (prepared.questionAudioId)
+      await discardAudioClip(prepared.questionAudioId);
     await db
       .delete(interviewTurnsTable)
       .where(eq(interviewTurnsTable.id, prepared.id));
@@ -1933,6 +2062,49 @@ async function finaliseAttempt(
       "The detailed summary could not be generated, but the per-question feedback below is complete.";
   }
 
+  /**
+   * The same report in the candidate's own language.
+   *
+   * English stays canonical — reviewers read it, the partner API has always
+   * returned it, and the scoring prompts are tuned to produce it. This is a
+   * translation of that, so the two can never say different things.
+   *
+   * Best-effort and deliberately last: it runs after the English report is in
+   * hand, and every failure path leaves `translated` null rather than throwing.
+   * A candidate must never lose their report because a translation call timed
+   * out. Skipped entirely for an English interview, where there is nothing to
+   * translate.
+   */
+  let translated: TranslatedReport | null = null;
+  const reportLanguage =
+    attempt.language && attempt.language !== "english"
+      ? attempt.language
+      : null;
+
+  if (reportLanguage && summary) {
+    try {
+      translated = await translateReport({
+        languageName: resolveInterviewLanguage(reportLanguage).promptName,
+        summary,
+        strengths,
+        improvements,
+      });
+    } catch (error) {
+      console.error(
+        `[attempt] report translation failed attempt=${attemptId}: ${
+          error instanceof Error ? error.message : "unknown"
+        }`,
+      );
+    }
+  }
+
+  // The per-question feedback, in the candidate's language too. Runs after
+  // the report translation rather than beside it so a failure in either leaves
+  // the other intact, and so the two share the provider rather than racing for
+  // it. Entirely best-effort: a completed interview must never fail to
+  // complete because a translation did not come back.
+  if (reportLanguage) await translateTurnEvaluations(attemptId, reportLanguage);
+
   await db
     .update(interviewAttemptsTable)
     .set({
@@ -1941,6 +2113,12 @@ async function finaliseAttempt(
       summary,
       strengths,
       improvements,
+      summaryTranslated: translated?.summary ?? null,
+      strengthsTranslated: translated?.strengths ?? null,
+      improvementsTranslated: translated?.improvements ?? null,
+      // Only set when there IS a translation, so this doubles as the flag for
+      // "a translated report exists" rather than "the interview had a language".
+      reportLanguage: translated ? reportLanguage : null,
       completedAt: new Date(),
       updatedAt: new Date(),
     })
@@ -2187,4 +2365,59 @@ export async function recordAway(attemptId: string): Promise<void> {
       updatedAt: new Date(),
     })
     .where(eq(interviewAttemptsTable.id, attemptId));
+}
+
+/**
+ * Translate every scored turn's evaluation into the interview language.
+ *
+ * Reads the turns back rather than taking them as an argument because the
+ * caller has already written its scores by this point, and re-reading is the
+ * only way to be sure the text being translated is the text that was stored.
+ *
+ * Writes each translation against its own turn id, so the positional pairing
+ * from the model is resolved here, once, next to the data — rather than being
+ * carried any further.
+ */
+async function translateTurnEvaluations(
+  attemptId: string,
+  languageKey: string,
+): Promise<void> {
+  try {
+    const turns = await db.query.interviewTurnsTable.findMany({
+      columns: { id: true, evaluation: true },
+      where: and(
+        eq(interviewTurnsTable.attemptId, attemptId),
+        eq(interviewTurnsTable.status, "completed"),
+      ),
+      orderBy: asc(interviewTurnsTable.turnNumber),
+    });
+
+    const scored = turns.filter(
+      (t): t is typeof t & { evaluation: string } =>
+        typeof t.evaluation === "string" && t.evaluation.trim().length > 0,
+    );
+    if (scored.length === 0) return;
+
+    const translations = await translateEvaluations({
+      languageName: resolveInterviewLanguage(languageKey).promptName,
+      evaluations: scored.map((t) => t.evaluation.trim()),
+    });
+    // Empty means the count came back wrong and was rejected upstream.
+    if (translations.length !== scored.length) return;
+
+    await Promise.all(
+      scored.map((turn, i) =>
+        db
+          .update(interviewTurnsTable)
+          .set({ evaluationTranslated: translations[i] ?? null })
+          .where(eq(interviewTurnsTable.id, turn.id)),
+      ),
+    );
+  } catch (error) {
+    console.error(
+      `[attempt] evaluation translation failed attempt=${attemptId}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
 }

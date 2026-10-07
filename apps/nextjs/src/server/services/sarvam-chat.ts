@@ -3,6 +3,7 @@ import "server-only";
 import type { z } from "zod";
 
 import { env } from "~/env";
+import { recordUsage } from "~/server/interview/usage";
 import { ProviderError, isRetryableStatus, withRetry } from "./errors";
 
 /**
@@ -142,6 +143,15 @@ interface ChatResponse {
     message?: { content?: string | null };
     finish_reason?: string;
   }[];
+  /**
+   * Sarvam's endpoint is OpenAI-compatible and returns this on every 200,
+   * under OpenAI's older `prompt_tokens` / `completion_tokens` names rather
+   * than the Responses API's `input_tokens` / `output_tokens`.
+   */
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  };
 }
 
 /**
@@ -223,6 +233,18 @@ export async function requestStructuredViaSarvam<T>(args: {
     const json = (await response
       .json()
       .catch(() => null)) as ChatResponse | null;
+
+    // Metered here, before the content is validated, because the bill does not
+    // care whether we could use the answer. A reply that comes back off-format
+    // and is thrown away was still charged for, and a counter that only
+    // records the usable calls understates every interview that had a bad one
+    // — which is the interview most worth looking at.
+    recordUsage({
+      sarvamRequests: 1,
+      sarvamInputTokens: json?.usage?.prompt_tokens ?? 0,
+      sarvamOutputTokens: json?.usage?.completion_tokens ?? 0,
+    });
+
     const choice = json?.choices?.[0];
     const raw = choice?.message?.content;
 

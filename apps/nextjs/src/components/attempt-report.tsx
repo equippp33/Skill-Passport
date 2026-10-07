@@ -69,6 +69,34 @@ export function AttemptReport({
   // unscored) rather than a separate "language sample" box.
   const breakdown = probe?.answerTranscript ? [probe, ...answered] : answered;
 
+  /**
+   * What each card is called: "Introduction", then the skill questions
+   * numbered from 1 in the order they were asked.
+   *
+   * Deliberately NOT `turn.turnNumber`. That is the database turn, which
+   * counts the opening language probe and every follow-up, so the first skill
+   * question reads "Question 2" and an eleven-question interview finishes
+   * somewhere past thirteen — in a downloaded PDF, with no interview in front
+   * of you, there is nothing to reconcile that against.
+   *
+   * A follow-up carries the number of the question it dug into rather than
+   * taking one of its own. It is the same question pressed further, and
+   * numbering it separately would make the report claim more questions than
+   * the candidate was actually asked.
+   */
+  const cardLabels = new Map<string, string>();
+  let askedSoFar = 0;
+  for (const turn of breakdown) {
+    if (turn.kind === "language_probe") {
+      cardLabels.set(turn.id, "Introduction");
+    } else if (turn.isFollowUp && askedSoFar > 0) {
+      cardLabels.set(turn.id, `Question ${askedSoFar} · follow-up`);
+    } else {
+      askedSoFar += 1;
+      cardLabels.set(turn.id, `Question ${askedSoFar}`);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {showCandidate ? (
@@ -159,10 +187,24 @@ export function AttemptReport({
               <CardHeader>
                 <CardTitle>{m.result.summary}</CardTitle>
               </CardHeader>
-              <CardContent>
-                <p className="text-sm leading-relaxed" lang={langCode}>
+              <CardContent className="space-y-3">
+                <p className="text-sm leading-relaxed" lang="en">
                   {attempt.summary}
                 </p>
+                {/*
+                 * What the candidate reads, when the interview was not in
+                 * English. Shown to the reviewer too — the person deciding
+                 * should be able to see the words that will reach the
+                 * candidate, not just the English they were made from.
+                 */}
+                {attempt.summaryTranslated && attempt.reportLanguage ? (
+                  <p
+                    className="border-l-2 border-border-strong pl-3 text-sm leading-relaxed text-content-muted"
+                    lang={langCode}
+                  >
+                    {attempt.summaryTranslated}
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
           ) : null}
@@ -171,6 +213,7 @@ export function AttemptReport({
             <ListCard
               title={m.result.strengths}
               items={attempt.strengths}
+              translated={attempt.strengthsTranslated ?? undefined}
               empty={m.result.noStrengths}
               marker="✓"
               markerClass="text-success"
@@ -179,6 +222,7 @@ export function AttemptReport({
             <ListCard
               title={m.result.improvements}
               items={attempt.improvements}
+              translated={attempt.improvementsTranslated ?? undefined}
               empty={m.result.noImprovements}
               marker="→"
               markerClass="text-warning"
@@ -201,12 +245,16 @@ export function AttemptReport({
               <Card key={turn.id}>
                 <CardHeader>
                   <div className="flex flex-wrap items-center justify-between gap-2">
+                    {/* The number leads, and in full strength, because
+                        this is what somebody reading the downloaded PDF
+                        navigates by. The skill follows it as context. */}
                     <CardTitle className="text-sm font-medium text-content-muted">
-                      {turn.kind === "language_probe"
-                        ? "Introduction"
-                        : turn.skillId
-                          ? m.skills[turn.skillId as WorkSkillId]
-                          : `Question ${turn.turnNumber}`}
+                      <span className="font-semibold text-content">
+                        {cardLabels.get(turn.id)}
+                      </span>
+                      {turn.kind !== "language_probe" && turn.skillId
+                        ? ` · ${m.skills[turn.skillId as WorkSkillId]}`
+                        : null}
                     </CardTitle>
                     <span
                       className={`text-sm font-semibold tabular-nums ${scoreTone(
@@ -262,9 +310,7 @@ export function AttemptReport({
                         never be read as belonging to the wrong question. */}
                       <p className="text-xs text-content-muted">
                         {[
-                          turn.kind === "language_probe"
-                            ? "Introduction"
-                            : `Question ${turn.turnNumber}`,
+                          cardLabels.get(turn.id),
                           clipLength(clipDurations?.[turn.answerVideoId]),
                           `answered ${formatDateTime(turn.updatedAt)}`,
                         ]
@@ -312,12 +358,25 @@ export function AttemptReport({
                       <p className="text-xs font-medium text-content-muted">
                         {m.result.evaluation}
                       </p>
-                      <p
-                        className="mt-1 text-sm leading-relaxed"
-                        lang={langCode}
-                      >
+                      {/* English first, and marked as English: the stored
+                          evaluation is held to English whatever language the
+                          interview ran in, so labelling it with the interview
+                          language told screen readers and PDF renderers the
+                          wrong thing. */}
+                      <p className="mt-1 text-sm leading-relaxed" lang="en">
                         {turn.evaluation}
                       </p>
+                      {/* And the same feedback in the language they answered
+                          in. Absent for English interviews, where the original
+                          already is that language. */}
+                      {turn.evaluationTranslated ? (
+                        <p
+                          className="mt-2 border-l-2 border-border-strong pl-3 text-sm leading-relaxed text-content-muted"
+                          lang={langCode}
+                        >
+                          {turn.evaluationTranslated}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                 </CardContent>
@@ -398,6 +457,7 @@ function ListCard({
   marker,
   markerClass,
   lang,
+  translated,
 }: {
   title: string;
   items: string[] | null;
@@ -405,6 +465,14 @@ function ListCard({
   marker: string;
   markerClass: string;
   lang?: string;
+  /**
+   * The same points in the candidate's language, index for index.
+   *
+   * Paired with each English line rather than listed separately, so a reviewer
+   * can see at a glance that the two say the same thing — which is the only
+   * way to notice if they ever stop doing so.
+   */
+  translated?: string[];
 }) {
   return (
     <Card>
@@ -419,7 +487,17 @@ function ListCard({
                 <span aria-hidden className={markerClass}>
                   {marker}
                 </span>
-                <span>{item}</span>
+                <span>
+                  <span lang="en">{item}</span>
+                  {translated?.[i] ? (
+                    <span
+                      className="mt-0.5 block text-content-muted"
+                      lang={lang}
+                    >
+                      {translated[i]}
+                    </span>
+                  ) : null}
+                </span>
               </li>
             ))}
           </ul>

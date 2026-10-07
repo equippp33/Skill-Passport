@@ -1,6 +1,6 @@
 import "server-only";
 
-import { appUrl } from "~/server/app-url";
+import { selfOrigin } from "~/server/app-url";
 import { lucia } from "~/server/auth/lucia";
 import { renderPageToPdf } from "~/server/pdf";
 import type { Interview, InterviewAttempt } from "~/server/db/schema";
@@ -20,7 +20,9 @@ export async function renderAttemptReportPdf(
 ): Promise<Buffer> {
   const session = await lucia.createSession(interview.createdByUserId, {});
   try {
-    const origin = await appUrl();
+    // This server where it can be identified, the public domain otherwise
+    // — so a local run renders local code. See `selfOrigin`.
+    const origin = await selfOrigin();
     const { hostname } = new URL(origin);
     return await renderPageToPdf({
       url: `${origin}/admin/attempts/${attempt.id}`,

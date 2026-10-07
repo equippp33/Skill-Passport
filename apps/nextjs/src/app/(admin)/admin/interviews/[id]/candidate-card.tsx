@@ -109,24 +109,29 @@ export function CandidateCard({
         ) : null}
 
         {/*
-         * What this interview cost to run. Development only — the server
-         * sends `devCost` as null in production, so this renders nothing
-         * there without the component needing to know the environment.
+         * What this CANDIDATE cost — every attempt they made, added together,
+         * which is why it sits directly under the "N attempts" marker. The
+         * per-attempt split is on the report page behind the card.
          *
-         * An interview the meter did not cover shows a dash rather than
-         * ₹0.00: a zero next to a completed interview is a claim that it was
-         * free, and that is how a readout like this stops being believed.
+         * Development only: the server sends `devCost` as null in production,
+         * so this renders nothing there without the component needing to know
+         * the environment.
+         *
+         * A run nothing at all was recorded for shows a dash rather than
+         * ₹0.00, and one whose Sarvam share had to be reconstructed shows "~".
+         * A zero next to a completed interview is a claim that it was free,
+         * and that is how a readout like this stops being believed.
          */}
         {attempt.devCost !== undefined ? (
           <span
             title={
               attempt.devCost
                 ? `${attempt.devCostParts ?? "Estimated provider cost"}${
-                    attempt.devCostIsFloor
-                      ? " — speech only; model usage was not recorded for this interview, so the real cost is higher"
+                    attempt.devCostIsEstimated
+                      ? " — Sarvam's share reconstructed from interview length; nothing recorded its tokens before 6 Oct"
                       : ""
                   }`
-                : "No usage recorded for this interview"
+                : "No usage recorded for this candidate"
             }
             className={`absolute bottom-2 left-2 rounded-md px-2 py-1 text-xs font-semibold tabular-nums backdrop-blur-sm ${
               attempt.devCost
@@ -135,7 +140,7 @@ export function CandidateCard({
             }`}
           >
             {attempt.devCost
-              ? `${attempt.devCostIsFloor ? "≥" : ""}${attempt.devCost}`
+              ? `${attempt.devCostIsEstimated ? "~" : ""}${attempt.devCost}`
               : "₹—"}
           </span>
         ) : null}

@@ -40,6 +40,20 @@ export interface InterviewContext {
    * instructions.
    */
   priorAttempts?: string | null;
+  /**
+   * Every question this candidate has already been asked at this assessment,
+   * across ALL their earlier attempts, in English.
+   *
+   * Separate from `priorAttempts`, which is background for judging growth and
+   * carries the answers too. This is a plain do-not-repeat list, and it is
+   * plain on purpose: a constraint buried in a page of background prose gets
+   * weighed against everything else around it, where a short explicit list of
+   * forbidden questions does not.
+   *
+   * Held in English whatever language each attempt ran in, so a candidate who
+   * retakes in Hindi is not asked the Marathi question they already had.
+   */
+  previouslyAsked?: string[];
 }
 
 /**
@@ -300,9 +314,8 @@ export function contextBlock(ctx: InterviewContext): string {
           ``,
           `This candidate has taken this assessment BEFORE — one or more earlier`,
           `attempts are shown below, oldest first. Use them as background so you`,
-          `know them and can judge growth across attempts, and do NOT ask a`,
-          `question they have already answered word-for-word — vary it or go`,
-          `deeper. Do not read this back to them or quiz them on it:`,
+          `know them and can judge growth across attempts. Do not read this back`,
+          `to them or quiz them on it:`,
           untrusted("EARLIER ATTEMPTS", ctx.priorAttempts),
         ]
       : []),
@@ -388,6 +401,31 @@ export interface PriorTurn {
   skillLabel: string;
   question: string;
   answerTranscript: string | null;
+}
+
+/**
+ * The hard do-not-repeat list for a retake.
+ *
+ * Stated as a flat list of forbidden questions with no surrounding argument,
+ * because the previous wording — "do not ask a question they have already
+ * answered word-for-word" — licensed exactly what it was meant to stop. A
+ * model asked not to repeat something WORD-FOR-WORD will happily re-ask the
+ * same scenario in different words and consider the instruction honoured; to
+ * the candidate sitting there, that is the same question.
+ *
+ * So the rule here is about the SITUATION, not the wording.
+ */
+export function previouslyAskedBlock(questions: string[]): string {
+  return [
+    "## Already asked in this candidate's EARLIER attempts",
+    "",
+    "They have sat this assessment before and were asked these. Do NOT ask any",
+    "of them again, and do NOT ask a reworded version of one. Two questions",
+    "that put the candidate in the same situation are the same question however",
+    "differently they are phrased — pick a DIFFERENT situation entirely.",
+    "",
+    ...questions.map((q) => `- ${q}`),
+  ].join("\n");
 }
 
 export function historyBlock(history: PriorTurn[]): string {

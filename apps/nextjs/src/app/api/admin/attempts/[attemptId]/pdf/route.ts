@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { getAttemptForAdmin, requireAdmin } from "~/server/admin/service";
-import { appUrl } from "~/server/app-url";
+import { selfOrigin } from "~/server/app-url";
 import { lucia } from "~/server/auth/lucia";
 import { PdfUnavailableError, renderPageToPdf } from "~/server/pdf";
 import { uuidSchema } from "~/server/interview/validation";
@@ -46,7 +46,9 @@ export async function GET(
     return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   }
 
-  const origin = await appUrl();
+  // This server, not the public domain: the browser is being sent back into
+  // the app it is already running in. See `selfOrigin`.
+  const origin = await selfOrigin();
   const { hostname } = new URL(origin);
 
   try {

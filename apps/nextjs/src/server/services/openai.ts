@@ -16,6 +16,7 @@ import {
   frameworkBlock,
   historyBlock,
   interviewerRules,
+  previouslyAskedBlock,
   questionStyleBlock,
   skillBlock,
   untrusted,
@@ -101,6 +102,35 @@ export const turnEvaluationSchema = z.object({
   interviewComplete: z.boolean(),
 });
 export type TurnEvaluation = z.infer<typeof turnEvaluationSchema>;
+
+export const translatedReportSchema = z.object({
+  summary: z.string().min(1).max(2000),
+  strengths: z.array(z.string().min(1).max(400)).max(6),
+  improvements: z.array(z.string().min(1).max(400)).max(6),
+});
+export type TranslatedReport = z.infer<typeof translatedReportSchema>;
+
+const TRANSLATED_REPORT_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["summary", "strengths", "improvements"],
+  properties: {
+    summary: {
+      type: "string",
+      description: "The summary, translated. Same meaning, nothing added.",
+    },
+    strengths: {
+      type: "array",
+      items: { type: "string" },
+      description: "Each strength, translated, in the same order.",
+    },
+    improvements: {
+      type: "array",
+      items: { type: "string" },
+      description: "Each improvement, translated, in the same order.",
+    },
+  },
+};
 
 export const interviewSummarySchema = z.object({
   overallScore: z.number().int().min(0).max(100),
@@ -345,14 +375,15 @@ async function requestStructured<T>(args: {
       // Sarvam. Opening it here disables a healthy provider for minutes and
       // dumps every call onto the fallback (which may itself be rate-limited).
       // Only a real outage (timeout / network / 5xx / auth) trips the breaker.
-      const contentError =
-        error instanceof ProviderError && error.contentError;
+      const contentError = error instanceof ProviderError && error.contentError;
       if (!contentError) {
         sarvamOpenUntil = Date.now() + SARVAM_BREAKER_COOLDOWN_MS; // trip it
       }
       console.warn(
         `[llm] sarvam ${args.schemaName} failed (${
-          contentError ? "content quirk, breaker kept closed" : "outage, breaker open"
+          contentError
+            ? "content quirk, breaker kept closed"
+            : "outage, breaker open"
         }); using openai: ${error instanceof Error ? error.message : "unknown"}`,
       );
       return openaiFallback();
@@ -471,6 +502,12 @@ export async function generateQuestion(args: {
             "## Questions already asked (never repeat these)",
             historyBlock(history),
           ]
+        : []),
+      // Placed AFTER this attempt's own history and immediately before the
+      // skill being asked about, so the last thing read before writing the
+      // question is the list of questions that are out of bounds.
+      ...(ctx.previouslyAsked && ctx.previouslyAsked.length > 0
+        ? ["", previouslyAskedBlock(ctx.previouslyAsked)]
         : []),
       "",
       skillBlock(skill),
@@ -1061,4 +1098,129 @@ export async function rephraseQuestionSimpler(
         ? null
         : english || null,
   };
+}
+
+/**
+ * The closing report, in the language the candidate answered in.
+ *
+ * A SEPARATE call rather than asking the report prompt for two languages at
+ * once. That prompt has been through a fight to keep its output in English —
+ * see the rules it carries — and giving it a second language to juggle is
+ * exactly the pressure that made it drift before. Here the English is already
+ * written and fixed; this only restates it.
+ *
+ * Translating rather than re-generating also means the two versions cannot
+ * disagree about the same candidate, which they could if each were written
+ * independently from the transcript.
+ */
+/**
+ * Every per-question evaluation, in the candidate's language.
+ *
+ * ONE call for the whole interview rather than one per turn. Scoring happens
+ * live, between questions, where the candidate is waiting — adding a
+ * translation there would put eleven extra round trips on the critical path to
+ * produce text nobody reads until the interview is over. Finalisation is not
+ * on anybody's path, so it goes there.
+ *
+ * Indexes are the contract: the model is told to return the same number of
+ * items in the same order, and the caller pairs them back up positionally. A
+ * short reply is discarded rather than zipped against the wrong questions,
+ * because an evaluation shown under the wrong answer is worse than none.
+ */
+export async function translateEvaluations(args: {
+  languageName: string;
+  evaluations: string[];
+}): Promise<string[]> {
+  if (args.evaluations.length === 0) return [];
+
+  const result = await requestStructured({
+    instructions: [
+      `You translate interview feedback into ${args.languageName} so the`,
+      `candidate can read what was said about them.`,
+      ``,
+      `Translate meaning, not words. Each item is feedback a person will read`,
+      `about their own answer, so it must sound like it was written for them —`,
+      `natural, warm and plain, never like a dictionary or a textbook.`,
+      ``,
+      `Keep ordinary workplace words that Indians normally say in English`,
+      `(team, project, manager, customer, interview, feedback) in English.`,
+      `Soften nothing and leave nothing out: feedback that is kinder in one`,
+      `language than the other is worse than no translation at all.`,
+      ``,
+      `Return EXACTLY ${args.evaluations.length} items, in the SAME ORDER as`,
+      `the input. Do not merge, split, reorder or drop any.`,
+    ].join("\n"),
+    input: [
+      `Translate each of these into ${args.languageName}.`,
+      ``,
+      untrusted("EVALUATIONS", JSON.stringify(args.evaluations, null, 2)),
+    ].join("\n"),
+    schemaName: "translated_evaluations",
+    jsonSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["evaluations"],
+      properties: {
+        evaluations: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Each evaluation, translated, in the same order as the input.",
+        },
+      },
+    },
+    validator: z.object({
+      evaluations: z.array(z.string().min(1).max(2000)),
+    }),
+    kind: "conversation",
+  });
+
+  // Positional pairing only holds if the count came back intact.
+  return result.evaluations.length === args.evaluations.length
+    ? result.evaluations
+    : [];
+}
+
+export async function translateReport(args: {
+  languageName: string;
+  summary: string;
+  strengths: string[];
+  improvements: string[];
+}): Promise<TranslatedReport> {
+  return requestStructured({
+    instructions: [
+      `You translate an assessment report into ${args.languageName} so the`,
+      `candidate can read it in their own language.`,
+      ``,
+      `Translate meaning, not words. This is feedback a person will read about`,
+      `themselves, so it must sound like it was written for them rather than`,
+      `run through a dictionary — natural, warm, and plain.`,
+      ``,
+      `Keep ordinary workplace words that Indians normally say in English`,
+      `(team, project, manager, customer, interview, feedback) in English.`,
+      `Keep the same number of strengths and improvements, in the same order.`,
+      `Add nothing, soften nothing, and leave out nothing: a report that`,
+      `flatters in one language and not the other is worse than no translation.`,
+    ].join("\n"),
+    input: [
+      `Translate into ${args.languageName}.`,
+      ``,
+      untrusted(
+        "REPORT",
+        JSON.stringify(
+          {
+            summary: args.summary,
+            strengths: args.strengths,
+            improvements: args.improvements,
+          },
+          null,
+          2,
+        ),
+      ),
+    ].join("\n"),
+    schemaName: "translated_report",
+    jsonSchema: TRANSLATED_REPORT_JSON_SCHEMA,
+    validator: translatedReportSchema,
+    kind: "conversation",
+  });
 }
