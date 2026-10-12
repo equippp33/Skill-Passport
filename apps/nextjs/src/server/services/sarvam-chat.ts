@@ -74,10 +74,32 @@ function logProviderFailure(op: string, status: number, bodyExcerpt: string) {
   );
 }
 
-function modelFor(kind: SarvamChatKind): string {
-  return kind === "analysis"
-    ? env.SARVAM_ANALYSIS_MODEL
-    : env.SARVAM_CHAT_MODEL;
+/**
+ * Which model answers. Both kinds now use the conversational one.
+ *
+ * `analysis` used to select `SARVAM_ANALYSIS_MODEL` — a REASONING model — on
+ * the reasoning that nobody waits for scoring, so it may as well be
+ * considered. Measured on twenty real answers, both given production's token
+ * budget and run twenty-up:
+ *
+ *            reasoning model        conversational model
+ *   wall     24.7s                  1.5s
+ *   per call 13.1s                  1.1s
+ *   output   2,093 tokens           148 tokens
+ *   usable   17 of 20               20 of 20
+ *
+ * It spends roughly two thousand tokens thinking and arrives within 0.29 of a
+ * point — thirteen of seventeen scores within one. That is not a better
+ * answer, it is the same answer twelve times slower, and the three failures
+ * are not free either: an unusable reply reads as a content quirk and buys a
+ * fallback call to OpenAI. Those are the `content quirk` lines in the logs.
+ *
+ * `kind` is kept rather than deleted. It still picks the timeout and the
+ * token ceiling, it still says which calls are on the candidate's critical
+ * path, and it is the seam to change if a reasoning model is ever worth it.
+ */
+function conversationalModel(): string {
+  return env.SARVAM_CHAT_MODEL;
 }
 
 /**
@@ -207,7 +229,7 @@ export async function requestStructuredViaSarvam<T>(args: {
         headers: { ...authHeaders(), "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
-          model: modelFor(kind),
+          model: conversationalModel(),
           messages: [
             {
               role: "system",

@@ -8,6 +8,7 @@ import type { User } from "lucia";
 import { db } from "~/server/db";
 import {
   interviewAttemptsTable,
+  attemptScoreSnapshotsTable,
   interviewAudioTable,
   interviewTurnsTable,
   interviewsTable,
@@ -565,6 +566,124 @@ export async function deleteAttempt(
     .where(eq(interviewAttemptsTable.id, attemptId));
 }
 
+/** One version of a candidate's report, oldest first. */
+export interface ScoreVersion {
+  /** 1 = the original scoring. The highest number is what the report shows now. */
+  version: number;
+  label: string;
+  /**
+   * When this version was PRODUCED, which is not when its row was written.
+   *
+   * A snapshot is taken at the moment a re-score replaces the report, so its
+   * `captured_at` is when that version ENDED. Reading it as the version's own
+   * time put every row within seconds of the next, and the original showed
+   * the timestamp of the re-score that overwrote it rather than the interview
+   * that produced it.
+   *
+   * So each version is dated by when it came into being: the original by the
+   * interview finishing, and every later one by the re-score that wrote it,
+   * which is the capture time of the snapshot BEFORE it.
+   */
+  scoredAt: Date;
+  isCurrent: boolean;
+  overallScore: number | null;
+  summary: string | null;
+  strengths: string[];
+  improvements: string[];
+  /** Keyed by skill id, in framework order. */
+  skills: { skillId: WorkSkillId; label: string; score: number | null }[];
+}
+
+export interface ScoreHistory {
+  attemptId: string;
+  candidateName: string;
+  interviewTitle: string;
+  /** How many times this report has been re-scored. `versions.length - 1`. */
+  rescoreCount: number;
+  versions: ScoreVersion[];
+}
+
+/**
+ * Every version of one candidate's report. DEVELOPMENT ONLY.
+ *
+ * Snapshots hold what each re-score replaced; the live attempt row is the
+ * newest version and is not snapshotted until the NEXT re-score, so it is
+ * appended here rather than read from the table. A report never re-scored has
+ * exactly one version and nothing to compare.
+ */
+export async function getScoreHistory(
+  adminId: string,
+  attemptId: string,
+): Promise<ScoreHistory | null> {
+  if (env.NODE_ENV !== "development") return null;
+
+  const found = await getAttemptForAdmin(adminId, attemptId);
+  if (!found) return null;
+  const { attempt, interview } = found;
+
+  const snapshots = await db.query.attemptScoreSnapshotsTable.findMany({
+    where: eq(attemptScoreSnapshotsTable.attemptId, attemptId),
+    orderBy: asc(attemptScoreSnapshotsTable.version),
+  });
+  const turns = await db.query.interviewTurnsTable.findMany({
+    where: eq(interviewTurnsTable.attemptId, attemptId),
+  });
+
+  const named = (
+    scores: { skillId: string; score: number | null }[] | null,
+  ): ScoreVersion["skills"] =>
+    WORK_SKILLS.map((skill) => ({
+      skillId: skill.id,
+      label: skill.label,
+      score: scores?.find((s) => s.skillId === skill.id)?.score ?? null,
+    }));
+
+  /** When version `index` (0-based) was produced. See `scoredAt`. */
+  const producedAt = (index: number): Date =>
+    index === 0
+      ? (attempt.completedAt ?? attempt.createdAt)
+      : (snapshots[index - 1]?.capturedAt ?? attempt.updatedAt);
+
+  const versions: ScoreVersion[] = snapshots.map((snap, i) => ({
+    version: snap.version,
+    label: snap.version === 1 ? "Original" : `Re-score ${snap.version - 1}`,
+    scoredAt: producedAt(i),
+    isCurrent: false,
+    overallScore: snap.overallScore,
+    summary: snap.summary,
+    strengths: snap.strengths ?? [],
+    improvements: snap.improvements ?? [],
+    skills: named(snap.skillScores),
+  }));
+
+  // The live row: newest, and the only one not in the table.
+  const current = snapshots.length + 1;
+  versions.push({
+    version: current,
+    label: current === 1 ? "Original" : `Re-score ${current - 1}`,
+    scoredAt: producedAt(snapshots.length),
+    isCurrent: true,
+    overallScore: attempt.overallScore,
+    summary: attempt.summary,
+    strengths: attempt.strengths ?? [],
+    improvements: attempt.improvements ?? [],
+    skills: named(
+      aggregateSkillScores(turns).map((s) => ({
+        skillId: s.skillId,
+        score: s.score,
+      })),
+    ),
+  });
+
+  return {
+    attemptId,
+    candidateName: attempt.candidateName,
+    interviewTitle: interview.title,
+    rescoreCount: versions.length - 1,
+    versions,
+  };
+}
+
 export interface AdminStats {
   interviews: number;
   openInterviews: number;
@@ -821,6 +940,24 @@ export async function getInterviewDetails(
     .sort((a, b) => a.candidateName.localeCompare(b.candidateName));
 
   const isDev = env.NODE_ENV === "development";
+
+  // How many already carry a snapshot, i.e. have been re-scored before. Lets
+  // the bulk tool offer "continue" rather than only "start again".
+  const rescoredCount = isDev
+    ? (
+        await db
+          .select({ attemptId: attemptScoreSnapshotsTable.attemptId })
+          .from(attemptScoreSnapshotsTable)
+          .where(
+            inArray(
+              attemptScoreSnapshotsTable.attemptId,
+              found.attempts.map((a) => a.id),
+            ),
+          )
+          .groupBy(attemptScoreSnapshotsTable.attemptId)
+      ).length
+    : 0;
+
   const [spokenByAttempt, thumbnailByAttempt, costByAttempt] =
     await Promise.all([
       getSpokenLanguages(attemptIds),
@@ -911,6 +1048,12 @@ export async function getInterviewDetails(
     isOpen: interview.isOpen,
     createdAt: interview.createdAt,
     devCosts,
+    // Counted over EVERY attempt, not the collapsed one per candidate: the
+    // bulk re-score grades each attempt, retakes included.
+    devCompletedCount: isDev
+      ? found.attempts.filter((a) => a.status === "completed").length
+      : undefined,
+    devRescoredCount: isDev ? rescoredCount : undefined,
     repeatComparison,
     attempts: attempts.map((attempt) => ({
       id: attempt.id,

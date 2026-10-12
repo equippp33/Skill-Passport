@@ -9,6 +9,7 @@ import {
   getAttemptForAdmin,
   getCandidateAttempts,
   getClipDurations,
+  getScoreHistory,
   requireAdmin,
 } from "~/server/admin/service";
 import { AttemptComparison } from "./attempt-comparison";
@@ -44,7 +45,7 @@ export default async function AdminAttemptPage({
   if (!found) notFound();
 
   const { attempt, interview } = found;
-  const [turns, clipDurations, appOrigin, candidateAttempts, costs] =
+  const [turns, clipDurations, appOrigin, candidateAttempts, costs, history] =
     await Promise.all([
       getTurns(attempt.id),
       getClipDurations(attempt.id),
@@ -52,6 +53,8 @@ export default async function AdminAttemptPage({
       getCandidateAttempts(admin.id, attempt),
       // Undefined in production, so the strip below simply does not render.
       getAttemptCosts(admin.id, attempt),
+      // Null in production. Carries every version this report has had.
+      getScoreHistory(admin.id, attempt.id),
     ]);
   const m = uiMessages();
   const fromQuery = from ? `?from=${encodeURIComponent(from)}` : "";
@@ -94,6 +97,38 @@ export default async function AdminAttemptPage({
             ) : null}
             {attempt.status === "completed" ? (
               <RescoreReport attemptId={attempt.id} />
+            ) : null}
+            {/*
+             * Development only, and only once there is more than one version
+             * — a report nobody has re-scored has nothing to compare against.
+             */}
+            {history && history.rescoreCount > 0 ? (
+              <Link
+                href={`/admin/attempts/${attempt.id}/rescores`}
+                // A new tab, so the report stays open behind it: the point of
+                // the comparison is to read it against what is on screen.
+                // `noopener` because `_blank` otherwise hands the new page a
+                // live handle back to this one.
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface px-3 py-1.5 text-sm font-medium transition-colors hover:bg-surface-muted"
+              >
+                Compare {history.versions.length} versions
+                <svg
+                  aria-hidden
+                  viewBox="0 0 20 20"
+                  className="size-3.5 text-content-muted"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                >
+                  <path
+                    d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16h9a1.5 1.5 0 0 0 1.5-1.5V12M12 4h4v4M16 4l-6.5 6.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </Link>
             ) : null}
             <DownloadReport attemptId={attempt.id} />
           </div>

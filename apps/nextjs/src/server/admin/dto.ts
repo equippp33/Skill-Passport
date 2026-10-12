@@ -94,6 +94,18 @@ export interface InterviewDetails {
   isOpen: boolean;
   createdAt: Date;
   attempts: AttemptSummary[];
+  /**
+   * Completed attempts under this link, for the development-only bulk
+   * re-score. Absent in production, so the control never renders there.
+   */
+  devCompletedCount?: number;
+  /**
+   * Of those, how many have been re-scored at least once.
+   *
+   * Read from the snapshot table, so "what is left to do" survives a server
+   * restart: a run interrupted halfway resumes instead of starting over.
+   */
+  devRescoredCount?: number;
   /** Every candidate with 2+ attempts, for the retake-comparison table. */
   repeatComparison?: RepeatCandidate[];
   /**

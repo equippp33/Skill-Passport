@@ -26,3 +26,20 @@ ALTER TABLE "interview_turns" ADD COLUMN IF NOT EXISTS "evaluation_translated" t
 -- from every answer that demonstrated it, not only the one question that
 -- named it. See `aggregateSkillScores`.
 ALTER TABLE "interview_turns" ADD COLUMN IF NOT EXISTS "secondary_skills" jsonb;
+--> statement-breakpoint
+-- What a report said before a re-score replaced it. Version 1 is the original
+-- scoring; the live attempt row is always the latest. See `rescoreAttempt`.
+CREATE TABLE IF NOT EXISTS "attempt_score_snapshots" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "attempt_id" uuid NOT NULL REFERENCES "interview_attempts"("id") ON DELETE CASCADE,
+  "version" integer NOT NULL,
+  "overall_score" integer,
+  "summary" text,
+  "strengths" text[],
+  "improvements" text[],
+  "skill_scores" jsonb,
+  "turn_scores" jsonb,
+  "captured_at" timestamp with time zone DEFAULT now() NOT NULL
+);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "attempt_score_snapshots_attempt_idx" ON "attempt_score_snapshots" ("attempt_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "attempt_score_snapshots_version_idx" ON "attempt_score_snapshots" ("attempt_id","version");

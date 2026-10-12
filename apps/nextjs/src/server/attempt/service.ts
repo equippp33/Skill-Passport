@@ -6,6 +6,7 @@ import { db } from "~/server/db";
 import { withUsageScope } from "~/server/interview/usage";
 import {
   interviewAttemptsTable,
+  attemptScoreSnapshotsTable,
   interviewAudioTable,
   interviewTurnsTable,
   interviewsTable,
@@ -34,6 +35,7 @@ import {
   isSlowerRequest,
 } from "~/config/repeat-requests";
 import { adjustScore, aggregateSkillScores } from "~/lib/scoring";
+import { pool } from "~/lib/pool";
 import { ProviderError, toUserMessage } from "~/server/services/errors";
 import {
   classifyUtterance,
@@ -1692,6 +1694,12 @@ async function scoreTurn(args: {
   transcript: string;
   languageCode: string | null;
   /**
+   * Keep whichever mark is higher, this one or the one already stored.
+   *
+   * Set only by re-scoring. See `writeScoredTurn`.
+   */
+  keepHighest?: boolean;
+  /**
    * A context built by the caller.
    *
    * Identical for every turn of one attempt, and building it costs three
@@ -1728,7 +1736,9 @@ async function scoreTurn(args: {
     scoreOnly: true,
   });
 
-  await writeScoredTurn(turn.id, transcript, languageCode, evaluation);
+  await writeScoredTurn(turn.id, transcript, languageCode, evaluation, {
+    keepHighest: args.keepHighest ?? false,
+  });
 }
 
 /**
@@ -1774,21 +1784,99 @@ async function writeScoredTurn(
     improvements: string[];
     secondarySkills?: { skillId: string; score: number }[];
   },
+  options: { keepHighest?: boolean } = {},
 ): Promise<void> {
+  const score = adjustScore(evaluation.score);
+
+  /**
+   * A re-score may raise a mark but never lower it.
+   *
+   * Re-scoring re-derives every answer from scratch, and the model is not
+   * deterministic: measured on the same answers twice, 15% came back lower
+   * purely by chance. Across eleven skills that made a drop somewhere all
+   * but certain, so every re-score quietly took something away from a
+   * candidate who had done nothing differently.
+   *
+   * The whole turn is left alone, not just the number. Writing the new
+   * evaluation beside the old score would leave the words and the mark
+   * disagreeing — feedback explaining why an answer was weak, above a score
+   * that says it was strong.
+   *
+   * This makes re-scoring a RATCHET, which is the honest cost: a change that
+   * genuinely should lower scores cannot be applied by re-scoring, and
+   * correcting an over-generous run means resetting the mark directly. That
+   * is the trade for never again telling a candidate their score went down
+   * when their answers did not.
+   */
+  /**
+   * One answer is one piece of evidence per skill, highest reading kept.
+   *
+   * The model can name the same skill twice for a single answer, and
+   * `aggregateSkillScores` counts sightings rather than weighing them, so a
+   * repeat would corroborate twice over from one answer. Collapsing here also
+   * makes the count STABLE, which is what lets the merge below guarantee a
+   * skill never falls — without it, a re-score could quietly halve the
+   * sightings by tidying a duplicate away.
+   */
+  const deduped = new Map<string, number>();
+  for (const entry of evaluation.secondarySkills ?? []) {
+    if (!WORK_SKILLS.some((w) => w.id === entry.skillId)) continue;
+    const value = adjustScore(entry.score);
+    const current = deduped.get(entry.skillId);
+    if (current === undefined || value > current) {
+      deduped.set(entry.skillId, value);
+    }
+  }
+  let secondary = [...deduped].map(([skillId, value]) => ({
+    skillId,
+    score: value,
+  }));
+
+  if (options.keepHighest) {
+    const [existing] = await db
+      .select({
+        score: interviewTurnsTable.score,
+        secondarySkills: interviewTurnsTable.secondarySkills,
+      })
+      .from(interviewTurnsTable)
+      .where(eq(interviewTurnsTable.id, turnId));
+
+    if (existing?.score !== null && existing?.score !== undefined) {
+      if (score <= existing.score) return;
+    }
+
+    /**
+     * Cross-skill evidence is kept too, highest wins per skill.
+     *
+     * A skill score is its own answers plus corroboration from elsewhere, so
+     * holding only the mark steady is not enough: a re-score that happened to
+     * spot fewer sightings would shrink the bonus and the skill could still
+     * fall, which is the thing this is here to prevent. Merging means
+     * corroboration only ever accumulates.
+     */
+    const merged = new Map(secondary.map((e) => [e.skillId, e.score]));
+    for (const prior of existing?.secondarySkills ?? []) {
+      const now = merged.get(prior.skillId);
+      if (now === undefined || prior.score > now) {
+        merged.set(prior.skillId, prior.score);
+      }
+    }
+    secondary = [...merged].map(([skillId, value]) => ({
+      skillId,
+      score: value,
+    }));
+  }
+
   await db
     .update(interviewTurnsTable)
     .set({
       answerTranscript: transcript,
       detectedLanguageCode: languageCode,
-      score: adjustScore(evaluation.score),
-      // Filtered to real skill ids here rather than trusted: this is model
+      score,
+      // Filtered to real skill ids above rather than trusted: this is model
       // output naming its own enum values, and one hallucinated id would sit
       // in the aggregate for ever, credited to a skill that does not exist.
-      // The same uplift applies — these land on the same 0-10 scale and are
-      // averaged together with primary scores.
-      secondarySkills: (evaluation.secondarySkills ?? [])
-        .filter((e) => WORK_SKILLS.some((w) => w.id === e.skillId))
-        .map((e) => ({ skillId: e.skillId, score: adjustScore(e.score) })),
+      secondarySkills: secondary,
       evaluation: evaluation.evaluation,
       strengths: evaluation.strengths,
       improvements: evaluation.improvements,
@@ -2141,7 +2229,15 @@ async function finaliseAttempt(
       // Only set when there IS a translation, so this doubles as the flag for
       // "a translated report exists" rather than "the interview had a language".
       reportLanguage: translated ? reportLanguage : null,
-      completedAt: new Date(),
+      // Set ONCE, when the interview actually finished.
+      //
+      // `finaliseAttempt` runs again on every re-score, and stamping this
+      // each time moved the completion date to whenever the re-score ran.
+      // A bulk run therefore rewrote the history of an entire link: five
+      // hundred interviews taken across three weeks all claiming to have
+      // finished within the same hour. The date groups in the candidate
+      // grid, the retake ordering and the report header all read from this.
+      completedAt: attempt.completedAt ?? new Date(),
       updatedAt: new Date(),
     })
     .where(eq(interviewAttemptsTable.id, attemptId))
@@ -2247,6 +2343,11 @@ export function rescoreAttempt(attemptId: string): Promise<void> {
 
 async function rescoreAttemptInner(attemptId: string): Promise<void> {
   const attempt = await reload(attemptId);
+  // BEFORE anything is rewritten. A re-score replaces the scores, the summary
+  // and the breakdown in place, so without this the previous report simply
+  // ceases to exist — and "what did this say before?" is precisely the
+  // question asked when somebody queries a number.
+  await captureScoreSnapshot(attemptId);
   const interview = await db.query.interviewsTable.findFirst({
     where: eq(interviewsTable.id, attempt.interviewId),
   });
@@ -2280,21 +2381,29 @@ async function rescoreAttemptInner(attemptId: string): Promise<void> {
    * was pure waiting. Eleven answers at ten to forty seconds each is three
    * minutes of an admin watching a spinner for work that has no order to it.
    *
-   * Batched rather than all at once: a dozen simultaneous analysis calls is
-   * how one button press trips a rate limit and opens the circuit breaker for
-   * everybody mid-interview.
+   * Capped rather than unleashed: a dozen simultaneous analysis calls is how
+   * one button press trips a rate limit and opens the circuit breaker for
+   * everybody mid-interview. `pool` holds the cap without the head-of-line
+   * waiting that chunking into groups would add.
    */
-  const failures: unknown[] = [];
-  for (let i = 0; i < eligible.length; i += RESCORE_CONCURRENCY) {
-    const settled = await Promise.allSettled(
-      eligible
-        .slice(i, i + RESCORE_CONCURRENCY)
-        .map(({ turn, transcript }) =>
-          scoreTurn({ attempt, interview, turn, transcript, languageCode, ctx }),
-        ),
-    );
-    for (const r of settled) if (r.status === "rejected") failures.push(r.reason);
-  }
+  const settled = await pool(
+    eligible,
+    RESCORE_CONCURRENCY,
+    ({ turn, transcript }) =>
+      scoreTurn({
+        attempt,
+        interview,
+        turn,
+        transcript,
+        languageCode,
+        ctx,
+        // A re-score lifts a mark or leaves it; it never takes one away.
+        keepHighest: true,
+      }),
+  );
+  const failures = settled
+    .filter((r) => r.status === "rejected")
+    .map((r) => (r as PromiseRejectedResult).reason);
   // Surfaced only after every turn has had its go, so one bad answer does not
   // cost the rest their re-score.
   if (failures.length > 0) throw failures[0];
@@ -2480,6 +2589,64 @@ async function translateTurnEvaluations(
   } catch (error) {
     console.error(
       `[attempt] evaluation translation failed attempt=${attemptId}: ${
+        error instanceof Error ? error.message : "unknown"
+      }`,
+    );
+  }
+}
+
+/**
+ * Record the report as it stands, so a re-score does not erase it.
+ *
+ * Versions are dense and start at 1, so version 1 is always the ORIGINAL
+ * scoring and the live attempt row is always the latest. Two re-scores leave
+ * two snapshots and three versions in total.
+ *
+ * Best-effort by design: losing the history is bad, but refusing to re-score
+ * because the history could not be written is worse. A failure is logged and
+ * the re-score continues.
+ */
+async function captureScoreSnapshot(attemptId: string): Promise<void> {
+  try {
+    const attempt = await reload(attemptId);
+    // Nothing to preserve from an attempt that was never scored.
+    if (attempt.overallScore === null && attempt.summary === null) return;
+
+    const turns = await getTurns(attemptId);
+    const [{ next } = { next: 1 }] = await db
+      .select({
+        next: sql<number>`coalesce(max(${attemptScoreSnapshotsTable.version}), 0) + 1`,
+      })
+      .from(attemptScoreSnapshotsTable)
+      .where(eq(attemptScoreSnapshotsTable.attemptId, attemptId));
+
+    await db
+      .insert(attemptScoreSnapshotsTable)
+      .values({
+        attemptId,
+        version: next,
+        overallScore: attempt.overallScore,
+        summary: attempt.summary,
+        strengths: attempt.strengths,
+        improvements: attempt.improvements,
+        skillScores: aggregateSkillScores(turns).map((s) => ({
+          skillId: s.skillId,
+          score: s.score,
+        })),
+        turnScores: turns
+          .filter((t) => t.kind === "skill")
+          .map((t) => ({
+            turnNumber: t.turnNumber,
+            skillId: t.skillId,
+            score: t.score,
+          })),
+      })
+      // A concurrent re-score of the same attempt would collide on the version;
+      // one snapshot of an identical report is enough.
+      .onConflictDoNothing();
+  } catch (error) {
+    console.error(
+      `[attempt] score snapshot failed attempt=${attemptId}: ${
         error instanceof Error ? error.message : "unknown"
       }`,
     );

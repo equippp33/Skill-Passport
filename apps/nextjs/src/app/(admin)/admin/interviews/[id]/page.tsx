@@ -10,6 +10,7 @@ import { uiLanguage } from "~/server/language";
 import { uuidSchema } from "~/server/interview/validation";
 import { formatDate } from "~/lib/utils";
 import { OpenToggle } from "../../open-toggle";
+import { RescoreAll } from "./rescore-all";
 import { ShareLink } from "../../share-link";
 import { CandidateGrid } from "./candidate-grid";
 import { CandidateSection } from "./candidate-section";
@@ -151,7 +152,17 @@ export default async function InterviewDetailPage({
               </p>
             ) : null}
           </div>
-          <OpenToggle interviewId={details.id} isOpen={details.isOpen} />
+          <div className="flex flex-wrap items-start justify-end gap-3">
+            {/* Development only — the server omits the count in production. */}
+            {details.devCompletedCount !== undefined ? (
+              <RescoreAll
+                interviewId={details.id}
+                completedCount={details.devCompletedCount}
+                rescoredCount={details.devRescoredCount ?? 0}
+              />
+            ) : null}
+            <OpenToggle interviewId={details.id} isOpen={details.isOpen} />
+          </div>
         </div>
       </div>
 

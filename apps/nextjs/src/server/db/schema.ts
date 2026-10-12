@@ -392,6 +392,62 @@ export const interviewTurnsTable = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+/*                              Score snapshots                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a report said BEFORE a re-score replaced it.
+ *
+ * Re-scoring overwrites: the scores, the summary and the per-skill breakdown
+ * are all rewritten in place, and what the candidate was originally told is
+ * gone. That is fine until scoring changes — and then there is no way to
+ * answer "what did this say last week?", which is exactly the question asked
+ * when a candidate or a client queries a number.
+ *
+ * One row is written immediately before each re-score, capturing the report
+ * as it stands. So version 1 is always the ORIGINAL scoring, version 2 is
+ * what the first re-score produced, and the live attempt row is the latest.
+ * Three versions therefore mean two re-scores.
+ *
+ * Scores are stored as `jsonb` rather than child rows because a snapshot is
+ * written once, read whole, and never queried into. Nothing joins on it.
+ */
+export const attemptScoreSnapshotsTable = pgTable(
+  "attempt_score_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    attemptId: uuid("attempt_id")
+      .notNull()
+      .references(() => interviewAttemptsTable.id, { onDelete: "cascade" }),
+    /** 1 = the original scoring, before any re-score. */
+    version: integer("version").notNull(),
+    overallScore: integer("overall_score"),
+    summary: text("summary"),
+    strengths: text("strengths").array(),
+    improvements: text("improvements").array(),
+    /** `[{ skillId, score }]` as the report showed them. */
+    skillScores: jsonb("skill_scores").$type<
+      { skillId: string; score: number | null }[]
+    >(),
+    /** `[{ turnNumber, skillId, score }]` — the per-answer marks behind them. */
+    turnScores: jsonb("turn_scores").$type<
+      { turnNumber: number; skillId: string | null; score: number | null }[]
+    >(),
+    capturedAt: timestamp("captured_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("attempt_score_snapshots_attempt_idx").on(t.attemptId),
+    uniqueIndex("attempt_score_snapshots_version_idx").on(
+      t.attemptId,
+      t.version,
+    ),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
 /*                                   Audio                                    */
 /* -------------------------------------------------------------------------- */
 

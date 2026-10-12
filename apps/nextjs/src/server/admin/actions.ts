@@ -10,6 +10,18 @@ import {
   setInterviewOpen,
 } from "./service";
 import { rescoreAttempt, resendResult } from "~/server/attempt/service";
+import {
+  cancelRescore,
+  failedIdsOf,
+  progressOf,
+  startRescoreAll,
+  type RescoreProgress,
+  type RescoreScope,
+} from "~/server/attempt/rescore-job";
+import { env } from "~/env";
+import { db } from "~/server/db";
+import { interviewsTable } from "~/server/db/schema";
+import { and, eq } from "drizzle-orm";
 import type { CreateInterviewResult } from "./dto";
 
 /**
@@ -129,4 +141,88 @@ export async function deleteAttemptAction(
   // The grid it vanished from, and the report page that no longer exists.
   revalidatePath("/admin");
   return { ok: true };
+}
+
+/** Their own interview, or nothing. */
+async function ownsInterview(
+  adminId: string,
+  interviewId: string,
+): Promise<boolean> {
+  const row = await db.query.interviewsTable.findFirst({
+    columns: { id: true },
+    where: and(
+      eq(interviewsTable.id, interviewId),
+      eq(interviewsTable.createdByUserId, adminId),
+    ),
+  });
+  return row !== undefined;
+}
+
+/**
+ * Re-grade every completed attempt under one interview. DEVELOPMENT ONLY.
+ *
+ * Returns as soon as the job is running, never when it has finished — several
+ * hundred attempts is hours of model calls, and no request survives that.
+ * Poll `rescoreAllProgressAction` for where it is.
+ */
+export async function rescoreAllAction(
+  interviewId: string,
+  /**
+   * What to work through.
+   *
+   * "remaining" skips attempts already re-scored, read from the database, so
+   * a run interrupted by a restart picks up where it stopped instead of
+   * starting the whole interview again. "retry" re-runs only what the last
+   * run could not finish, which lives in memory and does not survive one.
+   */
+  mode: "remaining" | "all" | "retry" = "remaining",
+): Promise<{ ok: boolean; error?: string; progress?: RescoreProgress }> {
+  const admin = await requireAdmin("/admin");
+
+  if (env.NODE_ENV !== "development") {
+    return { ok: false, error: "Bulk re-scoring is a development-only tool." };
+  }
+  if (!(await ownsInterview(admin.id, interviewId))) {
+    return { ok: false, error: "That interview could not be found." };
+  }
+
+  let scope: RescoreScope;
+  if (mode === "retry") {
+    const ids = failedIdsOf(interviewId);
+    if (ids.length === 0) return { ok: false, error: "Nothing left to retry." };
+    scope = { kind: "ids", ids };
+  } else {
+    scope = { kind: mode };
+  }
+
+  const progress = startRescoreAll(interviewId, scope);
+  return progress
+    ? { ok: true, progress }
+    : { ok: false, error: "Could not start the re-score." };
+}
+
+/**
+ * Stop a running bulk re-score. DEVELOPMENT ONLY.
+ *
+ * Everything already re-scored keeps its new scores; the rest are left
+ * exactly as they were. See `cancelRescore` for why the attempts already in
+ * flight are allowed to finish.
+ */
+export async function cancelRescoreAllAction(
+  interviewId: string,
+): Promise<{ ok: boolean; progress?: RescoreProgress }> {
+  const admin = await requireAdmin("/admin");
+  if (env.NODE_ENV !== "development") return { ok: false };
+  if (!(await ownsInterview(admin.id, interviewId))) return { ok: false };
+  return { ok: true, progress: cancelRescore(interviewId) ?? undefined };
+}
+
+/** Where the bulk re-score has got to. Development only. */
+export async function rescoreAllProgressAction(
+  interviewId: string,
+): Promise<RescoreProgress | null> {
+  const admin = await requireAdmin("/admin");
+  if (env.NODE_ENV !== "development") return null;
+  if (!(await ownsInterview(admin.id, interviewId))) return null;
+  return progressOf(interviewId);
 }
