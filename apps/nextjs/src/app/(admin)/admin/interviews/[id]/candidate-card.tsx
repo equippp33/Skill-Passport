@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 import type { AttemptSummary } from "~/server/admin/dto";
+import { DeleteAttempt } from "./delete-attempt";
 
 /**
  * A candidate as a video card, YouTube-style.
@@ -145,12 +146,26 @@ export function CandidateCard({
           </span>
         ) : null}
 
-        {/* Score, always overlapped on the thumbnail when it exists. */}
+{/* Score, always overlapped on the thumbnail when it exists. */}
         {score !== null ? (
           <span className="absolute top-2 right-2 rounded-md bg-black/70 px-2 py-1 text-sm font-semibold text-white tabular-nums backdrop-blur-sm">
             {(score / 10).toFixed(1)}
             <span className="text-white/60">/10</span>
           </span>
+        ) : null}
+
+        {/*
+         * Development only. A DIRECT child of the thumbnail, never nested in
+         * one of the absolutely positioned badges — its confirmation panel
+         * covers the whole card, and `inset-0` only reaches the card from
+         * here. It places its own button clear of the score above.
+         */}
+        {attempt.devDeletable ? (
+          <DeleteAttempt
+            attemptId={attempt.id}
+            candidateName={attempt.candidateName}
+            hasScore={score !== null}
+          />
         ) : null}
 
         {/* Hover: vignette + who it is. */}

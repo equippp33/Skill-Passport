@@ -63,6 +63,15 @@ export interface AttemptSummary {
    * as a measured one.
    */
   devCostIsEstimated?: boolean;
+  /**
+   * Whether this card may offer a delete button.
+   *
+   * Absent in production, so the control does not render there at all. It is
+   * a convenience for clearing test runs while building — the action and the
+   * service both re-check the environment, because a hidden button is not a
+   * permission.
+   */
+  devDeletable?: boolean;
   createdAt: Date;
 }
 

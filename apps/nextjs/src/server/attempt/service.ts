@@ -2099,31 +2099,35 @@ async function finaliseAttempt(
       ? attempt.language
       : null;
 
-  if (reportLanguage && summary) {
-    try {
-      translated = await translateReport({
-        languageName: resolveInterviewLanguage(reportLanguage).promptName,
-        summary,
-        strengths,
-        improvements,
-      });
-    } catch (error) {
-      console.error(
-        `[attempt] report translation failed attempt=${attemptId}: ${
-          error instanceof Error ? error.message : "unknown"
-        }`,
-      );
-    }
+  // Both translations at once. They touch different text and different rows,
+  // so running them one after the other only added one call's latency to a
+  // wait the candidate is sitting through — staring at "submitting your
+  // interview" while two independent requests queue politely behind each
+  // other. Each still has its own try/catch, so a failure in one leaves the
+  // other intact exactly as before.
+  if (reportLanguage) {
+    const languageName = resolveInterviewLanguage(reportLanguage).promptName;
+    const [report] = await Promise.all([
+      summary
+        ? translateReport({ languageName, summary, strengths, improvements })
+            .catch((error: unknown) => {
+              console.error(
+                `[attempt] report translation failed attempt=${attemptId}: ${
+                  error instanceof Error ? error.message : "unknown"
+                }`,
+              );
+              return null;
+            })
+        : Promise.resolve(null),
+      translateTurnEvaluations(attemptId, reportLanguage),
+    ]);
+    translated = report;
   }
 
-  // The per-question feedback, in the candidate's language too. Runs after
-  // the report translation rather than beside it so a failure in either leaves
-  // the other intact, and so the two share the provider rather than racing for
-  // it. Entirely best-effort: a completed interview must never fail to
-  // complete because a translation did not come back.
-  if (reportLanguage) await translateTurnEvaluations(attemptId, reportLanguage);
-
-  await db
+  // `.returning()` rather than discarding the write and re-reading: the row
+  // that comes back IS the finished attempt, which is what the partner has to
+  // be sent. See the delivery below for why that matters.
+  const [finalised] = await db
     .update(interviewAttemptsTable)
     .set({
       status: "completed",
@@ -2140,14 +2144,24 @@ async function finaliseAttempt(
       completedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(interviewAttemptsTable.id, attemptId));
+    .where(eq(interviewAttemptsTable.id, attemptId))
+    .returning();
 
   // Post the result to the partner (only for integration candidates, only if a
   // webhook is configured). Best-effort and self-contained — a delivery failure
   // must never undo a finished, saved interview.
+  //
+  // The FINALISED row, not the one loaded at the top of this function. That
+  // older object predates the write above, so its `reportLanguage` and
+  // `summaryTranslated` were still null — and the payload keys the whole
+  // translated block off `reportLanguage`. The partner therefore never got a
+  // translated report on first delivery, only ever on a manual re-send, which
+  // re-reads the row. Falls back to the stale object if the update somehow
+  // returns nothing, because a result with no translation still beats no
+  // result at all.
   try {
     await deliverResult({
-      attempt,
+      attempt: finalised ?? attempt,
       interview,
       turns,
       skillScores,

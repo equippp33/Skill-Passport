@@ -19,6 +19,7 @@ import type {
   InterviewTurn,
 } from "~/server/db/schema";
 import { aggregateSkillScores } from "~/lib/scoring";
+import { deleteAudioObject } from "~/server/interview/storage";
 import { WORK_SKILLS } from "~/config/work-skills";
 import type { WorkSkillId } from "~/config/work-skills";
 import type { InterviewDetails } from "./dto";
@@ -514,6 +515,56 @@ export async function getAttemptCosts(
   };
 }
 
+/**
+ * Delete one attempt and everything under it. DEVELOPMENT ONLY.
+ *
+ * A tool for clearing test runs out of the way while building, which is why it
+ * refuses to run anywhere else. The check is here, in the service, rather than
+ * only on the button: a server action is a public endpoint, and a UI that
+ * merely hides the control is not a control.
+ *
+ * There is no soft delete and no undo. An attempt is a candidate's assessment
+ * and their recordings of themselves; keeping a hidden copy of that around
+ * after someone asked for it to go is worse than losing it.
+ */
+export async function deleteAttempt(
+  adminId: string,
+  attemptId: string,
+): Promise<void> {
+  if (env.NODE_ENV !== "development") {
+    throw new Error("Deleting attempts is a development-only tool.");
+  }
+
+  // Their own interview's candidate, or nothing.
+  const found = await getAttemptForAdmin(adminId, attemptId);
+  if (!found) throw new Error("That attempt could not be found.");
+
+  // The stored objects go FIRST. `interview_audio` cascades with the attempt,
+  // and once those rows are gone nothing remembers the keys — the video and
+  // audio would sit in the bucket for ever, paid for and unreachable.
+  const clips = await db.query.interviewAudioTable.findMany({
+    columns: { storageKey: true },
+    where: eq(interviewAudioTable.attemptId, attemptId),
+  });
+  const results = await Promise.allSettled(
+    clips.map((clip) => deleteAudioObject(clip.storageKey)),
+  );
+  const stranded = results.filter((r) => r.status === "rejected").length;
+  if (stranded > 0) {
+    // Not fatal: an object the bucket would not give up is litter, while
+    // refusing to delete the attempt over it leaves the row the caller asked
+    // to be rid of. Say so and carry on.
+    console.error(
+      `[admin] ${stranded} of ${clips.length} clips could not be removed from storage for ${attemptId}`,
+    );
+  }
+
+  // `interview_turns` and `interview_audio` both cascade from here.
+  await db
+    .delete(interviewAttemptsTable)
+    .where(eq(interviewAttemptsTable.id, attemptId));
+}
+
 export interface AdminStats {
   interviews: number;
   openInterviews: number;
@@ -878,6 +929,7 @@ export async function getInterviewDetails(
       devCost: readingFor(attempt).cost,
       devCostParts: readingFor(attempt).parts,
       devCostIsEstimated: readingFor(attempt).estimated,
+      devDeletable: isDev ? true : undefined,
       createdAt: attempt.createdAt,
     })),
   };

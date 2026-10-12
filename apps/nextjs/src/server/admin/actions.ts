@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import {
   createGeneralInterview,
+  deleteAttempt,
   getAttemptForAdmin,
   requireAdmin,
   setInterviewOpen,
@@ -100,4 +101,32 @@ export async function resendResultAction(
       error: "Could not resend the result. Please try again.",
     };
   }
+}
+
+/**
+ * Delete one candidate's attempt. DEVELOPMENT ONLY.
+ *
+ * Clears test runs out of the grid while building. `deleteAttempt` enforces
+ * both the environment and the ownership check itself — this is a public
+ * endpoint, so neither can live only in the button that calls it.
+ */
+export async function deleteAttemptAction(
+  attemptId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const admin = await requireAdmin("/admin");
+
+  try {
+    await deleteAttempt(admin.id, attemptId);
+  } catch (error) {
+    console.error("[admin] delete attempt failed", error);
+    return {
+      ok: false,
+      error:
+        error instanceof Error ? error.message : "Could not delete this attempt.",
+    };
+  }
+
+  // The grid it vanished from, and the report page that no longer exists.
+  revalidatePath("/admin");
+  return { ok: true };
 }

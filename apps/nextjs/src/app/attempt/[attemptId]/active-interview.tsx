@@ -1296,6 +1296,8 @@ export function ActiveInterview({
     current: skillNumber,
     total: totalSkills,
   });
+  /** Skills behind them. 0 on the opening probe, where `skillNumber` is 0. */
+  const completedSkills = Math.max(0, skillNumber - 1);
 
   // What the orb is doing. Speaking wins (the interviewer is talking over
   // everything else); then their own voice while recording; then the quiet
@@ -1372,19 +1374,30 @@ export function ActiveInterview({
         onPause={() => setSpeaking(false)}
       />
 
-      {/* Top: progress by skill (a follow-up holds the same number). */}
+      {/*
+       * Top: how much is DONE, which is not the same as which question is on
+       * screen. The bar used to be `skillNumber / totalSkills`, so arriving at
+       * the last question filled it to 100% before the candidate had said a
+       * word — and if that answer earned a follow-up, they then sat answering
+       * more questions under a bar claiming they had finished.
+       *
+       * Counting COMPLETED skills instead means the last question sits just
+       * short of full until it is actually answered, and a follow-up simply
+       * holds the bar where it is rather than contradicting it. The label
+       * still says "Question 11 of 11", because that part was always true.
+       */}
       <header className="shrink-0 px-6 pt-5">
         <div className="mx-auto flex max-w-5xl items-baseline justify-between gap-3">
           <p className="text-sm font-medium text-content-muted">
             {progressLabel}
           </p>
           <p className="text-sm text-content-muted tabular-nums">
-            {Math.round((skillNumber / totalSkills) * 100)}%
+            {Math.round((completedSkills / totalSkills) * 100)}%
           </p>
         </div>
         <div className="mx-auto mt-2 max-w-5xl">
           <Progress
-            value={skillNumber}
+            value={completedSkills}
             max={totalSkills}
             label={progressLabel}
           />
