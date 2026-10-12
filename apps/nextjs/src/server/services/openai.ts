@@ -90,9 +90,24 @@ function getClient(): OpenAI {
 /*                              Response schemas                              */
 /* -------------------------------------------------------------------------- */
 
+/** One other skill an answer happened to demonstrate. */
+export const secondarySkillSchema = z.object({
+  skillId: z.string().min(1),
+  score: z.number().int().min(0).max(10),
+});
+export type SecondarySkill = z.infer<typeof secondarySkillSchema>;
+
 export const turnEvaluationSchema = z.object({
   /** 0-10 for the single skill this turn assesses. */
   score: z.number().int().min(0).max(10),
+  /**
+   * Other skills the SAME answer gave evidence of.
+   *
+   * Optional, and defaulted, so a provider that omits it is not a failure:
+   * this is extra credit, and an answer that happens to show only its own
+   * skill is the normal case, not an error.
+   */
+  secondarySkills: z.array(secondarySkillSchema).max(4).optional(),
   evaluation: z.string().min(1).max(1200),
   strengths: z.array(z.string().min(1).max(300)).max(4),
   improvements: z.array(z.string().min(1).max(300)).max(4),
@@ -150,8 +165,14 @@ export type InterviewSummary = z.infer<typeof interviewSummarySchema>;
 const TURN_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
+  // Every property must be listed here: the OpenAI call sends this with
+  // `strict: true`, which rejects the whole schema with a 400 if a property
+  // is omitted — taking the fallback down with it exactly when Sarvam had
+  // already failed. The field is still optional in the zod validator, so a
+  // provider that omits it anyway is tolerated.
   required: [
     "score",
+    "secondarySkills",
     "evaluation",
     "strengths",
     "improvements",
@@ -163,6 +184,20 @@ const TURN_JSON_SCHEMA = {
     score: {
       type: "integer",
       description: "0-10 for the named work skill only.",
+    },
+    secondarySkills: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["skillId", "score"],
+        properties: {
+          skillId: { type: "string", description: "One of the skill ids listed in the framework." },
+          score: { type: "integer", description: "0-10 for THAT skill, from this answer alone." },
+        },
+      },
+      description:
+        "Other skills this same answer clearly demonstrated, with a score for each. Empty when it showed nothing beyond its own skill.",
     },
     // These three are the REVIEWER's notes and must be ENGLISH, matching the
     // Language section of `interviewerRules`. They previously read "in the

@@ -21,3 +21,8 @@ ALTER TABLE "interview_attempts" ADD COLUMN IF NOT EXISTS "sarvam_output_tokens"
 -- The per-question evaluation in the candidate's own language. `evaluation`
 -- itself stays English for reviewers; this is the copy the candidate can read.
 ALTER TABLE "interview_turns" ADD COLUMN IF NOT EXISTS "evaluation_translated" text;
+--> statement-breakpoint
+-- Other skills a single answer also gave evidence of. Lets a skill be judged
+-- from every answer that demonstrated it, not only the one question that
+-- named it. See `aggregateSkillScores`.
+ALTER TABLE "interview_turns" ADD COLUMN IF NOT EXISTS "secondary_skills" jsonb;

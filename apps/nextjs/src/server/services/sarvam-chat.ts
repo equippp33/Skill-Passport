@@ -92,10 +92,37 @@ function modelFor(kind: SarvamChatKind): string {
  * from the SAME hand-written JSON Schema the OpenAI path sends, which keeps
  * one source of truth and stops the two providers drifting apart.
  */
+/**
+ * The shape of an ARRAY's elements, when they are objects.
+ *
+ * Without this the description stopped at the array — `"secondarySkills"
+ * (array)` and nothing about what goes in it — and the model did the
+ * reasonable thing with an under-specified array of skills: it sent
+ * `["communication", "teamwork"]`. Every one then failed validation on a
+ * missing `skillId`, and because an off-format reply reads as a content
+ * quirk, each failure also burned a fallback call.
+ *
+ * Only one level down. That covers every schema here and keeps this a
+ * description rather than a second JSON-Schema implementation.
+ */
+function describeItems(spec: { items?: unknown }): string {
+  const items = spec.items;
+  if (!items || typeof items !== "object") return "";
+  const props = (items as { properties?: Record<string, { type?: unknown }> })
+    .properties;
+  if (!props) return "";
+  const inner = Object.entries(props)
+    .map(([k, v]) => `"${k}" (${String(v.type ?? "string")})`)
+    .join(", ");
+  return inner
+    ? ` Each element is an OBJECT with exactly these keys: ${inner}.`
+    : "";
+}
+
 function describeShape(jsonSchema: Record<string, unknown>): string {
   const properties = (jsonSchema.properties ?? {}) as Record<
     string,
-    { type?: unknown; description?: string }
+    { type?: unknown; description?: string; items?: unknown }
   >;
   const required = new Set(
     Array.isArray(jsonSchema.required) ? (jsonSchema.required as string[]) : [],
@@ -107,7 +134,7 @@ function describeShape(jsonSchema: Record<string, unknown>): string {
       : String(spec.type ?? "string");
     const flag = required.has(key) ? "required" : "optional";
     const note = spec.description ? ` — ${spec.description}` : "";
-    return `- "${key}" (${type}, ${flag})${note}`;
+    return `- "${key}" (${type}, ${flag})${note}${describeItems(spec)}`;
   });
 
   return [

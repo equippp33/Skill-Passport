@@ -2,6 +2,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   real,
@@ -345,6 +346,24 @@ export const interviewTurnsTable = pgTable(
     evaluationTranslated: text("evaluation_translated"),
     strengths: text("strengths").array(),
     improvements: text("improvements").array(),
+    /**
+     * OTHER skills this one answer also gave evidence of, and how strongly.
+     *
+     * A candidate asked about work readiness who says "I take responsibility
+     * for delivering quality results on time" has just demonstrated
+     * Responsibility. Until now that was thrown away: every answer was scored
+     * for the one skill its question named, so Responsibility could only ever
+     * be judged from the single question that asked about it directly.
+     *
+     * `jsonb` rather than a table or paired arrays: this is written exactly
+     * once, by one writer, in the same statement as the score it came from, so
+     * none of the concurrency that rules jsonb out elsewhere in this schema
+     * applies. Nothing queries inside it — `aggregateSkillScores` reads whole
+     * turns and folds them in memory.
+     */
+    secondarySkills: jsonb("secondary_skills").$type<
+      { skillId: string; score: number }[]
+    >(),
 
     status: interviewTurnStatusEnum("status")
       .notNull()

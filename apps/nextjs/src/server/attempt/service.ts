@@ -1772,6 +1772,7 @@ async function writeScoredTurn(
     evaluation: string;
     strengths: string[];
     improvements: string[];
+    secondarySkills?: { skillId: string; score: number }[];
   },
 ): Promise<void> {
   await db
@@ -1780,6 +1781,14 @@ async function writeScoredTurn(
       answerTranscript: transcript,
       detectedLanguageCode: languageCode,
       score: adjustScore(evaluation.score),
+      // Filtered to real skill ids here rather than trusted: this is model
+      // output naming its own enum values, and one hallucinated id would sit
+      // in the aggregate for ever, credited to a skill that does not exist.
+      // The same uplift applies — these land on the same 0-10 scale and are
+      // averaged together with primary scores.
+      secondarySkills: (evaluation.secondarySkills ?? [])
+        .filter((e) => WORK_SKILLS.some((w) => w.id === e.skillId))
+        .map((e) => ({ skillId: e.skillId, score: adjustScore(e.score) })),
       evaluation: evaluation.evaluation,
       strengths: evaluation.strengths,
       improvements: evaluation.improvements,

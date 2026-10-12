@@ -519,6 +519,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "secondary_skills": {
+          "name": "secondary_skills",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "status": {
           "name": "status",
           "type": "interview_turn_status",

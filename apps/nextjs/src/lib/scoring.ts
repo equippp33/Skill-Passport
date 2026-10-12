@@ -17,26 +17,99 @@ export interface SkillScore {
   turnNumbers: number[];
 }
 
-/** All skills, in framework order, so nothing is silently omitted. */
+/**
+ * How good a passing sighting must be to count as corroboration.
+ *
+ * Measured on real answers: a skill that merely surfaced inside someone else's
+ * answer scores consistently LOWER than the same skill asked about head-on,
+ * because the candidate was busy answering something else and only showed it
+ * incidentally. Averaging those lower numbers in would drag good scores down,
+ * and taking the higher of the two would mean the sighting almost never
+ * mattered. Neither is what a second piece of evidence is worth.
+ *
+ * So a sighting is not treated as a competing measurement at all. It is
+ * CORROBORATION: proof the candidate showed the skill somewhere other than the
+ * question built to test it. What matters is that it happened, not what it
+ * scored — above the bar where it counts as evidence rather than a passing
+ * mention.
+ */
+const CORROBORATION_THRESHOLD = 6;
+
+/** What one corroborating answer is worth, and the most they can add together. */
+const BONUS_PER_SIGHTING = 0.5;
+const MAX_BONUS = 1;
+
+/** Sightings needed before they can score a skill no question ever reached. */
+const MIN_SIGHTINGS_TO_STAND_ALONE = 2;
+
+/**
+ * All skills, in framework order, so nothing is silently omitted.
+ *
+ * A skill's score comes from the questions that asked about it AND from other
+ * answers that happened to demonstrate it. People do not answer one skill at a
+ * time: a candidate asked what being ready for work means who replies "I take
+ * responsibility for delivering quality results on time" has just evidenced
+ * Responsibility, and before this that evidence was discarded — every skill
+ * was judged solely from the one question aimed at it.
+ *
+ * Corroboration can only RAISE a score, never lower it. Showing a skill twice
+ * is a reason to be more confident in a candidate; showing it weakly while
+ * answering about something else is not a reason to doubt the answer they gave
+ * to the question that actually asked.
+ */
 export function aggregateSkillScores(turns: InterviewTurn[]): SkillScore[] {
+  const completed = turns.filter((t) => t.status === "completed");
+
+  // Every sighting, gathered once and grouped by the skill it is evidence
+  // FOR — not by the turn it was found in.
+  const sightings = new Map<string, number[]>();
+  for (const turn of completed) {
+    for (const seen of turn.secondarySkills ?? []) {
+      if (typeof seen?.score !== "number") continue;
+      const list = sightings.get(seen.skillId) ?? [];
+      list.push(seen.score);
+      sightings.set(seen.skillId, list);
+    }
+  }
+
   return WORK_SKILLS.map((skill) => {
     const forSkill = turns.filter((t) => t.skillId === skill.id);
-    const scored = forSkill.filter(
-      (t) => t.status === "completed" && t.score !== null,
+    const direct = completed
+      .filter((t) => t.skillId === skill.id && t.score !== null)
+      .map((t) => t.score!);
+    const corroborating = (sightings.get(skill.id) ?? []).filter(
+      (v) => v >= CORROBORATION_THRESHOLD,
     );
+
     return {
       skillId: skill.id,
-      score:
-        scored.length === 0
-          ? null
-          : Math.round(
-              scored.reduce((sum, t) => sum + (t.score ?? 0), 0) /
-                scored.length,
-            ),
+      score: blend(direct, corroborating),
       turnNumbers: forSkill.map((t) => t.turnNumber),
     };
   });
 }
+
+/**
+ * One skill's score from its own answers, plus corroboration from elsewhere.
+ *
+ * With no direct answer at all, sightings can stand in — but only from two or
+ * more. A skill the interview never reached is better reported as "not
+ * assessed" than conjured from a single stray remark, and an abandoned
+ * interview is exactly where single remarks are all there is.
+ */
+function blend(direct: number[], corroborating: number[]): number | null {
+  if (direct.length === 0) {
+    if (corroborating.length < MIN_SIGHTINGS_TO_STAND_ALONE) return null;
+    return Math.round(mean(corroborating));
+  }
+  const bonus = Math.min(MAX_BONUS, corroborating.length * BONUS_PER_SIGHTING);
+  return Math.round(Math.min(10, mean(direct) + bonus));
+}
+
+function mean(values: number[]): number {
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
 
 /**
  * The uplift added to a model score before it is stored.
