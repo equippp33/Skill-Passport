@@ -82,11 +82,70 @@ export const ADD_MAX_ANSWER_MS = 3000;
  */
 export const OPENING_BIT_WAIT_MS = 10000;
 
-export const SILENCE_CHECK_IN_SECONDS = 15;
-export const SILENCE_WARN_SECONDS = 30;
-export const SILENCE_SKIP_SECONDS = 60;
+/**
+ * Quiet after SPEAKING before the interviewer reacts.
+ *
+ * Short, because by now the candidate has answered and stopped; this is the
+ * beat before "would you like to add anything?". Long enough to ride out a
+ * breath between sentences, which the VAD has already endpointed.
+ */
+export const ANSWER_PAUSE_SECONDS = 3;
+
+/**
+ * Words needed before the interview treats the candidate as having ANSWERED.
+ *
+ * Not the voice detector, and not "any transcript at all". The speech model
+ * invents short phrases out of silence and background noise — "Okay, so",
+ * "और आवुलिया" — and the detector trips on the same noise. Either signal on its
+ * own made a silent candidate look as though they had answered: they were
+ * offered "anything to add?", the countdown ran, and the question moved on
+ * without them saying a word.
+ *
+ * Three words clears those fragments while still counting any real answer.
+ * A genuine one-or-two-word reply is treated as not-yet-answered, which only
+ * means it gets the gentle check-in instead of the countdown.
+ */
+export const MIN_ANSWER_WORDS = 3;
+
+/**
+ * Quiet with NOTHING said yet, before asking whether they followed it.
+ *
+ * Eight seconds. Someone who has not started after that long is usually
+ * stuck rather than thinking, and the ask is gentle enough that interrupting
+ * a slow starter costs them little — any speech cancels what follows.
+ */
+export const SILENCE_CHECK_IN_SECONDS = 8;
+
+/**
+ * The visible countdown shown once a spoken prompt has FINISHED playing.
+ *
+ * Seven rather than five: the clip has to be fetched and decoded before the
+ * candidate hears a word, and starting the clock at the ask rather than the
+ * answer would spend a chunk of it on audio nobody has heard yet. Counted
+ * from the moment the clip ends, so the candidate gets the whole of it.
+ */
+export const PROMPT_COUNTDOWN_SECONDS = 7;
+
+/**
+ * Last resort for a candidate who never speaks at all.
+ *
+ * No countdown is shown for this one and nothing is said: it exists only so a
+ * question cannot hang for ever when somebody walks away from the screen.
+ * Long on purpose — anybody still thinking has had the check-in and can take
+ * as long as they like.
+ */
+export const SILENCE_GIVE_UP_SECONDS = 60;
+
+/**
+ * The silence ladder, in seconds since they last stopped speaking.
+ *
+ * Which rung applies depends on whether they have said anything at all:
+ * somebody who answered gets the first, somebody still staring at the
+ * question gets the second and, eventually, the third. See
+ * `handleSilenceStage`.
+ */
 export const NO_ANSWER_STAGES = [
+  ANSWER_PAUSE_SECONDS,
   SILENCE_CHECK_IN_SECONDS,
-  SILENCE_WARN_SECONDS,
-  SILENCE_SKIP_SECONDS,
+  SILENCE_GIVE_UP_SECONDS,
 ];

@@ -34,8 +34,8 @@ import {
   POLL_INTERVAL_MS,
   POLL_TIMEOUT_MS,
   SILENCE_ADVANCE_SECONDS,
-  SILENCE_WARN_SECONDS,
-  SILENCE_SKIP_SECONDS,
+  MIN_ANSWER_WORDS,
+  PROMPT_COUNTDOWN_SECONDS,
   OPENING_BIT_WAIT_MS,
 } from "./constants";
 
@@ -71,6 +71,7 @@ export function ActiveInterview({
   initialAttemptStatus,
   fillerUrls,
   checkUrl,
+  addUrl,
   openingBitUrls,
   openingBitTexts,
   m,
@@ -88,6 +89,8 @@ export function ActiveInterview({
   fillerUrls: string[];
   /** "Did you understand the question?" check-in, played after a long silence. */
   checkUrl: string;
+  /** "Would you like to add anything?" — played once per answer. */
+  addUrl: string;
   /** The opening turn's 2nd/3rd bits (hobbies, location), played in sequence. */
   openingBitUrls: string[];
   /** On-screen text for those same bits, shown as each one is spoken. */
@@ -256,13 +259,65 @@ export function ActiveInterview({
     submittedTurnRef.current = null;
   }, []);
 
+
+  /**
+   * Which part has already had its spoken prompt.
+   *
+   * Keyed by PART rather than by turn, because the opening is three parts in
+   * one turn — opener, hobbies, where they live. Keyed by turn alone, the
+   * invitation to add more would be offered on the first part and never
+   * again for the other two.
+   *
+   * The invitation is offered once per part. If the candidate takes it,
+   * speaks, and stops again, the interview moves on without asking a second
+   * time — being asked "anything to add?" twice reads as not having been
+   * listened to the first time.
+   */
+  const promptedKeyRef = useRef<string | null>(null);
+
+  /**
+   * The countdown shown after a spoken prompt finishes.
+   *
+   * Driven by its own clock rather than by elapsed silence, because it has to
+   * start when the clip STOPS playing — the candidate cannot be expected to
+   * answer a question they are still being asked.
+   */
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopCountdown = useCallback(() => {
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+    setCountdown(null);
+  }, []);
+
+  /**
+   * Reaching into the streaming hook from callbacks declared above it.
+   *
+   * Both are assigned once it exists. Declared up here because `beginAnswer`
+   * and the silence ladder need them, and a ref has to exist before the hook
+   * that captures it.
+   */
+  const streamRearmRef = useRef<() => void>(() => undefined);
+  const getTranscriptRef = useRef<() => string>(() => "");
+
   const beginAnswer = useCallback(() => {
     const current = turnRef.current;
     if (!current) return;
     if (autoStartedForTurnRef.current === current.turnNumber) return;
     autoStartedForTurnRef.current = current.turnNumber;
+    // A fresh question: no countdown running, and the invitation to add more
+    // is owed again. Reset here rather than in an effect, because this is the
+    // moment the turn actually starts rather than a render that noticed.
+    stopCountdown();
+    promptedKeyRef.current = null;
+    // Belt and braces: nothing from the last question may be readable as an
+    // answer to this one, whatever path got us here.
+    streamRearmRef.current();
     void startRecordingFn();
-  }, [startRecordingFn]);
+  }, [startRecordingFn, stopCountdown]);
 
   /* ------------------------------ capture guard ------------------------------ */
 
@@ -804,8 +859,6 @@ export function ActiveInterview({
   const openingRef = useRef<HTMLAudioElement | null>(null);
   // streaming.rearm and streaming.getTranscript, reached via refs because
   // `streaming` is defined below.
-  const streamRearmRef = useRef<() => void>(() => undefined);
-  const getTranscriptRef = useRef<() => string>(() => "");
   // advanceOpening, reached via a ref so the silence-fallback timer can call the
   // latest version without a definition-order cycle.
   const advanceOpeningRef = useRef<(text: string) => void>(() => undefined);
@@ -841,11 +894,24 @@ export function ActiveInterview({
       if (!transcript.trim()) return;
       submittedTurnRef.current = active.turnNumber;
       clearAddTimer();
+      stopCountdown();
+      /**
+       * Empty the buffer the moment this answer is taken.
+       *
+       * `transcriptRef` lives for the whole session, not the turn, so an
+       * answer that had been submitted was still sitting there when the next
+       * question arrived. The consequences compounded: the stale words made
+       * the candidate look as though they had already answered, which
+       * triggered "would you like to add anything?" and then the countdown,
+       * which submitted the SAME text again — and scored it again. One reply
+       * ended up answering five questions.
+       */
+      streamRearmRef.current();
       answerEndedAtRef.current = performance.now();
       const { video, durationMs } = await recorder.stopRecording();
       await submitTranscript(transcript, video, durationMs);
     },
-    [recorder, submitTranscript, clearAddTimer],
+    [recorder, submitTranscript, clearAddTimer, stopCountdown],
   );
 
   /**
@@ -894,18 +960,101 @@ export function ActiveInterview({
 
   /* ------------------------------ tap / voice controls ----------------------- */
 
+  const startCountdown = useCallback(() => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    const startedFor = turnRef.current?.turnNumber;
+    const endsAt = Date.now() + PROMPT_COUNTDOWN_SECONDS * 1000;
+    setCountdown(PROMPT_COUNTDOWN_SECONDS);
+    countdownRef.current = setInterval(() => {
+      const left = Math.ceil((endsAt - Date.now()) / 1000);
+      if (left <= 0) {
+        if (countdownRef.current) clearInterval(countdownRef.current);
+        countdownRef.current = null;
+        setCountdown(null);
+        // Belt and braces: never act on a question that has since moved on.
+        if (turnRef.current?.turnNumber !== startedFor) return;
+        // Submit what was heard, or skip when there is genuinely nothing.
+        handleAdvanceRef.current();
+        return;
+      }
+      setCountdown(left);
+    }, 250);
+  }, []);
+
+
+  /** Play "would you like to add anything?" (own element). */
+  const addRef = useRef<HTMLAudioElement | null>(null);
+  const playAddPrompt = useCallback(() => {
+    const el = addRef.current;
+    if (!el) return false;
+    try {
+      el.currentTime = 0;
+      void el.play().catch(() => undefined);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  /**
+   * Give the opening turn its full wait again, from now.
+   *
+   * Called whenever the interviewer has just finished speaking over it. The
+   * opening advances itself on a timer; anything that talks must stop that
+   * timer first and restart it here, or the next part arrives mid-sentence.
+   * A no-op on ordinary questions, which advance by their own countdown.
+   */
+  /**
+   * They started talking: nothing is allowed to move on underneath them.
+   *
+   * Cancels BOTH clocks — the countdown that follows "anything to add?", and
+   * the opening's own advance timer. The second one is the important half:
+   * it fires on a fixed delay regardless of what the microphone is hearing,
+   * so without this it could play the next part over somebody mid-sentence
+   * and take their unfinished answer with it.
+   *
+   * Nothing needs to restart them. Whichever clock is wanted next is set
+   * when they stop speaking, by the silence ladder.
+   */
+  const handleSpeechStart = useCallback(() => {
+    stopCountdown();
+    clearAddTimer();
+  }, [stopCountdown, clearAddTimer]);
+
+  const resumeOpeningWait = useCallback(() => {
+    if (turnRef.current?.kind !== "language_probe") return;
+    clearAddTimer();
+    addTimerRef.current = setTimeout(
+      () => advanceOpeningRef.current(""),
+      OPENING_BIT_WAIT_MS,
+    );
+  }, [clearAddTimer]);
+
   /** Play the "did you understand the question?" check-in (own element). */
   const checkRef = useRef<HTMLAudioElement | null>(null);
   const playCheckIn = useCallback(() => {
     const el = checkRef.current;
-    if (!el) return;
+    if (!el) {
+      resumeOpeningWait();
+      return false;
+    }
     try {
       el.currentTime = 0;
-      void el.play().catch(() => undefined);
+      /**
+       * A refused `play()` rejects without ever firing `ended` or `error`.
+       *
+       * That matters here because the caller has already cancelled the
+       * opening advance to make room for this clip — so a browser quietly
+       * blocking autoplay would leave the interview waiting on a timer
+       * nothing was going to restart. Hand the wait back immediately.
+       */
+      void el.play().catch(() => resumeOpeningWait());
+      return true;
     } catch {
-      // Best-effort.
+      resumeOpeningWait();
+      return false;
     }
-  }, []);
+  }, [resumeOpeningWait]);
 
   /** Move past the current question, unscored, and poll for the next. */
   const skipRef = useRef(false);
@@ -915,6 +1064,7 @@ export function ActiveInterview({
     skipRef.current = true;
     // Block any pending auto-submit for this turn and quiet everything.
     submittedTurnRef.current = active.turnNumber;
+    stopCountdown();
     stopFiller();
     const el = audioRef.current;
     if (el && !el.paused) el.pause();
@@ -933,44 +1083,124 @@ export function ActiveInterview({
       setPhase("error");
     }
     // Success: the phase-driven poll picks up the next question.
-  }, [attemptId, genericError, stopFiller, resetRecorder, recorder]);
+  }, [attemptId, genericError, stopFiller, stopCountdown, resetRecorder, recorder]);
 
   /**
-   * The silence ladder. Stages come from NO_ANSWER_STAGES = [15, 30, 60],
-   * counted from the moment the candidate last stopped speaking:
-   *   0 (15s) → spoken "did you understand the question?" check-in;
-   *   1 (30s) → nothing here — the visible countdown is derived in the render;
-   *   2 (60s) → auto-skip and move on.
+   * The silence ladder, in seconds since the candidate last stopped speaking.
    *
-   * `hasSpoken` separates two situations the old code could not tell apart,
-   * because it switched the whole ladder off at the first sound. Somebody who
-   * has said nothing is probably stuck on the question, so ask whether they
-   * followed it. Somebody who answered and then went quiet is not stuck — they
-   * have simply not pressed Next — and asking them whether they understood a
-   * question they have just answered is worse than saying nothing. They still
-   * get the 60-second backstop, which is what stops a finished-but-unsubmitted
-   * answer sitting there for ever.
+   * Two situations, told apart by whether they have said anything at all.
+   *
+   * THEY ANSWERED, then went quiet (rung 0, 3s). The first time, they are
+   * invited to add more; the countdown then runs from the moment that clip
+   * ends and submits the answer if nothing follows. If they do add something
+   * and stop again, this rung comes round a second time, and that time the
+   * interview simply moves on — asking "anything to add?" twice reads as not
+   * having listened the first time.
+   *
+   * THEY HAVE SAID NOTHING (rung 1, 15s). Probably stuck on the question, so
+   * ask whether they followed it; the same countdown then runs and skips the
+   * question if the silence holds. Asking somebody who has just answered
+   * whether they understood the question would be worse than saying nothing,
+   * which is why the two rungs are separate.
+   *
+   * Either clip failing to play falls through to the countdown anyway, so a
+   * browser that refuses audio cannot strand the interview in silence.
    */
   const handleSilenceStage = useCallback(
-    (i: number, hasSpoken: boolean) => {
-      if (i === 0) {
-        if (!hasSpoken) playCheckIn();
+    (i: number) => {
+      const active = turnRef.current;
+      if (!active) return;
+      const opening = active.kind === "language_probe";
+
+      /**
+       * Whether they have ANSWERED — one test, used by every rung.
+       *
+       * The rungs used to judge this two different ways: the check-in asked
+       * the voice detector, the offer to add more asked whether any words
+       * existed. Background noise trips the detector and the speech model
+       * turns the same noise into a couple of phantom words, so a silent
+       * candidate was ruled out of the check-in ("they spoke") and into the
+       * countdown ("there are words") at the same moment — and moved on
+       * without having said anything. Counting real words settles both.
+       */
+      const words = getTranscriptRef
+        .current()
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean).length;
+      const answered = words >= MIN_ANSWER_WORDS;
+
+      /**
+       * The opening is three parts in ONE turn, so a part is identified by
+       * both. Without the step, the second and third parts would count as
+       * already prompted and be hurried along in silence.
+       */
+      const key = opening
+        ? `${active.turnNumber}:${openingStepRef.current}`
+        : `${active.turnNumber}`;
+
+      /**
+       * Rung 2: never spoke, and the question has been on screen a long time.
+       * Move on quietly — no clip, no countdown. A backstop against a
+       * question hanging for ever, not a nudge. The opening has its own
+       * fallback and does not need this one.
+       */
+      if (i === 2) {
+        // Applies to the opening as well now: it is the last resort if noise
+        // keeps cancelling the opening's own timer and nothing is ever said.
+        if (!answered) handleAdvanceRef.current();
         return;
       }
-      if (i !== 2) return;
+
       /**
-       * The backstop, and it must not cost anybody their answer.
-       *
-       * `handleAdvance` is the same thing the Next button does: submit what
-       * was transcribed, or skip only when there is genuinely nothing. Calling
-       * `autoSkip` directly here would discard a complete answer from somebody
-       * whose only mistake was not pressing a button — and this rung is newly
-       * reachable after speech, so that would have been a real loss rather
-       * than a theoretical one.
+       * Rung 1: they have said nothing, so ask whether they followed it — and
+       * then WAIT. No countdown follows a check-in: being asked "did you
+       * understand?" and immediately watching a timer start reads as being
+       * hurried out of a question rather than helped with it.
        */
-      handleAdvanceRef.current();
+      if (i === 1) {
+        if (answered || promptedKeyRef.current === key) return;
+        promptedKeyRef.current = key;
+        // Take the floor first: the opening advances itself on a timer, and
+        // letting that fire mid-clip plays the next part over this one.
+        clearAddTimer();
+        playCheckIn();
+        return;
+      }
+
+      /**
+       * Rung 0: they answered and stopped. Offer to add more; the countdown
+       * that follows the offer is what moves things on.
+       *
+       * This applies to the opening too. Each of its parts is an answer like
+       * any other, and being cut off three seconds after finishing — with no
+       * chance to add the thing you were still thinking of — is the same
+       * abruptness on the introduction as it was on the questions.
+       */
+      /**
+       * `hasSpoken` is the voice DETECTOR, which is not the same as having
+       * answered. A cough, a chair, the tail of the question bleeding back
+       * through the speakers — any of those set it, and the candidate was
+       * then asked "would you like to add anything?" three seconds into a
+       * question they had not yet said a word about.
+       *
+       * So the offer is gated on there being actual transcribed words. No
+       * words means nothing was said, whatever the detector heard, and it is
+       * the check-in rung that belongs to that.
+       */
+      if (!answered) return;
+
+      if (promptedKeyRef.current === key) {
+        // Second time quiet on this part: move on without saying anything.
+        handleAdvanceRef.current();
+        return;
+      }
+      promptedKeyRef.current = key;
+      // Again, take the floor before speaking over the opening's own timer.
+      clearAddTimer();
+      if (!playAddPrompt()) startCountdown();
     },
-    [playCheckIn],
+    [playAddPrompt, playCheckIn, startCountdown, clearAddTimer],
   );
 
   /**
@@ -1025,13 +1255,36 @@ export function ActiveInterview({
    * Safe against false positives by construction: the phrase lists refuse to
    * match anything longer than eight words, and this is handed the WHOLE
    * transcript so far, so a real answer that happens to contain "repeat" is
-   * already too long to qualify. The opening turn is left alone — it runs its
-   * own scripted sequence.
+   * already too long to qualify.
+   *
+   * The opening turn needs its own handling rather than being skipped. It is
+   * three parts in one turn, so "say that again" there means the part they
+   * are on — not the whole sequence from the top, which is what they got
+   * when the request was swallowed and treated as their answer.
    */
   const handleUtterance = useCallback(
     (text: string) => {
       const active = turnRef.current;
-      if (!active || active.kind === "language_probe") return;
+      if (!active) return;
+
+      if (active.kind === "language_probe") {
+        if (!isRepeatRequest(text)) return;
+        // Stop the pending advance before replaying anything, or the next
+        // part arrives over the top of the repeat they just asked for. Each
+        // clip restarts the wait when it ends.
+        clearAddTimer();
+        const step = openingStepRef.current;
+        // Step 0 is still the opener itself, which plays from the question
+        // element; after that each step has played the bit before it.
+        if (step === 0) replayQuestion();
+        else {
+          playOpeningBit(step - 1);
+          // The request is an instruction, not part of the introduction.
+          streamRearmRef.current();
+        }
+        return;
+      }
+
       if (isRepeatRequest(text)) {
         // Served from here. Only a clip that will not play falls through to
         // the server, which can still do it the slow way.
@@ -1042,7 +1295,7 @@ export function ActiveInterview({
       // retire this turn and hand back the next one.
       if (isSkipRequest(text)) handleAdvanceRef.current();
     },
-    [replayQuestion],
+    [replayQuestion, playOpeningBit, clearAddTimer],
   );
 
   /**
@@ -1058,6 +1311,10 @@ export function ActiveInterview({
     const active = turnRef.current;
     if (!active || isBusy) return;
     if (submittedTurnRef.current === active.turnNumber) return;
+    // Pressing Next during "would you like to add anything?" must end the
+    // countdown too. Left running, it reached zero on the NEXT question and
+    // skipped it before its audio had played.
+    stopCountdown();
 
     if (!streamingOn) {
       void handleNext();
@@ -1078,6 +1335,7 @@ export function ActiveInterview({
     isBusy,
     streamingOn,
     handleNext,
+    stopCountdown,
     clearAddTimer,
     advanceOpening,
     autoSkip,
@@ -1109,7 +1367,7 @@ export function ActiveInterview({
     // then a long skip backstop) still runs so a silent screen isn't permanent.
     onSilence: () => undefined,
     noAnswerStages: NO_ANSWER_STAGES,
-    onNoAnswerStage: (i) => handleSilenceStage(i, false),
+    onNoAnswerStage: (i) => handleSilenceStage(i),
   });
 
   // Realtime STT: stream the mic to the relay and let Sarvam decide when the
@@ -1129,7 +1387,9 @@ export function ActiveInterview({
     onFailed: () => setStreamFailed(true),
     // The no-answer ladder still runs — check in, then a long skip backstop.
     noAnswerStages: NO_ANSWER_STAGES,
-    onSilenceStage: (i, hasSpoken) => handleSilenceStage(i, hasSpoken),
+    onSilenceStage: (i) => handleSilenceStage(i),
+    // Talking again means nothing moves on underneath them.
+    onSpeechStart: handleSpeechStart,
     onUtterance: handleUtterance,
   });
 
@@ -1155,12 +1415,10 @@ export function ActiveInterview({
   const silentElapsed = streamingOn
     ? streaming.silentSeconds
     : speech.noAnswerIn;
-  const skipInSeconds =
-    silentElapsed !== null &&
-    silentElapsed >= SILENCE_WARN_SECONDS &&
-    silentElapsed < SILENCE_SKIP_SECONDS
-      ? SILENCE_SKIP_SECONDS - silentElapsed
-      : null;
+  // The visible countdown is now the one started when a spoken prompt ends,
+  // not a slice of elapsed silence: the candidate should get the whole of it
+  // from the moment they can actually act on it.
+  const skipInSeconds = countdown;
 
   /* ------------------------------ question audio ----------------------------- */
 
@@ -1344,15 +1602,40 @@ export function ActiveInterview({
         onEnded={() => setSpeaking(false)}
         onPause={() => setSpeaking(false)}
       />
-      {/* "Did you understand the question?" check-in for the silence ladder. */}
+      {/* "Did you understand the question?" check-in for the silence ladder.
+          The countdown starts when it ENDS, never while it is still playing. */}
       <audio
         ref={checkRef}
         src={checkUrl}
         preload="auto"
         className="hidden"
         onPlay={() => setSpeaking(true)}
-        onEnded={() => setSpeaking(false)}
+        onEnded={() => {
+          setSpeaking(false);
+          resumeOpeningWait();
+        }}
         onPause={() => setSpeaking(false)}
+        onError={() => {
+          setSpeaking(false);
+          resumeOpeningWait();
+        }}
+      />
+      {/* "Would you like to add anything?" — once per answer. */}
+      <audio
+        ref={addRef}
+        src={addUrl}
+        preload="auto"
+        className="hidden"
+        onPlay={() => setSpeaking(true)}
+        onEnded={() => {
+          setSpeaking(false);
+          startCountdown();
+        }}
+        onPause={() => setSpeaking(false)}
+        onError={() => {
+          setSpeaking(false);
+          startCountdown();
+        }}
       />
       {/* Opening bits (hobbies, then location); src swapped per bit. */}
       <audio
@@ -1476,6 +1759,16 @@ export function ActiveInterview({
               onEnded={() => {
                 setSpeaking(false);
                 beginAnswer();
+                /**
+                 * The opening turn needs its wait started here.
+                 *
+                 * Each later part starts one when its own clip ends, but the
+                 * FIRST part is this question audio, which knows nothing
+                 * about the opening sequence — so the opener had none at all
+                 * and, once the ladder stopped advancing the opening, a
+                 * candidate who never spoke would have waited for ever.
+                 */
+                resumeOpeningWait();
               }}
               onError={() => {
                 setSpeaking(false);
@@ -1537,7 +1830,10 @@ export function ActiveInterview({
               />
               {skipInSeconds !== null ? (
                 <p className="text-sm font-medium text-warning">
-                  {t(m.interview.skippingIn, { seconds: skipInSeconds })}
+                  {/* Always "moving on": the only countdown left follows
+                      the invitation to add more, and it ends by SUBMITTING
+                      their answer. Nothing is skipped. */}
+                  {t(m.interview.advancingIn, { seconds: skipInSeconds })}
                 </p>
               ) : (
                 <p className="flex items-center gap-2 text-sm text-content-muted">

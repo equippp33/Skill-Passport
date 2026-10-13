@@ -91,6 +91,13 @@ const PHRASES: string[] = [
   "दोबारा",
   "दोबारा बोलो",
   "दोबारा बोलिए",
+  // The everyday spelling, with ु rather than ो — and the one Sarvam
+  // writes for "dubara boliye". Without it, the most common way of asking for
+  // a repeat in Hindi matched nothing at all.
+  "दुबारा",
+  "दुबारा बोलो",
+  "दुबारा बोलिए",
+  "दुबारा बताइए",
   "वापस बोलो",
   "समझ नहीं आया",
   "सुनाई नहीं दिया",

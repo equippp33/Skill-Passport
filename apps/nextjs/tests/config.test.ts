@@ -148,6 +148,10 @@ describe("repeat requests", () => {
     "dobara bolo",
     "punha sanga",
     "फिर से बोलिए",
+    // The everyday spelling (ु, not ो) — missing from the list, so the
+    // most common way of asking for a repeat in Hindi silently did nothing.
+    "दुबारा बोलिए",
+    "दुबारा बोलो",
     "वापस बोलो",
     "पुन्हा सांगा",
     "மீண்டும் சொல்லுங்கள்",

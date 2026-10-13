@@ -190,6 +190,22 @@ export function useStreamingStt({
     let pending: Float32Array[] = [];
     let pendingLen = 0;
     const finals: string[] = [];
+    /**
+     * A new session hears nothing until it hears something.
+     *
+     * `finals` is created fresh for every session, but `transcriptRef` lives
+     * on the hook and survived every one of them — the cleanup below closes
+     * the socket and stops the timers and never touched it. So each question
+     * opened still holding the LAST question's answer, readable through
+     * `getTranscript`. Silence read as having answered; the countdown then
+     * submitted those old words again, and one reply was scored against
+     * every question that followed it.
+     *
+     * Cleared here, at the source, so no caller has to remember to. (The
+     * on-screen caption is state and cannot be reset inside an effect; it is
+     * cleared by `rearm` when the new question begins.)
+     */
+    transcriptRef.current = "";
     let firedTurn = false;
     // The last moment the interviewer was speaking. We keep muting the stream
     // for a short window AFTER their clip ends, so the echo/tail bleeding from
@@ -269,6 +285,9 @@ export function useStreamingStt({
         };
         ws.onclose = () => !cancelled && setConnected(false);
         ws.onmessage = (event: MessageEvent<string>) => {
+          // Arrived after this session was torn down: whatever it says, it is
+          // not an answer to the question now on screen.
+          if (cancelled) return;
           let msg: { event?: string; text?: string; is_fatal?: boolean };
           try {
             msg = JSON.parse(event.data) as typeof msg;
@@ -376,6 +395,27 @@ export function useStreamingStt({
 
         // No-answer ladder: escalate while the candidate has said nothing.
         silenceTimer = setInterval(() => {
+          /**
+           * The clock only runs while the candidate could actually be heard.
+           *
+           * It used to start when RECORDING started, which is while the
+           * question is still being read out. By the time the candidate had
+           * heard the question, several seconds of "their" silence had
+           * already elapsed — so the whole ladder fired at once and they were
+           * asked "would you like to add anything?" before they had been
+           * asked anything at all.
+           *
+           * Held back for the settle window too: the flush loop drops those
+           * frames so the speakers are not transcribed as the candidate, and
+           * silence nobody is listening to is not silence they chose.
+           */
+          if (
+            speakingRef.current ||
+            Date.now() - lastSpeakingAt < POST_SPEAK_MUTE_MS
+          ) {
+            quietSince = Date.now();
+            return;
+          }
           // Mid-sentence: not silence.
           if (talking) return;
           const elapsed = Math.floor((Date.now() - quietSince) / 1000);
