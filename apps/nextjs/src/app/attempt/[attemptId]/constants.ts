@@ -108,13 +108,22 @@ export const ANSWER_PAUSE_SECONDS = 3;
 export const MIN_ANSWER_WORDS = 3;
 
 /**
+ * Longest answer that is still offered "would you like to add anything?".
+ *
+ * Only a SHORT answer has obviously more behind it. Asking after every answer
+ * became monotonous by the third or fourth question (client feedback), so a
+ * fuller answer gets just the on-screen countdown — same timing, no clip.
+ */
+export const ADD_PROMPT_MAX_WORDS = 8;
+
+/**
  * Quiet with NOTHING said yet, before asking whether they followed it.
  *
- * Eight seconds. Someone who has not started after that long is usually
+ * Fifteen seconds. Someone who has not started after that long is usually
  * stuck rather than thinking, and the ask is gentle enough that interrupting
  * a slow starter costs them little — any speech cancels what follows.
  */
-export const SILENCE_CHECK_IN_SECONDS = 8;
+export const SILENCE_CHECK_IN_SECONDS = 15;
 
 /**
  * The visible countdown shown once a spoken prompt has FINISHED playing.

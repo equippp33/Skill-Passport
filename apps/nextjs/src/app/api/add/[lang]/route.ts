@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
  * the fillers. Keyed by speaker so a voice change gets its own clip.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ lang: string }> },
 ): Promise<NextResponse> {
   const { lang } = await params;
@@ -28,14 +28,23 @@ export async function GET(
     return new NextResponse("Unknown language", { status: 404 });
   }
   const language = INTERVIEW_LANGUAGES[lang as InterviewLanguageKey];
-  const key = `${env.CLOUDFLARE_R2_PREFIX}/adds/${lang}-${env.SARVAM_TTS_SPEAKER}.mp3`;
+
+  // Which phrasing (`?v=`). Anything out of range falls back to the first.
+  const variants = ADD_PROMPT_BY_KEY[lang as InterviewLanguageKey];
+  const requested = Number(new URL(request.url).searchParams.get("v"));
+  const v =
+    Number.isInteger(requested) && requested >= 0 && requested < variants.length
+      ? requested
+      : 0;
+  // Variant 0 keeps the original key, so the clip already in R2 is reused.
+  const suffix = v === 0 ? "" : `-v${v}`;
+  const key = `${env.CLOUDFLARE_R2_PREFIX}/adds/${lang}-${env.SARVAM_TTS_SPEAKER}${suffix}.mp3`;
 
   let bytes = await getAudioObject(key);
   if (!bytes) {
-    const speech = await generateSpeech(
-      ADD_PROMPT_BY_KEY[lang as InterviewLanguageKey],
-      { languageCode: language.code },
-    );
+    const speech = await generateSpeech(variants[v]!, {
+      languageCode: language.code,
+    });
     await putAudioObject({ key, body: speech.audio, mimeType: "audio/mpeg" });
     bytes = speech.audio;
   }

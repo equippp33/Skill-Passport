@@ -30,6 +30,7 @@ import {
 import type { WorkSkill, WorkSkillId } from "~/config/work-skills";
 import { WORK_READINESS_QUESTIONS } from "~/config/work-readiness-pool";
 import {
+  isGiveUpRequest,
   isRepeatRequest,
   isSkipRequest,
   isSlowerRequest,
@@ -1040,6 +1041,18 @@ const doubtCounts = new Map<string, number>();
 const MAX_DOUBTS_BEFORE_SKIP = 1;
 
 /**
+ * Genuine questions ABOUT the question ("explain it", "what does job mean?")
+ * are counted separately and allowed more often.
+ *
+ * They used to share the counter above, so asking for an explanation twice
+ * skipped the question — the candidate asked what a word meant and the
+ * interview moved on instead of telling them. A cap remains so a candidate
+ * stuck in a loop still moves on eventually.
+ */
+const clarificationCounts = new Map<string, number>();
+const MAX_CLARIFICATIONS_BEFORE_SKIP = 3;
+
+/**
  * Lowest score that may earn a follow-up. Deliberately 1, not higher: the whole
  * point of a probe is to give a THIN, LOW-scoring but genuine answer a fair
  * chance before that low score is settled (client ask — a fresher who says
@@ -1251,10 +1264,18 @@ async function processTurnScoped(
         // Skip / "I don't know" / "I can't answer": encourage them to try ONCE,
         // then move on. The candidate asked not to be badgered 3+ times.
         const key = `${attemptId}:${turn.turnNumber}`;
-        const seen = (doubtCounts.get(key) ?? 0) + 1;
-        doubtCounts.set(key, seen);
-        if (seen > MAX_DOUBTS_BEFORE_SKIP) {
+        // Giving up ("skip", "I don't know") keeps the one-nudge rule. Asking
+        // for an explanation is not giving up and gets its own allowance.
+        const givingUp = wantsSkip || isGiveUpRequest(transcript);
+        const counts = givingUp ? doubtCounts : clarificationCounts;
+        const limit = givingUp
+          ? MAX_DOUBTS_BEFORE_SKIP
+          : MAX_CLARIFICATIONS_BEFORE_SKIP;
+        const seen = (counts.get(key) ?? 0) + 1;
+        counts.set(key, seen);
+        if (seen > limit) {
           doubtCounts.delete(key);
+          clarificationCounts.delete(key);
           await skipTurn(attempt, interview, turn.turnNumber);
         } else {
           await speakDoubtResponse(attempt, turn, transcript);

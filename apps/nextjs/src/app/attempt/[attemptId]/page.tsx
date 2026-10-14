@@ -6,7 +6,11 @@ import { HeaderProfile } from "~/components/header-profile";
 import { PreventBackNavigation } from "~/components/prevent-back-navigation";
 import { resolveInterviewLanguage } from "~/config/languages";
 import type { InterviewLanguageKey } from "~/config/languages";
-import { FILLERS_BY_KEY, OPENING_BIT_PROMPTS_BY_KEY } from "~/config/greeting";
+import {
+  ADD_PROMPT_BY_KEY,
+  FILLERS_BY_KEY,
+  OPENING_BIT_PROMPTS_BY_KEY,
+} from "~/config/greeting";
 import { WORK_SKILL_COUNT, WORK_SKILL_IDS } from "~/config/work-skills";
 import { getAttemptForCandidate } from "~/server/attempt/access";
 import { getTurns } from "~/server/attempt/service";
@@ -112,7 +116,9 @@ export default async function AttemptPage({
         initialAttemptStatus={attempt.status}
         fillerUrls={fillerUrls}
         checkUrl={`/api/check/${languageKey}?s=${speaker}`}
-        addUrl={`/api/add/${languageKey}?s=${speaker}`}
+        addUrls={ADD_PROMPT_BY_KEY[languageKey].map(
+          (_, v) => `/api/add/${languageKey}?s=${speaker}&v=${v}`,
+        )}
         openingBitUrls={openingBitUrls}
         openingBitTexts={[...OPENING_BIT_PROMPTS_BY_KEY[languageKey]]}
         initialTurn={

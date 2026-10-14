@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Path Saathi Project Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --accent: #e02228;        /* Path Saathi red, from the logo */
+    --accent-dark: #b81a1f;
+    --accent-soft: #fdeeee;
+    --ink: #1c1f23;
+    --muted: #5b6168;
+    --line: #e7e2dc;
+    --paper-tint: #faf7f4;
+  }
+
+  @page {
+    size: A4;
+    margin: 2.1cm 2cm 2.1cm 2cm;
+    @top-left {
+      content: "Path Saathi  ·  Project Manager's Guide";
+      font-family: Inter, sans-serif;
+      font-size: 8pt;
+      color: #8a8f95;
+      vertical-align: bottom;
+      padding-bottom: 0.3cm;
+    }
+    @top-right {
+      content: "Skill Passport";
+      font-family: Inter, sans-serif;
+      font-size: 8pt;
+      color: #e02228;
+      font-weight: 600;
+      vertical-align: bottom;
+      padding-bottom: 0.35cm;
+    }
+    @bottom-center {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: Inter, sans-serif;
+      font-size: 8pt;
+      color: #8a8f95;
+      vertical-align: top;
+      padding-top: 0.35cm;
+    }
+  }
+  @page :first {
+    margin-top: 2.2cm;
+    @top-left { content: none; }
+    @top-right { content: none; }
+    @bottom-center { content: none; }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    margin: 0;
+    background: #ffffff;
+    color: var(--ink);
+    font-family: Inter, "Noto Sans Devanagari", sans-serif;
+    font-size: 11pt;
+    line-height: 1.6;
+  }
+
+  /* ---------- headings ---------- */
+  h1, h2, h3 { line-height: 1.25; break-after: avoid; page-break-after: avoid; }
+  h2 {
+    font-size: 19pt;
+    font-weight: 700;
+    color: var(--ink);
+    margin: 0 0 0.45cm;
+    padding-bottom: 0.2cm;
+    border-bottom: 2.5px solid var(--accent);
+    display: flex;
+    align-items: baseline;
+    gap: 0.3cm;
+  }
+  h2 .num { color: var(--accent); font-weight: 700; }
+  h3 {
+    font-size: 12.5pt;
+    font-weight: 600;
+    color: var(--accent-dark);
+    margin: 0.5cm 0 0.15cm;
+  }
+  p { margin: 0 0 0.3cm; }
+  ul { margin: 0 0 0.35cm; padding-left: 0.55cm; }
+  li { margin-bottom: 0.12cm; }
+  li::marker { color: var(--accent); }
+  strong { font-weight: 600; }
+  .lead { font-size: 11.5pt; color: #33383d; }
+  .muted { color: var(--muted); }
+  .confirm {
+    display: inline-block;
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: #8a5a00;
+    background: #fff4d6;
+    border: 1px solid #f0d58a;
+    border-radius: 4px;
+    padding: 0 5px;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  /* ---------- sections and breaks ---------- */
+  section { break-before: page; page-break-before: always; }
+  section.flow { break-before: auto; page-break-before: auto; margin-top: 0.8cm; }
+  .together { break-inside: avoid; page-break-inside: avoid; }
+  .keep { break-inside: avoid; page-break-inside: avoid; }
+
+  /* ---------- cover ---------- */
+  .cover { text-align: center; padding-top: 0.3cm; }
+  .cover img.logo { width: 140px; height: auto; display: block; margin: 0 auto 0.6cm; }
+  .cover .name { font-size: 32pt; font-weight: 700; letter-spacing: -0.5px; margin: 0; color: var(--ink); }
+  .cover .tagline { font-size: 12.5pt; color: var(--muted); margin: 0.2cm auto 0; max-width: 13cm; }
+  .cover .doc-title {
+    display: inline-block;
+    margin-top: 0.6cm;
+    font-size: 11pt;
+    font-weight: 600;
+    color: var(--accent-dark);
+    background: var(--accent-soft);
+    border-radius: 999px;
+    padding: 0.12cm 0.55cm;
+  }
+  .cover .meta { margin: 0.55cm auto 0; font-size: 10pt; color: var(--muted); }
+  .cover .meta span + span::before { content: "·"; margin: 0 0.25cm; color: #c9c2ba; }
+  .rule { width: 2.2cm; height: 3px; background: var(--accent); margin: 0.7cm auto 0.7cm; border-radius: 2px; }
+
+  .glance {
+    text-align: left;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--paper-tint);
+    padding: 0.55cm 0.7cm 0.35cm;
+  }
+  .glance h3 { margin-top: 0; color: var(--ink); font-size: 11.5pt; }
+  .glance dl { display: grid; grid-template-columns: 4.3cm 1fr; column-gap: 0.4cm; margin: 0; }
+  .glance dt { font-weight: 600; font-size: 10pt; color: var(--muted); padding: 0.14cm 0; border-top: 1px solid var(--line); }
+  .glance dd { margin: 0; font-size: 10pt; padding: 0.14cm 0; border-top: 1px solid var(--line); }
+  .glance dt:first-of-type, .glance dd:first-of-type { border-top: none; }
+  .cover .about { font-size: 9.5pt; color: var(--muted); margin-top: 0.5cm; text-align: left; }
+
+  /* ---------- callouts, cards ---------- */
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--paper-tint);
+    padding: 0.3cm 0.5cm;
+    border-radius: 0 8px 8px 0;
+    margin: 0.35cm 0 0.4cm;
+    font-size: 10.5pt;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .roles { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35cm; margin-top: 0.25cm; }
+  .role {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0.3cm 0.45cm 0.05cm;
+    break-inside: avoid;
+  }
+  .role h3 { margin: 0 0 0.05cm; color: var(--ink); }
+  .role .who { font-size: 9.5pt; color: var(--muted); margin-bottom: 0.2cm; }
+  .role ul { font-size: 10pt; line-height: 1.5; padding-left: 0.45cm; margin-bottom: 0.2cm; }
+  .role li { margin-bottom: 0.06cm; }
+
+  .features { display: grid; grid-template-columns: 1fr 1fr; gap: 0.28cm 0.5cm; }
+  .feature { border-top: 2px solid var(--accent-soft); padding-top: 0.2cm; break-inside: avoid; }
+  .feature h3 { margin: 0 0 0.08cm; font-size: 11pt; color: var(--ink); }
+  .feature h3 .tag { color: var(--accent); font-weight: 700; margin-right: 0.12cm; }
+  .feature p { font-size: 10pt; line-height: 1.5; margin: 0; color: #33383d; }
+
+  /* ---------- tables ---------- */
+  table { width: 100%; border-collapse: collapse; font-size: 10pt; line-height: 1.45; table-layout: fixed; }
+  table.three col.a { width: 24%; } table.three col.b { width: 36%; } table.three col.c { width: 40%; }
+  table.mods col.a { width: 27%; } table.mods col.b { width: 55%; } table.mods col.c { width: 18%; }
+  thead th {
+    text-align: left;
+    font-weight: 600;
+    color: #ffffff;
+    background: var(--accent);
+    padding: 0.18cm 0.25cm;
+  }
+  thead th:first-child { border-radius: 6px 0 0 0; }
+  thead th:last-child { border-radius: 0 6px 0 0; }
+  tbody td { padding: 0.17cm 0.25cm; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr { break-inside: avoid; page-break-inside: avoid; }
+  tbody tr:nth-child(even) td { background: #fcfaf8; }
+  td.mod { font-weight: 600; }
+  .status { display: inline-block; font-size: 8.5pt; font-weight: 600; border-radius: 999px; padding: 0 0.22cm; white-space: nowrap; }
+  .s-done { background: #e6f4ec; color: #17683d; }
+  .s-prog { background: #fff1d9; color: #8a5a00; }
+  .s-plan { background: #eceff3; color: #4a5560; }
+
+  /* ---------- diagrams ---------- */
+  .diagram {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--paper-tint);
+    padding: 0.5cm 0.45cm;
+    margin: 0.35cm 0 0.45cm;
+    break-inside: avoid;
+  }
+  .diagram .caption { font-size: 9pt; color: var(--muted); text-align: center; margin: 0.25cm 0 0; }
+  .flow-row { display: flex; align-items: stretch; justify-content: center; gap: 0; }
+  .flow-row + .flow-row { margin-top: 0.3cm; }
+  .box {
+    flex: 1 1 0;
+    background: #ffffff;
+    border: 1.5px solid #d9cfc5;
+    border-radius: 8px;
+    padding: 0.18cm 0.2cm;
+    text-align: center;
+    font-size: 9pt;
+    line-height: 1.3;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .box b { display: block; font-size: 9.5pt; color: var(--ink); }
+  .box.hl { border-color: var(--accent); }
+  .box .n { color: var(--accent); font-weight: 700; font-size: 8.5pt; }
+  .arrow { flex: 0 0 0.6cm; display: flex; align-items: center; justify-content: center; color: var(--accent); font-weight: 700; font-size: 12pt; }
+  .down { text-align: center; color: var(--accent); font-weight: 700; font-size: 12pt; line-height: 1; margin: 0.08cm 0; }
+  .turn-note { text-align: right; font-size: 8.5pt; color: var(--muted); margin: 0.1cm 0.2cm 0; }
+
+  .arch .tier-label { font-size: 8pt; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin: 0 0 0.12cm 0.05cm; }
+  .arch .row { display: grid; gap: 0.3cm; }
+  .arch .row.three { grid-template-columns: repeat(3, 1fr); }
+  .arch .row.four { grid-template-columns: repeat(4, 1fr); }
+  .arch .core {
+    background: #ffffff;
+    border: 2px solid var(--accent);
+    border-radius: 10px;
+    padding: 0.25cm 0.4cm;
+    text-align: center;
+    font-size: 9.5pt;
+  }
+  .arch .core b { font-size: 11pt; display: block; }
+  .arch .core .parts { display: flex; justify-content: center; gap: 0.25cm; margin-top: 0.15cm; flex-wrap: wrap; }
+  .arch .core .parts span { background: var(--accent-soft); color: var(--accent-dark); border-radius: 999px; padding: 0 0.25cm; font-size: 8.5pt; font-weight: 600; }
+
+  .loop { display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 0.07cm; font-size: 8.5pt; margin-top: 0.15cm; white-space: nowrap; }
+  .loop .pill { background: #ffffff; border: 1.5px solid #d9cfc5; border-radius: 999px; padding: 0.04cm 0.24cm; }
+  .loop .pill.hl { border-color: var(--accent); }
+  .loop .to { color: var(--accent); font-weight: 700; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5cm; }
+  .roadmap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.35cm; margin-top: 0.2cm; }
+  .stage { border: 1px solid var(--line); border-radius: 10px; padding: 0.3cm 0.4cm 0.1cm; break-inside: avoid; }
+  .stage .when { font-size: 8.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent); }
+  .stage h3 { margin: 0.02cm 0 0.15cm; font-size: 11pt; color: var(--ink); }
+  .stage ul { font-size: 9.5pt; padding-left: 0.4cm; }
+
+  dl.gloss { margin: 0; display: grid; grid-template-columns: 4.6cm 1fr; column-gap: 0.45cm; }
+  dl.gloss dt { font-weight: 600; padding: 0.16cm 0; border-bottom: 1px solid var(--line); break-inside: avoid; }
+  dl.gloss dd { margin: 0; padding: 0.16cm 0; border-bottom: 1px solid var(--line); font-size: 10.5pt; color: #33383d; }
+
+  table.sit col.a { width: 32%; } table.sit col.b { width: 68%; }
+  table.bands col.a { width: 14%; } table.bands col.b { width: 60%; } table.bands col.c { width: 26%; }
+  table.example col.a { width: 22%; } table.example col.b { width: 58%; } table.example col.c { width: 20%; }
+  .steps { display: grid; gap: 0.18cm; margin: 0.15cm 0 0.2cm; }
+  .step { display: grid; grid-template-columns: 0.75cm 1fr; align-items: start; break-inside: avoid; font-size: 10.5pt; line-height: 1.55; }
+  .step .sn {
+    width: 0.55cm; height: 0.55cm; border-radius: 999px; background: var(--accent); color: #fff;
+    font-size: 8.5pt; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 0.06cm;
+  }
+  .diagram .flow-row .box { font-size: 8.5pt; }
+</style>
+</head>
+<body>
+
+<!-- ============================== COVER ============================== -->
+<div class="cover">
+  <img class="logo" src="data:image/webp;base64,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F9HT809wyO9wKls4Gg51hCLdf1QNfMlYKUDshMDr4VBP6PA7hshvVxGD/Ba7K2+Dk3oCkc7faQgtW8OiQINH+HdYwX/dJdlU2kqXsYOcSO95JBwKNLI+nysZwX+ZJdFU2kqX2VpjRFDlqdrC6+BQpMV9EzqJwX9RJdkYY2yly2ytNUYENWobO3Xrsepqa603eLNtdth96L4HHzHylN+dd8mY6/9y21P0fAZOihCs/mY/GPyXUJJNpa10ma21xghq1XXoslLvVVdfe+DGW2y70x7D9j/syONPPWvUZVfdcNPt94177OmX3nj/4wlTv54+e/7iJa2RRQZO6ykGRRpsORAW/wmXZFNprbUuu7XGGEGNmlKHrj1W7rfGuoM23eoXO+/1ywN/c8yJZ5xz0eXXjr3lzgcefvK5V9764LNJ076dMWfhT83lyBrVGEMIPmtcsiksChf8x1eSjTHGVrrM1lpjRFCjtrFT156r9h+w3uDNttlht6H7HXLEyFPOPP/iMdf/+da7H3r0qRdee+fD8VO+/n7m3IU/twZlbarGGILPHipjpSayQM9D4VC44D+akmwqbaXLbK01RlCrrkPn7r36rL72wI02326nPYbtf+iRx5961oWXXXXDTbffN+6xp196471PJkz9ZvqseYuWtEbWqGqMIQSfNVTGSk1m2/S8HA7/gZRkU2krXWZrjTGCGjWuY9ceK/ddY51Bm271i132+uWBvzn6xNPPGX351WNvufOBh5949pU3P/hs0rRvZ8xZ+NPScmSNaowhhOCzhspYqclstz3/BScrWpJsjDG20mW21hojghq1DR279Vy1/4B1B2+2zQ677b3fwUeMPOXM8y8Zc/2fb737oUefev61tz8cP+Wr72fOXbikxStrUzXGEILPHCpjpSZymR44sZsRrEBKsqm0lS6ztdYYEdSmuA6du/fqs/raAzfaYrud9mj61aFHHn/qWRdcdtUNN91x77jHnn7pzXc/njD16+mz5i1a0hpZoxpjDCH4zCGEECs1mcu7GhcPgsXysiSbSlvpMltrjBHUqJQ6du2xcp811hm0yVZDdtnrlwf+5ugTTz9n9B+uGXvLnQ/884lnX37rg08nTvt2xtwFPy0tR9aoxhhCCD5rqIyVmswVQPXcDw7LhZJsKq211mW31hgR1Kht6Nit5yr911xv8Gbb7LDrPvse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" alt="Path Saathi logo">
+  <p class="name">Path Saathi</p>
+  <p class="tagline">Skill Passport: an AI voice interviewer that checks how ready young people are for work, in their own language.</p>
+  <div class="doc-title">Project Manager's Guide</div>
+  <p class="meta"><span>Guide version 1.0</span><span>Product version 0.1.0</span><span>13 October 2026</span></p>
+
+  <div class="rule"></div>
+
+  <div class="glance">
+    <h3>At a glance</h3>
+    <dl>
+      <dt>What it is</dt>
+      <dd>A website where a candidate speaks with an AI interviewer and gets a scored report on 11 workplace skills.</dd>
+      <dt>Built for</dt>
+      <dd>Path Saathi, a platform that helps freshers move from learning to livelihood. Skill Passport is the interview service plugged into it.</dd>
+      <dt>Who takes it</dt>
+      <dd>Freshers: students and people with little or no work experience.</dd>
+      <dt>Languages</dt>
+      <dd>English, Hindi and Marathi today.</dd>
+      <dt>Length</dt>
+      <dd>A 3-part warm-up, 11 skill questions and 2–3 follow-ups. Typical duration still to be measured. <span class="confirm">TO CONFIRM</span></dd>
+      <dt>Where it stands</dt>
+      <dd>Live on a test (staging) site and in active use: one interview link alone has over 500 completed interviews. Launch on the production site has not been confirmed. <span class="confirm">TO CONFIRM</span></dd>
+      <dt>Built by</dt>
+      <dd>ThreePoint0 Labs</dd>
+    </dl>
+  </div>
+
+  <p class="about">A plain-English briefing for stakeholders, the client and new team members on what the product does and how it fits together. Anything not confirmed by the product itself is marked <span class="confirm">TO CONFIRM</span>.</p>
+</div>
+
+<!-- ============================== 1. OVERVIEW ============================== -->
+<section>
+  <h2><span class="num">1</span> Project Overview</h2>
+
+  <h3>What the product is</h3>
+  <p class="lead">Skill Passport is an AI interviewer that runs in a web browser. A candidate opens a link and the AI greets them, asks its questions out loud and listens to the spoken answers. It then writes a scored report on how ready the person is for work.</p>
+  <p>The candidate needs no app and no account, and doesn't have to type. A phone or laptop with a microphone and camera is enough. The interview happens in the language they choose, and the report is in English as well as their language.</p>
+
+  <h3>The problem it solves</h3>
+  <ul>
+    <li><strong>Interviews by people don't scale.</strong> Trainers can't personally interview hundreds of learners across many centres, and two trainers rarely mark the same way.</li>
+    <li><strong>English is a barrier.</strong> Many capable freshers end up judged on their English rather than their skills.</li>
+    <li><strong>Freshers have no work history.</strong> Instead of past jobs, Skill Passport asks about everyday life they have already lived, like home, family, travel and festivals.</li>
+    <li><strong>Soft skills are hard to evidence.</strong> Each skill gets a score backed by the candidate's own words.</li>
+  </ul>
+
+  <h3>Target users</h3>
+  <ul>
+    <li><strong>Candidates:</strong> freshers on Path Saathi training courses, for example Industrial Electrician.</li>
+    <li><strong>Training and placement staff</strong>, who create interviews and review results.</li>
+    <li><strong>The Path Saathi platform</strong>, which sends students to the interview and receives their results automatically.</li>
+  </ul>
+
+  <section class="flow">
+    <h2><span class="num">2</span> Key Objectives &amp; Value</h2>
+
+    <h3>Why it matters</h3>
+    <ul>
+      <li><strong>The same yardstick for everyone:</strong> every candidate is assessed on the same 11 skills against the same scoring guide.</li>
+      <li><strong>Fair to freshers:</strong> short answers, nervousness and mixed languages aren't penalised. A sensible "I would do this…" scores well even without work experience.</li>
+      <li><strong>Their language, their pace:</strong> questions are spoken in the candidate's language, can be repeated on request, and the interviewer gently checks in if they go quiet.</li>
+      <li><strong>Scale with no extra staff or hand-offs:</strong> interviews run on their own at any time, and results flow back to Path Saathi automatically.</li>
+    </ul>
+
+    <h3>What success looks like <span class="confirm">targets TO CONFIRM</span></h3>
+    <p class="muted">No targets are written down in the project. These measures are suggested and need agreeing with the client.</p>
+    <ul>
+      <li><strong>AI scores match trainer judgement.</strong> An early comparison with trainers (Nashik) found the AI marking lower, and scoring was adjusted. The acceptable gap still needs agreeing.</li>
+      <li><strong>High completion:</strong> most candidates who start an interview finish it without help.</li>
+      <li><strong>Every finished interview reaches Path Saathi</strong> with no manual resending.</li>
+      <li><strong>Cost per interview stays within budget.</strong> <span class="confirm">budget TO CONFIRM</span></li>
+    </ul>
+  </section>
+</section>
+
+<!-- ============================== 3. USER ROLES ============================== -->
+<section class="flow together">
+  <h2><span class="num">3</span> User Roles</h2>
+  <p>There are four kinds of user. Only staff have accounts. Candidates come in through a link.</p>
+
+  <div class="roles">
+    <div class="role">
+      <h3>Candidate</h3>
+      <div class="who">A fresher being assessed. Needs no account.</div>
+      <ul>
+        <li>Opens their link, confirms their details and picks a language</li>
+        <li>Tests microphone and camera, and agrees to be recorded</li>
+        <li>Takes the spoken interview, and can ask for any question to be repeated</li>
+        <li>Can take up to 3 attempts, 15 minutes apart</li>
+        <li>Sees a "submitted, thank you" page. On purpose, they do <strong>not</strong> see their scores.</li>
+      </ul>
+    </div>
+
+    <div class="role">
+      <h3>Admin (staff)</h3>
+      <div class="who">Training or placement staff, signing in with email and password. <span class="confirm">TO CONFIRM who holds accounts</span></div>
+      <ul>
+        <li>Creates an interview in one click and shares its link</li>
+        <li>Opens or closes a link to new candidates</li>
+        <li>Follows each candidate's progress</li>
+        <li>Reads reports, plays recordings, compares attempts and downloads PDFs</li>
+        <li>Re-sends a result to Path Saathi or regenerates a report</li>
+      </ul>
+    </div>
+
+    <div class="role">
+      <h3>Path Saathi platform</h3>
+      <div class="who">An automated system connection, not a person.</div>
+      <ul>
+        <li>Asks Skill Passport for a personal link for each student</li>
+        <li>Shows the link with the student's details already filled in</li>
+        <li>Receives the full result automatically when the student finishes</li>
+        <li>Can also fetch a result, or its PDF, on request</li>
+      </ul>
+    </div>
+
+    <div class="role">
+      <h3>Project team (internal)</h3>
+      <div class="who">ThreePoint0 Labs. These tools appear only on the team's development copy, never to clients.</div>
+      <ul>
+        <li>Sees the AI cost of each interview</li>
+        <li>Re-scores all candidates after a scoring change</li>
+        <li>Compares a candidate's score history and exports it as a PDF</li>
+        <li>Deletes test interviews</li>
+      </ul>
+    </div>
+  </div>
+
+</section>
+
+<!-- ============================== 4. CORE FEATURES ============================== -->
+<section>
+  <h2><span class="num">4</span> Core Features</h2>
+
+  <div class="features">
+    <div class="feature">
+      <h3><span class="tag">01</span>One-click interview links</h3>
+      <p>"Create interview" gives a shareable link with nothing to configure. Closing a link stops new candidates and keeps existing results.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">02</span>Pre-filled start for Path Saathi</h3>
+      <p>Path Saathi students find their name, course and contact details already filled in. Their details travel in an encrypted link.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">03</span>Device check and consent</h3>
+      <p>Microphone test, camera preview and a consent box before starting, so problems appear here and not mid-interview.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">04</span>Spoken AI interviewer</h3>
+      <p>A natural voice reads each question while the text shows on screen. The candidate just talks, and their words are written down live.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">05</span>A gentle warm-up</h3>
+      <p>Easy openers come first: an introduction, hobbies and where they live. They settle nerves and help pick relatable situations later.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">06</span>11 workplace skills</h3>
+      <p>Work Readiness, Reliability, Responsibility, Following Instructions, Attention to Detail, Communication, Teamwork, Problem Solving, Adaptability, Initiative and Customer Orientation.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">07</span>Questions that fit the person</h3>
+      <p>Everyday situations, not invented office scenes. Questions get gentler if answers are unsure. The customer question uses the candidate's own trade.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">08</span>Feels like a conversation</h3>
+      <p>"Repeat" replays a question instantly. After an answer the interviewer asks "anything to add?" and counts down 7 seconds. It checks in after silence and never cuts anyone off.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">09</span>Fair, explainable scoring</h3>
+      <p>Scored 0–10 per skill on relevance and reasoning, not length. A strong answer can lift other skills it shows. Calibrated after the comparison with trainers.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">10</span>Bilingual reports and PDF</h3>
+      <p>Overall and per-skill scores, a summary, strengths, improvements and every question and answer. In English plus the candidate's language, downloadable as a PDF.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">11</span>Fair retakes and resume</h3>
+      <p>Up to 3 attempts, 15 minutes apart, never repeating earlier questions. An interrupted interview picks up where it stopped.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">12</span>Integrity safeguards</h3>
+      <p>Camera and voice are recorded privately, leaving the tab is flagged and copying text is discouraged. No website can block screenshots.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">13</span>Path Saathi connection</h3>
+      <p>Results go to Path Saathi as soon as a student finishes, with automatic retries. Staff can re-send any that failed.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="tag">14</span>Staff dashboard and reports</h3>
+      <p>Totals for interviews, candidates, completions and average score, plus one list of every candidate, searchable by name.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== 5. WORKFLOW ============================== -->
+<section>
+  <h2><span class="num">5</span> Project Workflow &amp; User Journey</h2>
+  <p>Staff (or Path Saathi) set up and share an interview, and candidates take it. Both meet at the finished report.</p>
+
+  <div class="diagram">
+    <div class="flow-row">
+      <div class="box hl"><span class="n">1</span><b>Get the link</b>From Path Saathi or staff</div>
+      <div class="arrow">→</div>
+      <div class="box"><span class="n">2</span><b>Start form</b>Name, course, language</div>
+      <div class="arrow">→</div>
+      <div class="box"><span class="n">3</span><b>Device check</b>Mic, camera, consent</div>
+      <div class="arrow">→</div>
+      <div class="box"><span class="n">4</span><b>Warm-up</b>Intro, hobbies, home</div>
+    </div>
+    <div class="turn-note">continues ↓</div>
+    <div class="flow-row">
+      <div class="box"><span class="n">5</span><b>Skill questions</b>11 skills, spoken</div>
+      <div class="arrow">→</div>
+      <div class="box"><span class="n">6</span><b>Finish</b>Thank you, upload</div>
+      <div class="arrow">→</div>
+      <div class="box"><span class="n">7</span><b>Report built</b>Scored in the background</div>
+      <div class="arrow">→</div>
+      <div class="box hl"><span class="n">8</span><b>Results shared</b>Staff and Path Saathi</div>
+    </div>
+    <p class="caption">Candidate journey, from receiving a link to the result reaching staff and Path Saathi.</p>
+  </div>
+
+  <h3>The candidate, step by step</h3>
+  <ul>
+    <li><strong>Start form:</strong> confirm name, course and contact details, and pick English, Hindi or Marathi.</li>
+    <li><strong>Device check:</strong> read the instructions, test the mic, see the camera and give consent. The first question is prepared meanwhile.</li>
+    <li><strong>Warm-up:</strong> a greeting, a language check, then an introduction, a hobby and where they live.</li>
+    <li><strong>Skill questions:</strong> one spoken question per skill with an occasional follow-up, each following the loop below.</li>
+    <li><strong>Finish:</strong> a thank-you while the last recording uploads. The report is built in the background and sent on.</li>
+  </ul>
+
+  <div class="diagram keep">
+    <div class="loop">
+      <span class="pill hl">Question spoken</span><span class="to">→</span>
+      <span class="pill">They answer</span><span class="to">→</span>
+      <span class="pill">"Anything to add?"</span><span class="to">→</span>
+      <span class="pill">7-sec countdown</span><span class="to">→</span>
+      <span class="pill hl">Next question</span>
+    </div>
+    <p class="caption">One question. After a short pause the interviewer asks if they want to add anything. Speaking again stops the countdown. "Repeat" replays the question. Next moves on straight away. Exact timings are in section 6.</p>
+  </div>
+
+  <h3>Staff, step by step</h3>
+  <ul>
+    <li><strong>Sign in</strong>, click <em>Create interview</em> and share the link.</li>
+    <li><strong>Watch candidates arrive.</strong> Each card shows in progress, finished or awaiting score.</li>
+    <li><strong>Review reports,</strong> play recordings, compare attempts and download PDFs.</li>
+    <li><strong>Close the link</strong> when the drive is over. Results stay available.</li>
+  </ul>
+</section>
+
+<!-- ============================== 6. INTERVIEW RULES ============================== -->
+<section>
+  <h2><span class="num">6</span> How the Interview Works: The Exact Rules</h2>
+  <p>This section answers three questions: what is asked and in what order, how the AI decides each question, and exactly when the interview moves on.</p>
+
+  <h3>6.1 The order of the interview</h3>
+  <p>Every candidate goes through the same order. Only the wording of the questions changes from person to person.</p>
+  <table class="three"><colgroup><col class="a"><col class="b"><col class="c"></colgroup>
+    <thead><tr><th>Part</th><th>What is asked</th><th>How the question is chosen</th></tr></thead>
+    <tbody>
+      <tr><td class="mod">Warm-up (3 parts, not scored)</td><td>1. "Hello, and welcome! Please tell me your name and a little about yourself."<br>2. "What do you enjoy doing? Any hobbies or interests?"<br>3. Where they live.</td><td>Fixed wording. Used only to pick situations the candidate can relate to later.</td></tr>
+      <tr><td class="mod">Question 1: Work Readiness</td><td>For example "Why do you want a job?" or "Are you ready to move to another city for a job?"</td><td>Random pick from a fixed bank of 11, never AI-written. A retake gets one they haven't had.</td></tr>
+      <tr><td class="mod">Questions 2–10</td><td>Reliability, Responsibility, Following Instructions, Attention to Detail, Communication, Teamwork, Problem Solving, Adaptability, Initiative. One question each, in this order.</td><td>The AI writes a fresh everyday-life question, modelled on 4 sample questions per skill, e.g. "How do you make sure you reach places on time?"</td></tr>
+      <tr><td class="mod">Question 11: Customer Orientation</td><td>Dealing with an unhappy or confused customer.</td><td>The one question set in the candidate's own course or trade, e.g. a customer situation from electrical work.</td></tr>
+      <tr><td class="mod">Follow-ups (2 to 3 per interview)</td><td>One extra question that digs deeper into the same skill.</td><td>Written by the AI from what the candidate just said. See 6.3 for when they happen.</td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="margin-top:0.25cm">In total, a candidate hears the 3-part warm-up, 11 skill questions and 2–3 follow-ups.</p>
+
+  <h3>6.2 How the AI decides what to ask</h3>
+  <ul>
+    <li><strong>Everyday life, never an invented job:</strong> home, family, travel, shopping, festivals, helping friends. "At your job…" or "your manager…" is not allowed.</li>
+    <li><strong>Built on the warm-up:</strong> situations lean on the hobbies and places the candidate mentioned. It avoids ones they have no link to, such as cooking for someone who never mentioned cooking.</li>
+    <li><strong>Adjusts to how it's going:</strong> after a couple of very short or "I don't know" answers, the next question is simpler and starts with reassurance. If answers are fluent, it keeps a brisk pace.</li>
+    <li><strong>Easy to follow by ear:</strong> one question at a time, under 30 words. It uses the candidate's name now and then and may refer back to an earlier answer.</li>
+    <li><strong>Never repeats:</strong> not within an interview, and on a retake the AI must choose a different situation from every earlier attempt, not just reword an old question.</li>
+    <li><strong>Off-limits:</strong> age, gender, religion, caste, nationality, marriage, family status, disability. It never hints that someone is hired or rejected.</li>
+    <li><strong>No waiting:</strong> the next question is prepared while the candidate is still answering.</li>
+  </ul>
+
+  <h3>6.3 When a follow-up question is asked</h3>
+  <ul>
+    <li><strong>A short answer:</strong> if the answer is 6 words or fewer, the AI checks whether a follow-up would help, and asks one if so. A substantive answer goes straight to the next question.</li>
+    <li><strong>"That doesn't apply to me":</strong> if the candidate says the situation doesn't fit them ("I don't cook"), the follow-up asks about the same skill in a situation they do relate to. They are not marked down for it.</li>
+    <li><strong>A minimum of 2:</strong> most freshers give full answers, so near the end the AI is made to ask follow-ups until at least 2 have been asked.</li>
+    <li><strong>Limits:</strong> at most 3 follow-ups per interview and never more than one on the same question. An empty or blank answer never gets one.</li>
+  </ul>
+
+  <h3>6.4 When it moves to the next question</h3>
+  <p>The interview listens all the time. It reacts to <strong>silence</strong>, but only once the candidate has <strong>actually answered</strong>, and it never interrupts someone who is still talking. The silence clock is paused while the interviewer itself is speaking.</p>
+
+  <div class="diagram keep">
+    <p class="tier-label">If the candidate has answered</p>
+    <div class="flow-row">
+      <div class="box hl"><b>Question</b></div><div class="arrow">→</div>
+      <div class="box"><b>Answer</b>3+ words</div><div class="arrow">→</div>
+      <div class="box"><b>Quiet 3 sec</b></div><div class="arrow">→</div>
+      <div class="box"><b>"Anything to add?"</b></div><div class="arrow">→</div>
+      <div class="box"><b>7-sec countdown</b></div><div class="arrow">→</div>
+      <div class="box hl"><b>Next question</b></div>
+    </div>
+    <p class="tier-label" style="margin-top:0.3cm">If the candidate has said nothing</p>
+    <div class="flow-row">
+      <div class="box hl"><b>Question</b></div><div class="arrow">→</div>
+      <div class="box"><b>Silent 8 sec</b></div><div class="arrow">→</div>
+      <div class="box"><b>"Did you understand?"</b>check-in</div><div class="arrow">→</div>
+      <div class="box"><b>Waits</b>no countdown</div><div class="arrow">→</div>
+      <div class="box"><b>Silent ~1 min</b></div><div class="arrow">→</div>
+      <div class="box hl"><b>Skipped</b>not scored</div>
+    </div>
+    <p class="caption">The two paths for every question. As soon as the candidate starts speaking, any countdown stops.</p>
+  </div>
+
+  <h3>Every situation, and what the interviewer does</h3>
+  <table class="sit"><colgroup><col class="a"><col class="b"></colgroup>
+    <thead><tr><th>What the candidate does</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td class="mod">Answers, then goes quiet for 3 seconds</td><td>The interviewer asks <em>"Would you like to add anything?"</em> When that finishes, a 7-second countdown appears on screen. At zero, the answer is saved and the next question plays.</td></tr>
+      <tr><td class="mod">Starts speaking again during the countdown</td><td>The countdown stops at once and the new words join the same answer. The next 3-second pause moves on straight away, without asking again.</td></tr>
+      <tr><td class="mod">Says nothing for 8 seconds</td><td>The interviewer asks <em>"Did you understand the question, or should I repeat it?"</em> No countdown follows. It just waits, because a countdown here feels like being hurried.</td></tr>
+      <tr><td class="mod">Stays silent for about a minute</td><td>The question is skipped quietly and is not scored. This is a safety net for someone who has walked away from the screen.</td></tr>
+      <tr><td class="mod">Says "repeat", "say again", "dubara boliye", "phir se boliye"…</td><td>The question is replayed straight away, word for word. This works in English, Hindi and Marathi and is not counted against them.</td></tr>
+      <tr><td class="mod">Says "I don't know", "I didn't understand" or "skip"</td><td>The first time, the interviewer gives a short spoken encouragement or explanation. The question stays the same, and the AI never gives away the answer. The second time on the same question, it is skipped and not scored.</td></tr>
+      <tr><td class="mod">Asks "what should I say?"</td><td>The AI never gives the answer or a hint. The reply is treated as not answering the question.</td></tr>
+      <tr><td class="mod">Presses the Next button</td><td>Moves on at once. Whatever they said is saved as the answer. If they said nothing, the question is skipped.</td></tr>
+      <tr><td class="mod">Talks for 2 minutes without stopping</td><td>The answer is saved automatically at the 2-minute limit and the interview moves on.</td></tr>
+      <tr><td class="mod">Says only 1–2 words, like "okay so"</td><td>Not yet treated as an answer, because background noise often produces short phantom words like these. They get the 8-second check-in instead of being moved on.</td></tr>
+      <tr><td class="mod">During the warm-up</td><td>Each of the 3 parts works the same way, including "anything to add?" with the countdown. If they say nothing on a part, the interviewer checks in after 8 seconds and then moves to the next part about 10 seconds later.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================== 7. RATING ============================== -->
+<section>
+  <h2><span class="num">7</span> How the Rating Works</h2>
+  <p>Every skill is rated <strong>out of 10</strong>. The AI judges each answer, but the final numbers come from <strong>fixed arithmetic</strong>, the same for every candidate, so they are consistent and can be explained.</p>
+
+  <h3>7.1 Step by step</h3>
+  <div class="steps">
+    <div class="step"><span class="sn">1</span><div><strong>The answer is written down</strong> word for word, in the candidate's own language.</div></div>
+    <div class="step"><span class="sn">2</span><div><strong>The AI scores it 0–10 on the skill the question was about,</strong> using the scoring guide in 7.2. It also reads the candidate's earlier answers, so one nervous reply isn't judged on its own.</div></div>
+    <div class="step"><span class="sn">3</span><div><strong>A fixed +1 is added</strong> to every score of 5 or above (maximum 10). Below 5 is left alone, so a non-answer is never lifted to a pass. Added after the client found the AI harsher than trainers.</div></div>
+    <div class="step"><span class="sn">4</span><div><strong>Other skills shown in the answer are noted.</strong> If an answer about Responsibility also clearly shows good Communication, the AI records that too, with its own score.</div></div>
+    <div class="step"><span class="sn">5</span><div><strong>Each skill gets one score:</strong> the average of its main question and any follow-up, plus up to +1 for being shown in other answers (see 7.3). Rounded to a whole number, maximum 10.</div></div>
+    <div class="step"><span class="sn">6</span><div><strong>The overall score</strong> is the average of all the skills that were assessed, shown to one decimal place, such as 7.3 / 10. Skipped skills are left out, not counted as zero.</div></div>
+    <div class="step"><span class="sn">7</span><div><strong>The written report:</strong> the AI reads all the answers and writes a summary, strengths and areas to improve, but sets no numbers. It is also translated into the candidate's language.</div></div>
+  </div>
+
+  <h3>7.2 The scoring guide the AI follows</h3>
+  <table class="bands"><colgroup><col class="a"><col class="b"><col class="c"></colgroup>
+    <thead><tr><th>AI score</th><th>What the answer looks like</th><th>Shown on report (after +1)</th></tr></thead>
+    <tbody>
+      <tr><td class="mod">9–10</td><td>Clear, relevant and sensible, <strong>plus</strong> a specific real example with what they did and what happened</td><td>10</td></tr>
+      <tr><td class="mod">7–9</td><td>Clear, relevant answer with sound basic reasoning, even if brief, hypothetical or without an example. <strong>A clear answer sits around 7.</strong></td><td>8–10</td></tr>
+      <tr><td class="mod">5–6</td><td>Partly answers it, or on the right track but misses part of what was asked</td><td>6–7</td></tr>
+      <tr><td class="mod">3–4</td><td>Barely engages with the question, or shows no real reasoning</td><td>3–4 (no change)</td></tr>
+      <tr><td class="mod">0–2</td><td>Doesn't answer the question, off-topic, or refuses</td><td>0–2 (no change)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="two-col together" style="margin-top:0.35cm">
+    <div>
+      <h3>Never marked down for</h3>
+      <ul>
+        <li>A short answer that does answer the question</li>
+        <li>"I would do this…" instead of a real past example</li>
+        <li>Ums, pauses, repeating themselves or mixing languages</li>
+        <li>"That situation doesn't apply to me"</li>
+        <li>Not having any work experience</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Scored low</h3>
+      <ul>
+        <li>Not answering what was asked</li>
+        <li>Going off-topic</li>
+        <li>Refusing to answer</li>
+        <li>Asking the AI for the answer</li>
+        <li>No reasoning at all</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>7.3 Credit across skills</h3>
+  <p>People don't answer one skill at a time. A strong answer can count towards other skills too, but this can only <strong>raise</strong> a score, never lower it.</p>
+  <ul>
+    <li>A skill clearly shown in another answer, scoring <strong>6 or more</strong> there, adds <strong>+0.5</strong>. The most it can add is <strong>+1</strong>.</li>
+    <li>If a skill was never asked (for example the interview ended early) but was clearly shown in <strong>2 or more</strong> other answers, it is scored from those. With only one sighting it shows as "not assessed".</li>
+    <li>Saying "I am responsible" is a claim and doesn't count. Describing what they actually did does.</li>
+  </ul>
+
+  <h3>7.4 A worked example</h3>
+  <table class="example"><colgroup><col class="a"><col class="b"><col class="c"></colgroup>
+    <thead><tr><th>Skill</th><th>What happened</th><th>Skill score</th></tr></thead>
+    <tbody>
+      <tr><td class="mod">Reliability</td><td>AI scores the answer 7, +1 → 8</td><td><strong>8</strong></td></tr>
+      <tr><td class="mod">Communication</td><td>Main answer 6 → 7. Follow-up 8 → 9. Average of 7 and 9</td><td><strong>8</strong></td></tr>
+      <tr><td class="mod">Teamwork</td><td>AI scores 4. Below 5, so no +1</td><td><strong>4</strong></td></tr>
+      <tr><td class="mod">Responsibility</td><td>Main answer 7 → 8, also clearly shown in two other answers (+0.5 each)</td><td><strong>9</strong></td></tr>
+      <tr><td class="mod">Initiative</td><td>Skipped, and not shown anywhere else</td><td>Not assessed</td></tr>
+      <tr><td class="mod">Overall</td><td>Average of 8, 8, 4 and 9 = 7.25. Initiative is left out, not counted as 0</td><td><strong>7.3 / 10</strong></td></tr>
+    </tbody>
+  </table>
+
+  <p style="margin-top:0.3cm"><strong>Not scored:</strong> the warm-up, "repeat" requests and skipped questions. <strong>Re-scoring:</strong> if the scoring rules improve, past interviews can be re-graded from the stored answers. A re-score can only raise a score, and every earlier version is kept.</p>
+</section>
+
+
+<!-- ============================== 6. HOW IT WORKS ============================== -->
+<section>
+  <h2><span class="num">8</span> How the System Works</h2>
+
+  <div class="diagram arch">
+    <p class="tier-label">Who uses it</p>
+    <div class="row three">
+      <div class="box"><b>Candidate's browser</b>Phone or laptop with mic and camera</div>
+      <div class="box"><b>Staff browser</b>Admin area</div>
+      <div class="box"><b>Path Saathi platform</b>Asks for links, receives results</div>
+    </div>
+    <div class="down">↕</div>
+    <div class="core">
+      <b>Skill Passport web application</b>
+      The "front desk and coordinator": shows the screens, runs the interview, keeps everything in order
+      <div class="parts"><span>Interview screens</span><span>Admin area</span><span>Partner connection</span><span>Live speech relay</span></div>
+    </div>
+    <div class="down">↕</div>
+    <p class="tier-label">Services behind the scenes</p>
+    <div class="row four">
+      <div class="box hl"><b>AI services</b>Sarvam for voice, listening, writing and scoring. OpenAI as backup.</div>
+      <div class="box"><b>Database</b>Interviews, candidates, answers, scores</div>
+      <div class="box"><b>Private file storage</b>Recordings (Cloudflare R2)</div>
+      <div class="box"><b>PDF maker</b>Turns reports into PDFs</div>
+    </div>
+    <p class="caption">High-level picture. Arrows show which parts talk to each other.</p>
+  </div>
+
+  <h3>The parts, in plain English</h3>
+  <ul>
+    <li><strong>The website and coordinator (server):</strong> the screens people use in their browser, with nothing to install. Behind them, the server runs each interview step by step, enforces the retake rules and controls who can see what.</li>
+    <li><strong>The ears and voice (Sarvam):</strong> an Indian AI provider. It speaks the questions, writes down answers live, writes questions and scores answers.</li>
+    <li><strong>The backup brain (OpenAI):</strong> takes over question writing and scoring automatically if Sarvam is slow or failing.</li>
+    <li><strong>The memory (database):</strong> interviews, candidates, every question and answer, scores and report history.</li>
+    <li><strong>The archive (private storage):</strong> audio and video recordings. Staff playback uses links that expire after 5 minutes.</li>
+    <li><strong>The printer (PDF maker):</strong> "prints" the real report page, so the PDF always matches the screen.</li>
+  </ul>
+
+  <div class="callout">
+    <p><strong>Hosting:</strong> test site <em>devskillpassport.threepointolabs.com</em>. Production address, hosting provider and support arrangements <span class="confirm">TO CONFIRM</span></p>
+  </div>
+</section>
+
+<!-- ============================== 7. MODULES ============================== -->
+<section>
+  <h2><span class="num">9</span> Modules Summary</h2>
+  <p>As of 13 October 2026. <em>In progress</em> means built but not yet released or field-tested. Some modules marked <em>Done</em> also have improvements waiting for release (see section 10).</p>
+
+  <table class="mods"><colgroup><col class="a"><col class="b"><col class="c"></colgroup>
+    <thead><tr><th>Module</th><th>Purpose</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td class="mod">Staff sign-in</td><td>Secure access to the admin area, and password change.</td><td class="st"><span class="status s-done">Done</span></td></tr>
+      <tr><td class="mod">Interview links</td><td>Create, share, open and close interview links.</td><td class="st"><span class="status s-done">Done</span></td></tr>
+      <tr><td class="mod">Candidate start &amp; device check</td><td>Details, language choice, mic and camera test, consent.</td><td class="st"><span class="status s-done">Done</span></td></tr>
+      <tr><td class="mod">Spoken AI interview</td><td>Speaks questions, listens live, records answers.</td><td class="st"><span class="status s-done">Done</span></td></tr>
+      <tr><td class="mod">Conversation helpers</td><td>Instant repeat, silence check-in, "anything to add?" countdown.</td><td class="st"><span class="status s-prog">In progress</span></td></tr>
+      <tr><td class="mod">Question writing</td><td>Personalised everyday questions, plus a fixed bank for Work Readiness.</td><td class="st"><span class="status s-done">Done</span></td></tr>
+      <tr><td class="mod">Retakes &amp; resume</td><td>3 attempts, 15-minute gap, no repeated questions, resume.</td><td class="st"><span class="status s-done">Done</span></td></tr>
+      <tr><td class="mod">Scoring &amp; reports</td><td>0–10 per skill, overall score, summary, strengths, improvements.</td><td class="st"><span class="status s-done">Done</span></td></tr>
+      <tr><td class="mod">Bilingual report &amp; PDF</td><td>English plus the candidate's language, with numbered questions.</td><td class="st"><span class="status s-prog">In progress</span></td></tr>
+      <tr><td class="mod">Integrity safeguards</td><td>Recording, tab-leave tracking, copy deterrents.</td><td class="st"><span class="status s-done">Done</span></td></tr>
+      <tr><td class="mod">Staff dashboard &amp; reports</td><td>Totals, per-interview view, all-candidates list, attempt comparison.</td><td class="st"><span class="status s-done">Done</span></td></tr>
+      <tr><td class="mod">Path Saathi connection</td><td>Personal links in, results out, results on request, re-send. Production go-live <span class="confirm">TO CONFIRM</span></td><td class="st"><span class="status s-done">Done</span></td></tr>
+      <tr><td class="mod">Re-scoring &amp; history</td><td>Internal: re-grade after scoring changes. Scores only rise, and every version is kept.</td><td class="st"><span class="status s-prog">In progress</span></td></tr>
+      <tr><td class="mod">Cost tracking</td><td>Internal: AI cost per interview, by provider.</td><td class="st"><span class="status s-prog">In progress</span></td></tr>
+      <tr><td class="mod">Faster, more flexible interviews</td><td>Questions prepared up front, "speak slower", a simpler version on request.</td><td class="st"><span class="status s-plan">Planned</span></td></tr>
+      <tr><td class="mod">More languages</td><td>The voice services support 11 Indian languages. Each needs screen translations. <span class="confirm">TO CONFIRM</span></td><td class="st"><span class="status s-plan">Planned</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================== 8. STATUS ============================== -->
+<section>
+  <h2><span class="num">10</span> Current Status &amp; Next Steps</h2>
+
+  <div class="two-col">
+    <div>
+      <h3>Complete and in use</h3>
+      <ul>
+        <li>The full candidate journey, from link to report</li>
+        <li>Spoken interviews in English, Hindi and Marathi</li>
+        <li>Scoring on 11 skills, reports and PDFs</li>
+        <li>Staff admin area and reports page</li>
+        <li>Path Saathi connection (test site)</li>
+        <li>Retake limits, resume, integrity safeguards</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Built, waiting for release</h3>
+      <ul>
+        <li>Smoother conversation. One live test done, and the small fault it found was fixed on 13 October.</li>
+        <li>Bilingual reports and numbered PDF questions</li>
+        <li>Retakes that never repeat questions</li>
+        <li>Fairer scoring, with credit across skills</li>
+        <li>Internal re-scoring, history and cost tools</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Decisions and clean-up pending</h3>
+  <ul>
+    <li><strong>Older scores:</strong> a one-off uplift for older interviews (8→9, 9→10) is prepared but not applied. It needs sign-off.</li>
+    <li><strong>About 56 earlier interviews</strong> were hit by a now-fixed fault that reused one answer for later questions. Their scores aren't reliable. They need to be flagged, retaken or excluded.</li>
+    <li><strong>Occasional Sarvam formatting errors</strong> push some scoring onto the costlier OpenAI backup. A fix has been identified.</li>
+    <li><strong>Test and live data share one database.</strong> They should be separated before wider rollout.</li>
+  </ul>
+
+  <h3>Suggested roadmap <span class="confirm">dates TO CONFIRM</span></h3>
+  <div class="roadmap">
+    <div class="stage">
+      <div class="when">Now</div>
+      <h3>Stabilise &amp; release</h3>
+      <ul>
+        <li>One more full test, then release</li>
+        <li>Fix Sarvam formatting errors</li>
+        <li>Decide on older scores and the 56 affected interviews</li>
+      </ul>
+    </div>
+    <div class="stage">
+      <div class="when">Next</div>
+      <h3>Go live with Path Saathi</h3>
+      <ul>
+        <li>Separate test and live databases</li>
+        <li>Production address and Path Saathi result endpoint</li>
+        <li>Re-check AI scores against trainers</li>
+      </ul>
+    </div>
+    <div class="stage">
+      <div class="when">Later</div>
+      <h3>Scale &amp; enrich</h3>
+      <ul>
+        <li>Questions prepared up front</li>
+        <li>"Speak slower" and "simpler question"</li>
+        <li>More Indian languages</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== 9. RISKS ============================== -->
+<section>
+  <h2><span class="num">11</span> Risks &amp; Dependencies</h2>
+
+  <h3>External services the product depends on</h3>
+  <table class="three"><colgroup><col class="a"><col class="b"><col class="c"></colgroup>
+    <thead><tr><th>Service</th><th>Used for</th><th>If it fails</th></tr></thead>
+    <tbody>
+      <tr><td class="mod">Sarvam AI</td><td>Voice, live listening, question writing, scoring</td><td>Writing and scoring switch to OpenAI. There is no backup for voice and listening. <span class="confirm">TO CONFIRM</span></td></tr>
+      <tr><td class="mod">OpenAI</td><td>Backup writing and scoring, report translation</td><td>Reports are delayed and can be regenerated later.</td></tr>
+      <tr><td class="mod">Cloud database</td><td>All interview data</td><td>The service stops until it is back.</td></tr>
+      <tr><td class="mod">Cloudflare R2</td><td>Audio and video recordings</td><td>Recordings can't be saved or played back.</td></tr>
+      <tr><td class="mod">Path Saathi</td><td>Sending students, receiving results</td><td>Results are retried, and staff can re-send them.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Things to watch</h3>
+  <table class="three"><colgroup><col class="a"><col class="b"><col class="c"></colgroup>
+    <thead><tr><th>Risk</th><th>Why it matters</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr><td class="mod">AI vs human scores</td><td>Trainers found the AI harsher than their own marking.</td><td>Recalibrated. Keep sampling against trainers.</td></tr>
+      <tr><td class="mod">Background noise</td><td>Nearby speech can be written down as the answer.</td><td>Quiet-room guidance. Recordings kept for review.</td></tr>
+      <tr><td class="mod">Weak internet or devices</td><td>Live listening needs a steady connection.</td><td>The device check catches problems early. Interviews resume.</td></tr>
+      <tr><td class="mod">Shared test and live database</td><td>Testing touches real candidate data.</td><td>Separate them before scaling.</td></tr>
+      <tr><td class="mod">Privacy of recordings</td><td>Faces and voices of young people are stored.</td><td>Consent, private storage, expiring links. Retention and data-protection review <span class="confirm">TO CONFIRM</span></td></tr>
+      <tr><td class="mod">Integrity limits</td><td>No website can block screenshots or a second phone.</td><td>Recording and tab-leave flags act as deterrents.</td></tr>
+      <tr><td class="mod">AI running costs</td><td>Every answer is an AI call, and backup calls cost more.</td><td>Cost tracked per interview. Fix the formatting errors.</td></tr>
+      <tr><td class="mod">One shared Path Saathi link</td><td>Closing that link stops the Path Saathi connection.</td><td>Make staff aware, and monitor that link.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================== 10. GLOSSARY ============================== -->
+<section>
+  <h2><span class="num">12</span> Glossary</h2>
+  <dl class="gloss">
+    <dt>AI model</dt><dd>Software trained on large amounts of text that can write questions and judge answers.</dd>
+    <dt>API</dt><dd>A doorway that lets one system talk to another automatically, for example Path Saathi asking for a link.</dd>
+    <dt>API key</dt><dd>A secret password one system uses to prove who it is to another.</dd>
+    <dt>Attempt</dt><dd>One sitting of an interview by one candidate. A candidate can have up to 3.</dd>
+    <dt>Backup provider (fallback)</dt><dd>A second AI service used automatically when the main one fails.</dd>
+    <dt>Cloud storage</dt><dd>Files kept on secure internet servers instead of a local computer.</dd>
+    <dt>Database</dt><dd>An organised store of all the product's records.</dd>
+    <dt>Encrypted link</dt><dd>A link whose hidden contents only our server can read.</dd>
+    <dt>Interview link</dt><dd>The web address candidates open to start. It is hard to guess, so only people sent it can use it.</dd>
+    <dt>Live speech relay</dt><dd>A small helper service that passes the candidate's voice to the listening service in real time.</dd>
+    <dt>Production / staging</dt><dd>Production is the live site for real users. Staging is a copy used for testing.</dd>
+    <dt>Re-score</dt><dd>Grading stored answers again after the scoring rules change. Here, scores can only go up.</dd>
+    <dt>Scoring guide (rubric)</dt><dd>The written rules that say what a 3, a 7 or a 10 looks like.</dd>
+    <dt>Server</dt><dd>A computer on the internet that runs the application for everyone.</dd>
+    <dt>Speech-to-text</dt><dd>Turning spoken words into written text.</dd>
+    <dt>Text-to-speech</dt><dd>Turning written text into a spoken voice.</dd>
+    <dt>Transcript</dt><dd>The written record of what the candidate said.</dd>
+    <dt>Webhook</dt><dd>An automatic message one system sends another when something happens, such as "this student finished".</dd>
+  </dl>
+</section>
+
+</body>
+</html>

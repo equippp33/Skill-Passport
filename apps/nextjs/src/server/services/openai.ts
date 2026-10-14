@@ -653,8 +653,13 @@ export async function generateDoubtResponse(args: {
     instructions: [
       "You are a warm, patient interviewer. The candidate did NOT answer your",
       "question — they raised a doubt about it. Reply BRIEFLY, as words spoken",
-      `aloud, in ${args.languageName} written in that language's OWN script`,
-      "(never Latin letters). If they did not understand a particular word,",
+      // English has no other script to ask for. Telling the model "never
+      // Latin letters" for an English interview made it write the reply in
+      // Devanagari, which the voice then rejected — so no explanation was
+      // ever heard and the question was simply replayed.
+      args.languageName === "English"
+        ? "aloud, in simple everyday English. If they did not understand a particular word,"
+        : `aloud, in ${args.languageName} written in that language's OWN script (never Latin letters). If they did not understand a particular word,`,
       "explain THAT word in simple everyday terms. If they could not follow,",
       "restate the question's meaning simply. If they said nothing meaningful,",
       "gently encourage them. Always end by inviting them to answer. One or two",

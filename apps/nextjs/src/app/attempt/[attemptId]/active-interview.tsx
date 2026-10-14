@@ -35,6 +35,7 @@ import {
   POLL_TIMEOUT_MS,
   SILENCE_ADVANCE_SECONDS,
   MIN_ANSWER_WORDS,
+  ADD_PROMPT_MAX_WORDS,
   PROMPT_COUNTDOWN_SECONDS,
   OPENING_BIT_WAIT_MS,
 } from "./constants";
@@ -71,7 +72,7 @@ export function ActiveInterview({
   initialAttemptStatus,
   fillerUrls,
   checkUrl,
-  addUrl,
+  addUrls,
   openingBitUrls,
   openingBitTexts,
   m,
@@ -89,8 +90,8 @@ export function ActiveInterview({
   fillerUrls: string[];
   /** "Did you understand the question?" check-in, played after a long silence. */
   checkUrl: string;
-  /** "Would you like to add anything?" — played once per answer. */
-  addUrl: string;
+  /** "Would you like to add anything?" in several phrasings, taken in turn. */
+  addUrls: string[];
   /** The opening turn's 2nd/3rd bits (hobbies, location), played in sequence. */
   openingBitUrls: string[];
   /** On-screen text for those same bits, shown as each one is spoken. */
@@ -982,19 +983,33 @@ export function ActiveInterview({
   }, []);
 
 
-  /** Play "would you like to add anything?" (own element). */
+  /**
+   * Play "would you like to add anything?" (own element), a different
+   * phrasing each time so it never sounds like the same recording on repeat.
+   */
   const addRef = useRef<HTMLAudioElement | null>(null);
+  const addIndexRef = useRef(0);
   const playAddPrompt = useCallback(() => {
     const el = addRef.current;
-    if (!el) return false;
+    const url = addUrls[addIndexRef.current % addUrls.length];
+    if (!el || !url) return false;
+    addIndexRef.current += 1;
     try {
+      // Compare against the attribute, not `el.src`, which is absolute.
+      if (el.getAttribute("src") !== url) el.src = url;
       el.currentTime = 0;
       void el.play().catch(() => undefined);
       return true;
     } catch {
       return false;
     }
-  }, []);
+  }, [addUrls]);
+
+  // Fetch the other phrasings once up front, so switching to one later plays
+  // from the browser cache instead of waiting on the network.
+  useEffect(() => {
+    for (const url of addUrls.slice(1)) void fetch(url).catch(() => undefined);
+  }, [addUrls]);
 
   /**
    * Give the opening turn its full wait again, from now.
@@ -1123,11 +1138,8 @@ export function ActiveInterview({
        * countdown ("there are words") at the same moment — and moved on
        * without having said anything. Counting real words settles both.
        */
-      const words = getTranscriptRef
-        .current()
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean).length;
+      const transcript = getTranscriptRef.current();
+      const words = transcript.trim().split(/\s+/).filter(Boolean).length;
       const answered = words >= MIN_ANSWER_WORDS;
 
       /**
@@ -1190,6 +1202,14 @@ export function ActiveInterview({
        */
       if (!answered) return;
 
+      // "Pass" / "I don't want to answer" is a decline, not an answer with
+      // more behind it — offering to add to it makes no sense. Hand it over
+      // now, exactly as a spoken skip is.
+      if (!opening && isSkipRequest(transcript)) {
+        handleAdvanceRef.current();
+        return;
+      }
+
       if (promptedKeyRef.current === key) {
         // Second time quiet on this part: move on without saying anything.
         handleAdvanceRef.current();
@@ -1198,7 +1218,9 @@ export function ActiveInterview({
       promptedKeyRef.current = key;
       // Again, take the floor before speaking over the opening's own timer.
       clearAddTimer();
-      if (!playAddPrompt()) startCountdown();
+      // Only a short answer is asked whether there is more; a fuller one gets
+      // the countdown alone.
+      if (words > ADD_PROMPT_MAX_WORDS || !playAddPrompt()) startCountdown();
     },
     [playAddPrompt, playCheckIn, startCountdown, clearAddTimer],
   );
@@ -1623,7 +1645,7 @@ export function ActiveInterview({
       {/* "Would you like to add anything?" — once per answer. */}
       <audio
         ref={addRef}
-        src={addUrl}
+        src={addUrls[0]}
         preload="auto"
         className="hidden"
         onPlay={() => setSpeaking(true)}

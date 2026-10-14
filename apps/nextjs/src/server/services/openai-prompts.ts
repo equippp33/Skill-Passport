@@ -197,9 +197,9 @@ export function interviewerRules(ctx: InterviewContext): string {
     `  small everyday moment, NOT a crisis, conflict, failure or test. Frame it`,
     `  invitingly ("how do you…", "what would you do if…"). If a question could`,
     `  make a nervous fresher feel judged or cornered, soften it.`,
-    `- The ONE exception is the Customer Orientation skill: that question is`,
-    `  framed from the candidate's course/field (see the per-question guidance).`,
-    `  Every other skill stays in everyday life.`,
+    `- The exceptions: the Customer Orientation question, and the one question`,
+    `  whose guidance says so, are framed from the candidate's course/field`,
+    `  (see the per-question guidance). Every other skill stays in everyday life.`,
     ``,
     `## How to ask`,
     `- Ask exactly ONE question at a time, under 30 words. ONE question mark.`,
@@ -320,8 +320,9 @@ export function contextBlock(ctx: InterviewContext): string {
     ...(ctx.candidateCourse
       ? [
           `The candidate's course / field is: ${ctx.candidateCourse}. Use it ONLY`,
-          `for the Customer Orientation question; keep every other question in`,
-          `ordinary everyday life, not their field of study.`,
+          `where a question's own instructions say to (the Customer Orientation`,
+          `question and one question in the middle); keep every other question`,
+          `in ordinary everyday life, not their field of study.`,
         ]
       : []),
     ...(ctx.priorAttempts
@@ -338,13 +339,13 @@ export function contextBlock(ctx: InterviewContext): string {
       ? [
           ``,
           `The candidate introduced themselves below — a bit about themselves,`,
-          `their interests / hobbies, and where they live. GROUND your scenarios`,
-          `in it: prefer situations drawn from the hobbies, interests and everyday`,
-          `life they actually mentioned, so every question is something they can`,
-          `genuinely relate to. AVOID a scenario they have no connection to — e.g.`,
+          `their interests / hobbies, and where they live. Use it ONLY where a`,
+          `question's own instructions say to; most questions should stay in`,
+          `general everyday life. Never build question after question around the`,
+          `same hobby or topic. AVOID a scenario they have no connection to — e.g.`,
           `do not build a cooking situation for someone who never mentioned`,
-          `cooking; use something they DID mention instead. Do NOT score it, quote`,
-          `it back, or turn it into a workplace question:`,
+          `cooking. Do NOT score it, quote it back, or turn it into a workplace`,
+          `question:`,
           untrusted("INTRODUCTION", ctx.candidateIntroduction),
         ]
       : [
@@ -397,8 +398,61 @@ export function questionStyleBlock(
     `examples for this skill. Do NOT copy one word-for-word, and NEVER turn it`,
     `into a workplace / "at your job" scenario — keep it in ordinary life:`,
     ...skill.exampleQuestions.map((q) => `- ${q}`),
+    ``,
+    `## Where to draw THIS question's situation from`,
+    SCENARIO_SOURCE_TEXT[scenarioSourceFor(skill)],
+    `Whatever the source, do NOT reuse an activity, hobby or topic that any`,
+    `question already asked was built on — pick a different one.`,
   ].join("\n");
 }
+
+/**
+ * Where each AI-written question takes its situation from.
+ *
+ * Without this, every question leaned on the introduction, so a candidate who
+ * mentioned cricket was asked about cricket for nine questions running
+ * (client feedback). A fixed rotation keeps the variety deterministic: two
+ * questions from their hobbies, two from what they said about themselves,
+ * one from their course in the middle (Customer Orientation at the end is the
+ * other), the rest general everyday life. Spread out so no two in a row share
+ * one.
+ */
+type ScenarioSource = "hobbies" | "about_them" | "course" | "everyday";
+
+const SCENARIO_SOURCE_BY_SKILL: Partial<Record<WorkSkill["id"], ScenarioSource>> = {
+  reliability: "hobbies",
+  responsibility: "about_them",
+  communication: "hobbies",
+  teamwork: "course",
+  problem_solving: "about_them",
+};
+
+function scenarioSourceFor(skill: WorkSkill): ScenarioSource {
+  return SCENARIO_SOURCE_BY_SKILL[skill.id] ?? "everyday";
+}
+
+const SCENARIO_SOURCE_TEXT: Record<ScenarioSource, string> = {
+  hobbies:
+    `Base it on one of the HOBBIES or INTERESTS the candidate mentioned in` +
+    ` their introduction. If they mentioned more than one and an earlier` +
+    ` question already used one, use a DIFFERENT one this time. If they` +
+    ` mentioned none, use something else they said about themselves; if there` +
+    ` is nothing, use general everyday life.`,
+  course:
+    `Base it on the candidate's COURSE / FIELD OF STUDY: their classes,` +
+    ` practicals, training or project work, or a simple situation from that` +
+    ` line of work they can picture. They are a fresher — never assume they` +
+    ` have done the job. If no course is given, use general everyday life.`,
+  about_them:
+    `Base it on what the candidate said ABOUT THEMSELVES in their` +
+    ` introduction — their studies, family, daily routine or where they live —` +
+    ` NOT their hobbies. If they said nothing like that, use general everyday` +
+    ` life instead.`,
+  everyday:
+    `Use GENERAL EVERYDAY LIFE that anyone has lived — home, family, daily` +
+    ` routine, travel, shopping, a festival. Do NOT use the candidate's` +
+    ` hobbies or introduction for this one.`,
+};
 
 /** The full framework, so the model knows what it must not stray into. */
 export function frameworkBlock(): string {

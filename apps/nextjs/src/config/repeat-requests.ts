@@ -129,7 +129,10 @@ const PHRASES: string[] = [
 function normalise(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[.,!?;:'"“”‘’()\-—]/g, " ")
+    // Apostrophes are dropped, not spaced: "don't" must become "dont" to
+    // match the phrase lists, not "don t".
+    .replace(/['‘’]/g, "")
+    .replace(/[.,!?;:"“”()\-—।]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -222,6 +225,62 @@ const STRONG_SKIP_PHRASES: string[] = [
   "i have no answer",
   "i dont have an answer",
   "i dont have any answer",
+  "dont want to say",
+  "dont want to tell",
+  "jawab nahi dena",
+  "जवाब नहीं देना",
+  "नहीं बताना",
+  "उत्तर द्यायचं नाही",
+  "सांगायचं नाही",
+];
+
+/**
+ * "I don't know" — giving up on the question, as opposed to asking about it.
+ *
+ * Server-side only: it decides whether a doubt counts towards skipping. Kept
+ * out of the skip lists on purpose, because those also advance the browser
+ * immediately, and "I don't know exactly, but I would…" is the start of an
+ * answer. Short utterances only, for the same reason.
+ */
+const GIVE_UP_PHRASES: string[] = [
+  "i dont know",
+  "dont know",
+  "no idea",
+  "i have no idea",
+  "pata nahi",
+  "mujhe nahi pata",
+  "maloom nahi",
+  "mahit nahi",
+  "nahi mahit",
+  "पता नहीं",
+  "नहीं पता",
+  "मालूम नहीं",
+  "माहित नाही",
+  "ठाऊक नाही",
+];
+
+export function isGiveUpRequest(transcript: string): boolean {
+  const text = normalise(transcript);
+  if (!text || text.split(" ").length > MAX_WORDS) return false;
+  return GIVE_UP_PHRASES.some((p) => text.includes(normalise(p)));
+}
+
+/**
+ * "Pass" — only when it is the WHOLE utterance.
+ *
+ * Too common a word to match inside a sentence: "I want to pass my exam" is an
+ * answer, not a skip.
+ */
+const EXACT_SKIP_PHRASES: string[] = [
+  "pass",
+  "i pass",
+  "pass it",
+  "pass this",
+  "pass this one",
+  "pass please",
+  "पास",
+  "पास करो",
+  "पास कीजिए",
 ];
 
 export function isSkipRequest(transcript: string): boolean {
@@ -230,6 +289,7 @@ export function isSkipRequest(transcript: string): boolean {
 
   // Strong phrases mean skip at any length.
   if (STRONG_SKIP_PHRASES.some((p) => text.includes(normalise(p)))) return true;
+  if (EXACT_SKIP_PHRASES.some((p) => text === normalise(p))) return true;
 
   const words = text.split(" ");
   if (words.length > MAX_WORDS) return false;

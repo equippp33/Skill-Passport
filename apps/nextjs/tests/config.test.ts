@@ -13,7 +13,7 @@ import {
   PROBE_SPOKEN_TEXT,
 } from "~/config/greeting";
 import { MESSAGES, t } from "~/config/messages";
-import { isRepeatRequest } from "~/config/repeat-requests";
+import { isRepeatRequest, isSkipRequest } from "~/config/repeat-requests";
 import { en } from "~/config/messages/en";
 import {
   WORK_SKILLS,
@@ -177,6 +177,23 @@ describe("repeat requests", () => {
     "does not fire on %s",
     (text) => {
       expect(isRepeatRequest(text)).toBe(false);
+    },
+  );
+});
+
+describe("skip requests", () => {
+  it.each(["Pass", "pass.", "I pass", "पास", "पास।", "I don't want to answer", "मुझे जवाब नहीं देना"])(
+    "recognises %s",
+    (text) => {
+      expect(isSkipRequest(text)).toBe(true);
+    },
+  );
+
+  // "Pass" counts only as the whole utterance, never inside an answer.
+  it.each(["I want to pass my exam", "I pass the ball to my friend"])(
+    "does not fire on a real answer: %s",
+    (text) => {
+      expect(isSkipRequest(text)).toBe(false);
     },
   );
 });
