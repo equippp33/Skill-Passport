@@ -5,6 +5,10 @@ import { Icon } from "~/components/ui/icon";
 import { HeaderProfile } from "~/components/header-profile";
 import { getAttemptForCandidate } from "~/server/attempt/access";
 import { uuidSchema } from "~/server/interview/validation";
+import { ReturnToDashboard } from "./return-to-dashboard";
+
+/** Where a finished candidate is sent back to (the partner's dashboard). */
+const DASHBOARD_URL = "https://pathsaathi.com/dashboard";
 
 export const metadata: Metadata = { title: "Interview submitted" };
 export const dynamic = "force-dynamic";
@@ -58,9 +62,10 @@ export default async function AttemptResultPage({
         </p>
 
         <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-content-muted text-pretty">
-          Someone will review them and get back to you. There is nothing more to
-          do — you can close this page.
+          Someone will review them and get back to you.
         </p>
+
+        <ReturnToDashboard url={DASHBOARD_URL} />
       </div>
     </main>
   );
