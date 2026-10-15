@@ -42,7 +42,7 @@ export function ReturnToDashboard({ url }: { url: string }) {
     <div className="mt-6 flex flex-col items-center gap-2">
       <a
         href={url}
-        className="inline-flex items-center gap-2.5 rounded-xl border border-border-subtle bg-surface px-12 py-2 text-base font-semibold text-content shadow-[var(--shadow-raised)] transition-colors hover:bg-surface-muted"
+        className="inline-flex items-center gap-2.5 rounded-xl border border-border-subtle bg-surface px-10 py-1 text-base font-semibold text-content shadow-[var(--shadow-raised)] transition-colors hover:bg-surface-muted"
       >
         <span>Go to</span>
         {/* The wordmark sits in the upper part of the asset (the tagline fills
@@ -52,7 +52,7 @@ export function ReturnToDashboard({ url }: { url: string }) {
         <img
           src="/assets/logo-horizontal.webp"
           alt="Path Saathi"
-          className="h-16 w-auto pb-4 shrink-0 translate-y-0.75 select-none"
+          className="h-16 w-auto pb-5 shrink-0 translate-y-0.75 select-none"
         />
         <span>dashboard</span>
       </a>
