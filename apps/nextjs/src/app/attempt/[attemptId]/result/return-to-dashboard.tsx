@@ -42,9 +42,19 @@ export function ReturnToDashboard({ url }: { url: string }) {
     <div className="mt-6 flex flex-col items-center gap-2">
       <a
         href={url}
-        className="inline-flex items-center justify-center rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-accent-contrast transition-colors hover:bg-accent/90"
+        className="inline-flex items-center gap-2.5 rounded-xl border border-border-subtle bg-surface px-12 py-2 text-base font-semibold text-content shadow-[var(--shadow-raised)] transition-colors hover:bg-surface-muted"
       >
-        Go to dashboard
+        <span>Go to</span>
+        {/* The wordmark sits in the upper part of the asset (the tagline fills
+            the lower part), so nudge it down a hair to line the "Path Saathi"
+            text up with "Go to" / "dashboard". */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- static brand asset */}
+        <img
+          src="/assets/logo-horizontal.webp"
+          alt="Path Saathi"
+          className="h-16 w-auto pb-4 shrink-0 translate-y-0.75 select-none"
+        />
+        <span>dashboard</span>
       </a>
       <p className="text-xs text-content-muted">
         You&apos;ll be taken there automatically in a few seconds.
