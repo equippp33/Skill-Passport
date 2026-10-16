@@ -27,7 +27,17 @@ import { renderAttemptReportPdf } from "./report-pdf";
  */
 
 const MAX_ATTEMPTS = 3;
-const TIMEOUT_MS = 15_000;
+/**
+ * How long the partner gets to answer one delivery.
+ *
+ * Their endpoint does real work before replying (fetching the report,
+ * emailing the student), and on 16 Oct it began taking longer than the old
+ * 15 seconds — so every result was abandoned mid-request and marked
+ * undelivered while they were still processing it. Delivery runs in the
+ * background after the interview, so a longer wait costs no candidate
+ * anything.
+ */
+const TIMEOUT_MS = 45_000;
 
 export interface ResultPayloadArgs {
   attempt: InterviewAttempt;
@@ -177,8 +187,13 @@ export async function deliverResult(args: ResultPayloadArgs): Promise<boolean> {
       // 4xx (other than 429) is a deterministic rejection — retrying will not
       // help, so stop and leave it undelivered for inspection.
       if (res.status < 500 && res.status !== 429) {
+        // The partner's own reason, trimmed. A bare status said "404" and
+        // nothing about whether the address or the student was not found.
+        const reason = (await res.text().catch(() => ""))
+          .replace(/\s+/g, " ")
+          .slice(0, 300);
         console.error(
-          `[integration] result webhook rejected attempt=${args.attempt.id} status=${res.status}`,
+          `[integration] result webhook rejected attempt=${args.attempt.id} status=${res.status} host=${new URL(url).host} reason=${reason || "(empty)"}`,
         );
         return false;
       }
