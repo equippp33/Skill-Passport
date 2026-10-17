@@ -61,8 +61,24 @@ export const env = createEnv({
      * it — both supplied by the partner. Optional: with no URL set, nothing is
      * posted (results still live in our own reports). The key is sent as
      * `Authorization: Bearer <key>` if present.
+     *
+     * Several URLs may be given, comma-separated, when the partner runs more
+     * than one site (their dev and live sites, each holding different
+     * students). They are tried in order until one accepts; see
+     * `deliverResult`. One key is sent to all of them.
      */
-    INTEGRATION_RESULT_WEBHOOK_URL: z.string().url().optional(),
+    INTEGRATION_RESULT_WEBHOOK_URL: z
+      .string()
+      .refine(
+        (value) =>
+          value
+            .split(",")
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .every((part) => z.string().url().safeParse(part).success),
+        { message: "Every comma-separated entry must be a valid URL." },
+      )
+      .optional(),
     INTEGRATION_RESULT_WEBHOOK_KEY: z.string().min(1).optional(),
 
     /**

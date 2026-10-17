@@ -133,8 +133,8 @@ export function buildResultPayload(
  * `finaliseAttempt` ignores it; the admin resend uses it to report back.
  */
 export async function deliverResult(args: ResultPayloadArgs): Promise<boolean> {
-  const url = env.INTEGRATION_RESULT_WEBHOOK_URL;
-  if (!url) return false; // No partner webhook configured — nothing to deliver.
+  const urls = webhookUrls();
+  if (urls.length === 0) return false; // No partner webhook configured — nothing to deliver.
   if (!args.attempt.externalStudentId) return false; // Not an integration candidate.
 
   // Render the report to PDF, store it in R2, and hand the partner a link to
@@ -162,6 +162,58 @@ export async function deliverResult(args: ResultPayloadArgs): Promise<boolean> {
     headers.Authorization = `Bearer ${env.INTEGRATION_RESULT_WEBHOOK_KEY}`;
   }
 
+  /**
+   * In order, stopping at the first that accepts.
+   *
+   * The partner runs a dev and a live site, and a student exists on only one
+   * of them: the other answers 404 "No student with that id." So a rejection
+   * moves on to the next site rather than ending delivery, and stopping at the
+   * first acceptance means no student is ever sent the result twice.
+   */
+  for (const url of urls) {
+    const outcome = await postTo(url, body, headers, args.attempt.id);
+    if (outcome === "delivered") {
+      await db
+        .update(interviewAttemptsTable)
+        .set({ resultDeliveredAt: new Date() })
+        .where(eq(interviewAttemptsTable.id, args.attempt.id));
+      // Log host + whether the report link made it — NOT the signed URL
+      // itself, which is a live 7-day link to a PII report.
+      console.log(
+        `[integration] result delivered attempt=${args.attempt.id} student=${args.attempt.externalStudentId} -> ${new URL(url).host} (report ${reportUrl ? "included" : "MISSING"})`,
+      );
+      return true;
+    }
+  }
+
+  console.error(
+    `[integration] result not accepted by any of ${urls.length} webhook(s) attempt=${args.attempt.id} (left undelivered)`,
+  );
+  return false;
+}
+
+/** Every configured result URL, in the order given. */
+export function webhookUrls(): string[] {
+  return (env.INTEGRATION_RESULT_WEBHOOK_URL ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/**
+ * One delivery to one URL, with retries for transient failures only.
+ *
+ * "rejected" is a definite no from that site (any 4xx but 429) — retrying the
+ * same site will not change it, but the next site might accept. "failed" is
+ * a site that never gave a definite answer.
+ */
+async function postTo(
+  url: string,
+  body: string,
+  headers: Record<string, string>,
+  attemptId: string,
+): Promise<"delivered" | "rejected" | "failed"> {
+  const host = new URL(url).host;
   for (let attemptNo = 1; attemptNo <= MAX_ATTEMPTS; attemptNo++) {
     try {
       const res = await fetch(url, {
@@ -171,21 +223,10 @@ export async function deliverResult(args: ResultPayloadArgs): Promise<boolean> {
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
 
-      if (res.ok) {
-        await db
-          .update(interviewAttemptsTable)
-          .set({ resultDeliveredAt: new Date() })
-          .where(eq(interviewAttemptsTable.id, args.attempt.id));
-        // Log host + whether the report link made it — NOT the signed URL
-        // itself, which is a live 7-day link to a PII report.
-        console.log(
-          `[integration] result delivered attempt=${args.attempt.id} student=${args.attempt.externalStudentId} -> ${new URL(url).host} (report ${reportUrl ? "included" : "MISSING"})`,
-        );
-        return true;
-      }
+      if (res.ok) return "delivered";
 
       // 4xx (other than 429) is a deterministic rejection — retrying will not
-      // help, so stop and leave it undelivered for inspection.
+      // help this site, so move on.
       if (res.status < 500 && res.status !== 429) {
         // The partner's own reason, trimmed. A bare status said "404" and
         // nothing about whether the address or the student was not found.
@@ -193,16 +234,16 @@ export async function deliverResult(args: ResultPayloadArgs): Promise<boolean> {
           .replace(/\s+/g, " ")
           .slice(0, 300);
         console.error(
-          `[integration] result webhook rejected attempt=${args.attempt.id} status=${res.status} host=${new URL(url).host} reason=${reason || "(empty)"}`,
+          `[integration] result webhook rejected attempt=${attemptId} status=${res.status} host=${host} reason=${reason || "(empty)"}`,
         );
-        return false;
+        return "rejected";
       }
       console.warn(
-        `[integration] result webhook ${res.status} (try ${attemptNo}/${MAX_ATTEMPTS}) attempt=${args.attempt.id}`,
+        `[integration] result webhook ${res.status} (try ${attemptNo}/${MAX_ATTEMPTS}) host=${host} attempt=${attemptId}`,
       );
     } catch (error) {
       console.warn(
-        `[integration] result webhook error (try ${attemptNo}/${MAX_ATTEMPTS}) attempt=${args.attempt.id}: ${
+        `[integration] result webhook error (try ${attemptNo}/${MAX_ATTEMPTS}) host=${host} attempt=${attemptId}: ${
           error instanceof Error ? error.message : "unknown"
         }`,
       );
@@ -214,7 +255,7 @@ export async function deliverResult(args: ResultPayloadArgs): Promise<boolean> {
   }
 
   console.error(
-    `[integration] result webhook FAILED after ${MAX_ATTEMPTS} tries attempt=${args.attempt.id} (left undelivered)`,
+    `[integration] result webhook FAILED after ${MAX_ATTEMPTS} tries host=${host} attempt=${attemptId}`,
   );
-  return false;
+  return "failed";
 }
