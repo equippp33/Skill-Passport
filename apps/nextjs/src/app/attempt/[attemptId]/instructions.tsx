@@ -16,7 +16,11 @@ import { CandidateSplit } from "~/components/candidate-split";
 import { CameraPreview } from "~/components/camera-preview";
 import { t } from "~/config/messages";
 import type { Messages } from "~/config/messages";
-import { PROBE_PROMPTS } from "~/config/greeting";
+import {
+  PRE_INTERVIEW_INSTRUCTIONS_BY_KEY,
+  PROBE_PROMPTS,
+} from "~/config/greeting";
+import { SELECTABLE_INTERVIEW_LANGUAGES } from "~/config/languages";
 import { useAnswerRecorder } from "~/hooks/use-answer-recorder";
 import {
   prewarmAttemptAction,
@@ -139,6 +143,40 @@ export function Instructions({
           {interviewDescription}
         </p>
       ) : null}
+
+      {/* The few things that most affect transcription quality, as a short
+          do-this checklist — shown in every interview language so a candidate
+          reads it in a script they recognise, whatever language they'll use. */}
+      <Card className="border-warning/20 bg-warning-soft">
+        <CardContent className="pt-5">
+          <p className="text-xs font-medium tracking-widest text-content-muted uppercase">
+            {m.instructions.duringTitle}
+          </p>
+          <div className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {SELECTABLE_INTERVIEW_LANGUAGES.map((lang) => (
+              <section key={lang.key} lang={lang.code}>
+                <h3 className="text-sm font-semibold tracking-tight">
+                  {lang.displayName}
+                </h3>
+                <ul className="mt-2 space-y-1.5">
+                  {PRE_INTERVIEW_INSTRUCTIONS_BY_KEY[lang.key].map((line) => (
+                    <li
+                      key={line}
+                      className="flex gap-2 text-sm leading-relaxed"
+                    >
+                      <Icon
+                        name="check"
+                        className="mt-0.5 size-3.5 shrink-0 text-warning"
+                      />
+                      <span className="text-pretty">{line}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Offered in several scripts rather than assuming the candidate
           reads English. */}

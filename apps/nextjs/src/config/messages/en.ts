@@ -81,6 +81,7 @@ export const en = {
     languageNotice:
       "The whole assessment — questions, your answers and the report — is in {language}.",
     ownLanguageTitle: "You can answer in your own language",
+    duringTitle: "Please follow these during the interview",
     groupHowItWorks: "How it works",
     groupWhatYouNeed: "What you need",
     groupYourAnswers: "Your answers",

@@ -66,6 +66,73 @@ export const PROBE_PROMPTS: { code: string; text: string }[] = [
   },
 ];
 
+/**
+ * The do-this checklist shown on the pre-start page, in every interview
+ * language so a candidate reads it in a script they recognise — the few things
+ * that most affect transcription quality. Order matters: `[microphone, quiet
+ * place, stay in frame]`. Kept to three short imperatives on purpose.
+ */
+export const PRE_INTERVIEW_INSTRUCTIONS_BY_KEY: Record<
+  InterviewLanguageKey,
+  readonly [string, string, string]
+> = {
+  english: [
+    "Use a microphone.",
+    "Sit in a quiet place and finish the interview in one sitting.",
+    "Try to stay in front of the camera.",
+  ],
+  hindi: [
+    "माइक्रोफ़ोन का उपयोग करें।",
+    "शांत जगह पर बैठें और इंटरव्यू एक ही बार में पूरा करें।",
+    "कैमरे के सामने बने रहने की कोशिश करें।",
+  ],
+  marathi: [
+    "मायक्रोफोन वापरा.",
+    "शांत ठिकाणी बसा आणि मुलाखत एकाच वेळी पूर्ण करा.",
+    "कॅमेऱ्यासमोर राहण्याचा प्रयत्न करा.",
+  ],
+  bengali: [
+    "মাইক্রোফোন ব্যবহার করুন।",
+    "শান্ত জায়গায় বসুন এবং একবারেই ইন্টারভিউ শেষ করুন।",
+    "ক্যামেরার সামনে থাকার চেষ্টা করুন।",
+  ],
+  gujarati: [
+    "માઇક્રોફોનનો ઉપયોગ કરો.",
+    "શાંત જગ્યાએ બેસો અને ઇન્ટરવ્યૂ એક જ વારમાં પૂરો કરો.",
+    "કૅમેરાની સામે રહેવાનો પ્રયાસ કરો.",
+  ],
+  kannada: [
+    "ಮೈಕ್ರೊಫೋನ್ ಬಳಸಿ.",
+    "ಶಾಂತವಾದ ಸ್ಥಳದಲ್ಲಿ ಕುಳಿತು ಸಂದರ್ಶನವನ್ನು ಒಂದೇ ಬಾರಿಗೆ ಪೂರ್ಣಗೊಳಿಸಿ.",
+    "ಕ್ಯಾಮೆರಾ ಮುಂದೆ ಇರಲು ಪ್ರಯತ್ನಿಸಿ.",
+  ],
+  malayalam: [
+    "മൈക്രോഫോൺ ഉപയോഗിക്കുക.",
+    "ശാന്തമായ സ്ഥലത്ത് ഇരുന്ന് അഭിമുഖം ഒറ്റയടിക്ക് പൂർത്തിയാക്കുക.",
+    "ക്യാമറയ്ക്ക് മുന്നിൽ തന്നെ നിൽക്കാൻ ശ്രമിക്കുക.",
+  ],
+  odia: [
+    "ମାଇକ୍ରୋଫୋନ୍ ବ୍ୟବହାର କରନ୍ତୁ।",
+    "ଶାନ୍ତ ସ୍ଥାନରେ ବସି ସାକ୍ଷାତକାରକୁ ଏକାଥରେ ଶେଷ କରନ୍ତୁ।",
+    "କ୍ୟାମେରା ସାମ୍ନାରେ ରହିବାକୁ ଚେଷ୍ଟା କରନ୍ତୁ।",
+  ],
+  punjabi: [
+    "ਮਾਈਕ੍ਰੋਫ਼ੋਨ ਵਰਤੋ।",
+    "ਸ਼ਾਂਤ ਥਾਂ 'ਤੇ ਬੈਠੋ ਅਤੇ ਇੰਟਰਵਿਊ ਇੱਕੋ ਵਾਰੀ ਪੂਰਾ ਕਰੋ।",
+    "ਕੈਮਰੇ ਦੇ ਸਾਹਮਣੇ ਰਹਿਣ ਦੀ ਕੋਸ਼ਿਸ਼ ਕਰੋ।",
+  ],
+  tamil: [
+    "மைக்ரோஃபோனைப் பயன்படுத்துங்கள்.",
+    "அமைதியான இடத்தில் அமர்ந்து நேர்காணலை ஒரே நேரத்தில் முடியுங்கள்.",
+    "கேமராவுக்கு முன்னால் இருக்க முயலுங்கள்.",
+  ],
+  telugu: [
+    "మైక్రోఫోన్ ఉపయోగించండి.",
+    "నిశ్శబ్ద ప్రదేశంలో కూర్చుని ఇంటర్వ్యూను ఒకేసారి పూర్తి చేయండి.",
+    "కెమెరా ముందు ఉండటానికి ప్రయత్నించండి.",
+  ],
+};
+
 /** Stored as the probe turn's question text. */
 export const PROBE_QUESTION_TEXT = PROBE_SPOKEN_TEXT;
 
