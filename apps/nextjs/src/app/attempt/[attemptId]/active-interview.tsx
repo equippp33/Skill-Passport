@@ -160,7 +160,11 @@ export function ActiveInterview({
 
   /** The whole interview is a fullscreen stage; a gate nudges them back in. */
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const { isFullscreen, request: requestFullscreen } = useFullscreen(stageRef);
+  const {
+    isFullscreen,
+    request: requestFullscreen,
+    supported: fullscreenSupported,
+  } = useFullscreen(stageRef);
   /** True while the interviewer is speaking (question or filler) — the blob. */
   const [speaking, setSpeaking] = useState(false);
   /** Latest turn, read by callbacks that must not re-create on every change. */
@@ -1930,15 +1934,17 @@ export function ActiveInterview({
             <h2 className="text-xl font-semibold text-white">
               Your interview is ready
             </h2>
+            {/* iPhone cannot go fullscreen, so it is not promised there. */}
             <p className="text-sm leading-relaxed text-white/80">
-              This runs in fullscreen so you can focus. Please stay in
-              fullscreen until the interview is finished.
+              {fullscreenSupported
+                ? "This runs in fullscreen so you can focus. Please stay in fullscreen until the interview is finished."
+                : "Please keep this page open until the interview is finished."}
             </p>
             {/* Entering fullscreen is the gesture that also unblocks audio; the
                 question-play effect (gated on `isFullscreen`) then speaks the
                 current question right after. */}
             <Button size="lg" onClick={requestFullscreen}>
-              Continue in fullscreen
+              {fullscreenSupported ? "Continue in fullscreen" : "Continue"}
             </Button>
           </div>
         </div>
