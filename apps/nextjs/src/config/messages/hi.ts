@@ -82,6 +82,7 @@ export const hi: Messages = {
     languageNotice:
       "पूरा मूल्यांकन — सवाल, आपके जवाब और रिपोर्ट — {language} में होगा।",
     ownLanguageTitle: "आप अपनी भाषा में जवाब दे सकते हैं",
+    duringTitle: "इंटरव्यू के दौरान इनका पालन करें",
     groupHowItWorks: "यह कैसे चलता है",
     groupWhatYouNeed: "आपको क्या चाहिए",
     groupYourAnswers: "आपके जवाब",

@@ -85,6 +85,7 @@ export const mr: Messages = {
     languageNotice:
       "संपूर्ण मूल्यांकन — प्रश्न, तुमची उत्तरे आणि अहवाल — {language} भाषेत असेल.",
     ownLanguageTitle: "तुम्ही तुमच्या भाषेत उत्तर देऊ शकता",
+    duringTitle: "मुलाखतीदरम्यान हे पाळा",
     groupHowItWorks: "हे कसे चालते",
     groupWhatYouNeed: "तुम्हाला काय लागेल",
     groupYourAnswers: "तुमची उत्तरे",
