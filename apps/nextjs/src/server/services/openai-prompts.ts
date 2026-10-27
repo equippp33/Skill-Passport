@@ -215,8 +215,9 @@ export function interviewerRules(ctx: InterviewContext): string {
     `- Build on what the candidate actually said when following up.`,
     ...(firstName
       ? [
-          `- The candidate's name is ${firstName}. Use it naturally now and then`,
-          `  — roughly every third or fourth question, never in every one.`,
+          `- The candidate's name is ${firstName}. Do NOT use their name unless`,
+          `  the instructions for THIS question explicitly say to. Using it in`,
+          `  question after question sounds robotic and irritates candidates.`,
         ]
       : []),
     `- When it fits, refer back to something they said in an EARLIER answer`,
@@ -225,11 +226,26 @@ export function interviewerRules(ctx: InterviewContext): string {
     `  family status, pregnancy, disability, or any other protected characteristic.`,
     `- Never state or imply the candidate is hired, rejected, or guaranteed a job.`,
     ``,
+    `## Their situation: still studying, or finished?`,
+    `- From the introduction and answers so far, work out whether the candidate`,
+    `  is CURRENTLY PURSUING their course or has COMPLETED it. Frame questions`,
+    `  and follow-ups to match: someone still studying lives in classes,`,
+    `  practicals, exams and college routine; someone who has finished is`,
+    `  looking for work, preparing for interviews, or starting out. Never ask`,
+    `  a finished candidate about their current classes, or a student about`,
+    `  their job search.`,
+    `- If it is not clear which, do not assume either — keep the situation in`,
+    `  ordinary everyday life.`,
+    ``,
     `## Adapt to how it is going`,
     `- Read the answers so far before asking. If the last couple have been very`,
     `  short, vague, or "I don't know", make the NEXT question SIMPLER and more`,
     `  concrete, and open with a word of reassurance. If they have been fluent`,
     `  and detailed, keep it brisk — no hand-holding, no extra explanation.`,
+    `- The same if they have shared LITTLE about themselves (a very short`,
+    `  introduction) or sound unsure: ask easy, friendly, everyday questions`,
+    `  they can answer from ordinary life, never ones that need experience or`,
+    `  confidence they have not shown.`,
     ``,
     `## How to score`,
     `- Score ONLY the work skill named for the current question, from 0 to 10.`,
@@ -354,6 +370,36 @@ export function contextBlock(ctx: InterviewContext): string {
           `daily routine, travel, shopping, a festival.`,
         ]),
   ].join("\n");
+}
+
+/**
+ * The three AI-written questions (by skill-question number) allowed to use
+ * the candidate's name.
+ *
+ * Per candidate rather than fixed, so it does not land on the same questions
+ * for everyone, but derived from the name rather than random: questions are
+ * prepared ahead in separate calls, and every one of those calls must agree on
+ * which three they are. Spread out (gaps of at least three, then two) so
+ * they never feel clustered. Questions 2-10 are the AI-written ones (1 is
+ * the fixed bank).
+ */
+export function nameQuestionNumbers(candidateName: string | null | undefined): number[] {
+  const name = candidateName?.trim().toLowerCase() ?? "";
+  let hash = 0;
+  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  const first = 2 + (hash % 3); // 2..4
+  const second = first + 3 + ((hash >>> 3) % 2); // 5..8
+  const third = second + 2 + ((hash >>> 5) % (9 - second)); // second+2..10
+  return [first, second, third];
+}
+
+/** One line telling the model whether THIS question may use the name. */
+export function nameUseBlock(ctx: InterviewContext, questionNumber: number): string {
+  const firstName = ctx.candidateName?.trim().split(/\s+/)[0];
+  if (!firstName) return "";
+  return nameQuestionNumbers(ctx.candidateName).includes(questionNumber)
+    ? `For THIS question, address the candidate by their first name, ${firstName}, once.`
+    : `Do NOT use the candidate's name in this question.`;
 }
 
 /** Describes the skill the current question must assess. */

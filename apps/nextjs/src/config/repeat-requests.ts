@@ -252,10 +252,27 @@ const GIVE_UP_PHRASES: string[] = [
   "maloom nahi",
   "mahit nahi",
   "nahi mahit",
+  "pata nhi",
+  "nahi pata",
+  "nahi maloom",
+  "mahit nai",
+  "mahiti nahi",
+  // Hindi
   "पता नहीं",
   "नहीं पता",
   "मालूम नहीं",
+  "नहीं मालूम",
+  "नहीं जानता",
+  "नहीं जानती",
+  "जवाब नहीं पता",
+  // Marathi — both spellings: Sarvam writes "माहीत" (long ई) as often as
+  // "माहित", and "माहिती" in "मला नाही माहिती".
   "माहित नाही",
+  "माहीत नाही",
+  "नाही माहित",
+  "नाही माहीत",
+  "नाही माहिती",
+  "माहिती नाही",
   "ठाऊक नाही",
 ];
 

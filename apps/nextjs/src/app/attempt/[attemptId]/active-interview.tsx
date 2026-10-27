@@ -24,7 +24,11 @@ import {
 } from "~/server/attempt/actions";
 import { env } from "~/env";
 import { useStreamingStt } from "~/hooks/use-streaming-stt";
-import { isRepeatRequest, isSkipRequest } from "~/config/repeat-requests";
+import {
+  isGiveUpRequest,
+  isRepeatRequest,
+  isSkipRequest,
+} from "~/config/repeat-requests";
 import {
   MAX_ANSWER_SECONDS,
   MIN_ANSWER_BLOB_BYTES,
@@ -36,6 +40,7 @@ import {
   SILENCE_ADVANCE_SECONDS,
   MIN_ANSWER_WORDS,
   ADD_PROMPT_MAX_WORDS,
+  NEXT_BUTTON_DELAY_SECONDS,
   PROMPT_COUNTDOWN_SECONDS,
   OPENING_BIT_WAIT_MS,
 } from "./constants";
@@ -306,6 +311,21 @@ export function ActiveInterview({
    * that captures it.
    */
   const streamRearmRef = useRef<() => void>(() => undefined);
+
+  /**
+   * Which question the Next button has been unlocked for.
+   *
+   * Stored as a turn number rather than a flag so a new question is locked
+   * the moment it appears, with nothing to remember to reset.
+   */
+  const [nextReadyTurn, setNextReadyTurn] = useState<number | null>(null);
+  const nextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (nextTimerRef.current) clearTimeout(nextTimerRef.current);
+    },
+    [],
+  );
   const getTranscriptRef = useRef<() => string>(() => "");
 
   const beginAnswer = useCallback(() => {
@@ -313,6 +333,13 @@ export function ActiveInterview({
     if (!current) return;
     if (autoStartedForTurnRef.current === current.turnNumber) return;
     autoStartedForTurnRef.current = current.turnNumber;
+    // Unlock Next a while after the question finished playing, not at once.
+    if (nextTimerRef.current) clearTimeout(nextTimerRef.current);
+    const readyFor = current.turnNumber;
+    nextTimerRef.current = setTimeout(
+      () => setNextReadyTurn(readyFor),
+      NEXT_BUTTON_DELAY_SECONDS * 1000,
+    );
     // A fresh question: no countdown running, and the invitation to add more
     // is owed again. Reset here rather than in an effect, because this is the
     // moment the turn actually starts rather than a render that noticed.
@@ -1204,15 +1231,20 @@ export function ActiveInterview({
        * words means nothing was said, whatever the detector heard, and it is
        * the check-in rung that belongs to that.
        */
-      if (!answered) return;
-
-      // "Pass" / "I don't want to answer" is a decline, not an answer with
-      // more behind it — offering to add to it makes no sense. Hand it over
-      // now, exactly as a spoken skip is.
-      if (!opening && isSkipRequest(transcript)) {
+      // "Pass", "I don't want to answer", "I don't know" are declines, not
+      // answers with more behind them — offering to add to one makes no
+      // sense. Hand it over at the first pause; the server skips the
+      // question. Checked BEFORE the word gate below, because "pata nahi" or
+      // "no idea" is two words and would otherwise wait for the check-in.
+      if (
+        !opening &&
+        (isSkipRequest(transcript) || isGiveUpRequest(transcript))
+      ) {
         handleAdvanceRef.current();
         return;
       }
+
+      if (!answered) return;
 
       if (promptedKeyRef.current === key) {
         // Second time quiet on this part: move on without saying anything.
@@ -1874,11 +1906,14 @@ export function ActiveInterview({
               )}
               {/* The candidate advances when THEY are done — nothing moves on by
                   itself, so stray noise can't skip ahead. Disabled while the
-                  interviewer is still speaking the question/bit. */}
+                  interviewer is still speaking the question/bit, and for
+                  NEXT_BUTTON_DELAY_SECONDS after it finishes. */}
               <Button
                 size="lg"
                 onClick={handleAdvance}
-                disabled={speaking || isBusy}
+                disabled={
+                  speaking || isBusy || nextReadyTurn !== turn?.turnNumber
+                }
               >
                 {m.interview.next}
               </Button>

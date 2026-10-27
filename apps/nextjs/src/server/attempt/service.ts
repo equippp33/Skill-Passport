@@ -1038,7 +1038,12 @@ async function transcribeSegments(
  * only if it ever needs to survive across instances.
  */
 const doubtCounts = new Map<string, number>();
-const MAX_DOUBTS_BEFORE_SKIP = 1;
+/**
+ * Zero: "skip" or "I don't know" moves straight on (client ask). It used to
+ * get one spoken nudge first, which candidates who had plainly said they did
+ * not know found pointless.
+ */
+const MAX_DOUBTS_BEFORE_SKIP = 0;
 
 /**
  * Genuine questions ABOUT the question ("explain it", "what does job mean?")
@@ -1238,9 +1243,13 @@ async function processTurnScoped(
     // never classified: its only job is to capture the introduction.
     const looksLikeRepeat = isRepeatRequest(transcript);
     const wantsSkip = !isProbe && isSkipRequest(transcript);
+    // "I don't know" is matched here too, not left to the model, so it is
+    // always skipped rather than sometimes scored as an answer.
+    const givesUp = !isProbe && isGiveUpRequest(transcript);
     const isDoubt =
       looksLikeRepeat ||
       wantsSkip ||
+      givesUp ||
       (!isProbe &&
         (await classifyUtterance({
           question: turn.question,
@@ -1254,19 +1263,18 @@ async function processTurnScoped(
       // The question text NEVER changes — the one first shown stays until it is
       // actually answered. What differs is the interviewer's spoken response:
       //   - an explicit "repeat" (or the probe) just replays the exact question;
-      //   - a skip, "I don't know", or any other doubt gets ONE spoken nudge to
-      //     try, and if they still don't answer, we move on. No endless loop.
+      //   - a skip / "I don't know" moves straight on to the next question;
+      //   - any other doubt ("explain it") gets a spoken explanation.
       if (looksLikeRepeat || isProbe || !attempt.language) {
         // A plain "say it again" (or the probe, which cannot be skipped) just
         // replays. These do not count as giving up.
         await repeatTurn(attemptId, turnId);
       } else {
-        // Skip / "I don't know" / "I can't answer": encourage them to try ONCE,
-        // then move on. The candidate asked not to be badgered 3+ times.
         const key = `${attemptId}:${turn.turnNumber}`;
-        // Giving up ("skip", "I don't know") keeps the one-nudge rule. Asking
-        // for an explanation is not giving up and gets its own allowance.
-        const givingUp = wantsSkip || isGiveUpRequest(transcript);
+        // Giving up ("skip", "I don't know") skips at once — see
+        // MAX_DOUBTS_BEFORE_SKIP. Asking for an explanation is not giving up
+        // and gets its own allowance.
+        const givingUp = wantsSkip || givesUp;
         const counts = givingUp ? doubtCounts : clarificationCounts;
         const limit = givingUp
           ? MAX_DOUBTS_BEFORE_SKIP

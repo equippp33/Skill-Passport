@@ -13,7 +13,11 @@ import {
   PROBE_SPOKEN_TEXT,
 } from "~/config/greeting";
 import { MESSAGES, t } from "~/config/messages";
-import { isRepeatRequest, isSkipRequest } from "~/config/repeat-requests";
+import {
+  isGiveUpRequest,
+  isRepeatRequest,
+  isSkipRequest,
+} from "~/config/repeat-requests";
 import { en } from "~/config/messages/en";
 import {
   WORK_SKILLS,
@@ -194,6 +198,47 @@ describe("skip requests", () => {
     "does not fire on a real answer: %s",
     (text) => {
       expect(isSkipRequest(text)).toBe(false);
+    },
+  );
+});
+
+describe("giving up (\"I don't know\")", () => {
+  it.each([
+    // English
+    "I don't know",
+    "I don't know the answer for this question.",
+    "No idea",
+    // Hindi
+    "मुझे नहीं पता",
+    "मुझे इसका जवाब नहीं पता।",
+    "पता नहीं",
+    "नहीं मालूम",
+    "मैं नहीं जानता",
+    "pata nahi",
+    // Marathi, both spellings
+    "मला माहित नाही",
+    "मला माहीत नाही.",
+    "मला नाही माहिती",
+    "ठाऊक नाही",
+  ])("recognises %s", (text) => {
+    expect(isGiveUpRequest(text)).toBe(true);
+  });
+
+  // A real answer must never be thrown away as a give-up.
+  it.each([
+    "I don't know exactly, but I would first ask my friend and then check online for the timing.",
+    "बस वेळेत येत नाही तर मी रिक्षा घेईन",
+    "I always reach on time",
+  ])("does not fire on a real answer: %s", (text) => {
+    expect(isGiveUpRequest(text)).toBe(false);
+  });
+});
+
+describe("skip requests in every interview language", () => {
+  it.each(["skip", "next question", "अगला सवाल", "छोड़ दो", "पुढचा प्रश्न", "pass"])(
+    "recognises %s",
+    (text) => {
+      expect(isSkipRequest(text)).toBe(true);
     },
   );
 });

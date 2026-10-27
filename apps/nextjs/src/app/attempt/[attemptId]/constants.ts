@@ -117,6 +117,16 @@ export const MIN_ANSWER_WORDS = 3;
 export const ADD_PROMPT_MAX_WORDS = 8;
 
 /**
+ * How long the Next button stays disabled after the question finishes playing.
+ *
+ * Candidates were tapping Next the moment the question ended, before giving
+ * themselves a chance to answer (client feedback). Counted from the end of
+ * the question audio, so the whole wait is time they could have spent
+ * answering.
+ */
+export const NEXT_BUTTON_DELAY_SECONDS = 10;
+
+/**
  * Quiet with NOTHING said yet, before asking whether they followed it.
  *
  * Fifteen seconds. Someone who has not started after that long is usually

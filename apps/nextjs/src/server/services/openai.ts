@@ -18,6 +18,7 @@ import {
   interviewerRules,
   previouslyAskedBlock,
   questionStyleBlock,
+  nameUseBlock,
   skillBlock,
   untrusted,
 } from "./openai-prompts";
@@ -548,6 +549,7 @@ export async function generateQuestion(args: {
       skillBlock(skill),
       "",
       questionStyleBlock(skill, ctx),
+      nameUseBlock(ctx, turnNumber),
       "",
       isFirst
         ? `This is the START of the interview and question 1 of ${ctx.questionCount}.`
@@ -888,6 +890,8 @@ export async function scoreAndMaybeFollowUp(args: {
         `Set nextQuestion to null ONLY if the answer was empty, a skip, or a`,
         `flat refusal with nothing to build on — otherwise you MUST ask one.`,
         `Never a hollow "is there anything you'd like to add?".`,
+        `Frame it to their situation: still studying or finished. Never use`,
+        `their name in a follow-up.`,
         `Set interviewComplete to false.`,
       ]
     : [
@@ -900,6 +904,8 @@ export async function scoreAndMaybeFollowUp(args: {
         `  vague to score fairly — a one-word or one-line answer that clearly has`,
         `  more behind it. Give them a single chance to show the skill: a concrete`,
         `  example, or the next step they would take.`,
+        `- Frame any follow-up to their situation: still studying or finished`,
+        `  (see "Their situation" above). Never use their name in a follow-up.`,
         `- ALSO ask a follow-up when the candidate said the SCENARIO does not apply`,
         `  to them ("I don't cook") — re-frame the SAME skill in a situation they`,
         `  CAN relate to, drawing on their introduction. That is not a low answer.`,
