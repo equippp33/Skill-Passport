@@ -227,6 +227,28 @@ export async function loadAudioForAdmin(audioId: string, adminId: string) {
   return rows[0] ?? null;
 }
 
+/**
+ * Load a clip by id alone, with NO ownership check.
+ *
+ * Only for the share-token path in the media route: the unguessable token in
+ * the URL is itself the authorisation, so the row is fetched by id. Never call
+ * this without first verifying the token (`verifyMediaToken`).
+ */
+export async function loadAudioById(audioId: string) {
+  const rows = await db
+    .select({
+      id: interviewAudioTable.id,
+      kind: interviewAudioTable.kind,
+      mimeType: interviewAudioTable.mimeType,
+      storageKey: interviewAudioTable.storageKey,
+    })
+    .from(interviewAudioTable)
+    .where(eq(interviewAudioTable.id, audioId))
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
 /** In-app URL for a stored clip. Served by the authenticated route handler. */
 export function audioUrl(audioId: string | null): string | null {
   return audioId ? `/api/interview/audio/${audioId}` : null;

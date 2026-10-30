@@ -33,11 +33,19 @@ export function AttemptReport({
   showCandidate = false,
   clipDurations,
   appOrigin,
+  mediaToken,
 }: {
   attempt: InterviewAttempt;
   turns: InterviewTurn[];
   m: Messages;
   showCandidate?: boolean;
+  /**
+   * Per-clip share token, for a public (logged-out) shared report. When given,
+   * embedded media is addressed as `?t=<token>` instead of relying on the
+   * admin session or the candidate's attempt cookie. Returns null if sharing
+   * is not configured, in which case the media simply will not play.
+   */
+  mediaToken?: (audioId: string) => string | null;
   /**
    * Recorded length per media id, in milliseconds.
    *
@@ -58,6 +66,15 @@ export function AttemptReport({
     ? INTERVIEW_LANGUAGES[attempt.language as InterviewLanguageKey]
     : null;
   const langCode = language?.code;
+
+  // How each embedded clip proves access: a share token on a public shared
+  // report, else the admin session (bare URL) or the candidate's attempt.
+  const mediaQuery = (audioId: string) =>
+    mediaToken
+      ? `?t=${mediaToken(audioId)}`
+      : showCandidate
+        ? ""
+        : `?attempt=${attempt.id}`;
 
   const answered = turns.filter(
     (x) => x.kind === "skill" && x.status === "completed",
@@ -284,9 +301,9 @@ export function AttemptReport({
                     <audio
                       controls
                       preload="none"
-                      src={`/api/media/${turn.questionAudioId}${
-                        showCandidate ? "" : `?attempt=${attempt.id}`
-                      }`}
+                      src={`/api/media/${turn.questionAudioId}${mediaQuery(
+                        turn.questionAudioId,
+                      )}`}
                       aria-label="Question as asked"
                       className="mt-2 h-8 w-full max-w-sm"
                     />
@@ -300,9 +317,9 @@ export function AttemptReport({
                         controls
                         playsInline
                         preload="none"
-                        src={`/api/media/${turn.answerVideoId}${
-                          showCandidate ? "" : `?attempt=${attempt.id}`
-                        }`}
+                        src={`/api/media/${turn.answerVideoId}${mediaQuery(
+                          turn.answerVideoId,
+                        )}`}
                         aria-label={m.result.yourAnswer}
                         className="aspect-video max-h-[400px] w-full rounded-lg border border-border-subtle bg-content/90 object-contain"
                       />
@@ -331,9 +348,13 @@ export function AttemptReport({
                             a PDF link opens in a new tab is the viewer's
                             decision; the format has no way to ask. */}
                           <a
-                            href={`${appOrigin}/api/media/${turn.answerVideoId}?attempt=${attempt.id}`}
+                            href={`${appOrigin}/api/media/${turn.answerVideoId}${mediaQuery(
+                              turn.answerVideoId,
+                            )}`}
                           >
-                            {`${appOrigin}/api/media/${turn.answerVideoId}?attempt=${attempt.id}`}
+                            {`${appOrigin}/api/media/${turn.answerVideoId}${mediaQuery(
+                              turn.answerVideoId,
+                            )}`}
                           </a>
                         </p>
                       ) : null}

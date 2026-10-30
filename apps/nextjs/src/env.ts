@@ -57,6 +57,15 @@ export const env = createEnv({
     INTEGRATION_API_KEY: z.string().min(16).optional(),
     INTEGRATION_INTERVIEW_TOKEN: z.string().min(1).optional(),
     /**
+     * Secret for anonymous, link-shareable clip playback
+     * (`GET /api/media/<id>?t=<token>`). The token is an HMAC of the clip id
+     * with this secret, so a link plays one specific recording with no login
+     * while the bucket stays private. Optional: unset disables the share path
+     * entirely (only the cookie/admin routes work). Rotate it to revoke every
+     * shared link at once.
+     */
+    MEDIA_SHARE_SECRET: z.string().min(16).optional(),
+    /**
      * Where a finished student's result is POSTed, and the bearer to send with
      * it — both supplied by the partner. Optional: with no URL set, nothing is
      * posted (results still live in our own reports). The key is sent as

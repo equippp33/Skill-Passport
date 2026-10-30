@@ -6,6 +6,7 @@ import {
   readAttemptCookie,
 } from "~/server/attempt/access";
 import {
+  loadAudioById,
   loadAudioForAdmin,
   loadAudioForAttempt,
 } from "~/server/interview/audio";
@@ -15,6 +16,7 @@ import {
   presignAudioUrl,
 } from "~/server/interview/storage";
 import { uuidSchema } from "~/server/interview/validation";
+import { verifyShareToken } from "~/server/media-share";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,9 +24,12 @@ export const dynamic = "force-dynamic";
 /**
  * Serve a stored clip — question audio, or a recorded answer.
  *
- * Two callers, two proofs of access, no anonymous path:
+ * Three proofs of access:
  *  - the candidate, via their attempt cookie (`?attempt=` names which one);
- *  - an admin, via a join proving they created the parent interview.
+ *  - an admin, via a join proving they created the parent interview;
+ *  - anyone holding a share token (`?t=`) — an HMAC of this clip id — which
+ *    authorises this one clip only, for shared report links (see
+ *    `~/server/media-share`). The bucket stays private either way.
  *
  * Ownership is enforced inside the query. What happens next depends on what
  * is being fetched:
@@ -56,7 +61,9 @@ export async function GET(
     storageKey: string;
   } | null = null;
 
-  const attemptParam = new URL(request.url).searchParams.get("attempt");
+  const params = new URL(request.url).searchParams;
+
+  const attemptParam = params.get("attempt");
   if (attemptParam && (await readAttemptCookie())) {
     const parsedAttempt = uuidSchema.safeParse(attemptParam);
     if (parsedAttempt.success) {
@@ -65,6 +72,12 @@ export async function GET(
         audio = await loadAudioForAttempt(audioId.data, found.attempt.id);
       }
     }
+  }
+
+  // Share token: the token itself is the authorisation, so the clip is loaded
+  // by id. Scoped to this one clip and verified constant-time.
+  if (!audio && verifyShareToken(audioId.data, params.get("t"))) {
+    audio = await loadAudioById(audioId.data);
   }
 
   if (!audio) {
