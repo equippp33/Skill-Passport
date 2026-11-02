@@ -197,6 +197,13 @@ export const interviewAttemptsTable = pgTable(
     candidateGender: text("candidate_gender"),
     collegeName: text("college_name"),
     /**
+     * Whether the candidate is currently pursuing their course or has completed
+     * it, carried through from the partner. Lets the interviewer frame questions
+     * deterministically (student life vs job-hunting) instead of guessing from
+     * the introduction. Null for ordinary candidates / when not sent.
+     */
+    educationStatus: text("education_status"),
+    /**
      * The partner's own student id, carried through the integration link so the
      * completed result can be posted back keyed to their record. Null for
      * candidates who came through a normal shared link.

@@ -38,6 +38,7 @@ interface StartPrefill {
   studentId?: string;
   gender?: string;
   collegeName?: string;
+  educationStatus?: string;
 }
 
 /**
@@ -78,6 +79,13 @@ export function StartForm({
       ) : null}
       {initial?.collegeName ? (
         <input type="hidden" name="collegeName" value={initial.collegeName} />
+      ) : null}
+      {initial?.educationStatus ? (
+        <input
+          type="hidden"
+          name="educationStatus"
+          value={initial.educationStatus}
+        />
       ) : null}
 
       <div>

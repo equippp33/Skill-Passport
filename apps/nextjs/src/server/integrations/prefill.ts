@@ -32,6 +32,8 @@ export interface StartPrefill {
   /** Extra LLM context from the partner — never shown to the candidate. */
   gender?: string;
   collegeName?: string;
+  /** "pursuing" / "completed" (free text) — frames the interview deterministically. */
+  educationStatus?: string;
 }
 
 const IV_BYTES = 12;
@@ -94,6 +96,7 @@ export function decodePrefill(
       studentId: str(p.studentId),
       gender: str(p.gender),
       collegeName: str(p.collegeName),
+      educationStatus: str(p.educationStatus),
     };
   } catch {
     return null;

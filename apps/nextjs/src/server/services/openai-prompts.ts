@@ -35,6 +35,12 @@ export interface InterviewContext {
   candidateGender?: string | null;
   collegeName?: string | null;
   /**
+   * Whether the candidate is currently pursuing their course or has completed
+   * it, when the partner supplied it. Authoritative when present — the model
+   * frames to it instead of inferring from the introduction.
+   */
+  educationStatus?: string | null;
+  /**
    * What the candidate said in the opening language probe — their name and a
    * little about their work. Untrusted content, but genuinely useful: without
    * it every question is asked into a vacuum.
@@ -363,6 +369,16 @@ export function contextBlock(ctx: InterviewContext): string {
           `The candidate's gender is: ${ctx.candidateGender}. Use it ONLY for`,
           `natural pronouns and gentle framing. NEVER ask about it, mention it,`,
           `or let it affect scoring — it is a protected characteristic.`,
+        ]
+      : []),
+    ...(ctx.educationStatus
+      ? [
+          `The candidate's education status is: ${ctx.educationStatus} (i.e.`,
+          `currently pursuing their course, or has completed it). Treat this as`,
+          `AUTHORITATIVE — frame questions and follow-ups to match it (a student`,
+          `lives in classes, practicals and college routine; someone who has`,
+          `finished is job-hunting or starting out) and do NOT infer otherwise`,
+          `from the introduction.`,
         ]
       : []),
     ...(ctx.priorAttempts

@@ -37,15 +37,18 @@ const bodySchema = z.object({
   last_name: z.string().trim().max(80).nullish(),
   email: z.string().trim().max(255).nullish(),
   phone: z.string().trim().max(20).nullish(),
-  // Extra LLM context, used only for pronouns / rapport. Both optional.
+  // Extra LLM context, used only for pronouns / rapport / framing. All optional.
   gender: z.string().trim().max(32).nullish(),
   college_name: z.string().trim().max(160).nullish(),
+  // Whether they are still studying or have finished (e.g. "pursuing"/"completed").
+  education_status: z.string().trim().max(40).nullish(),
   // Course sits nested under training_record, e.g. "Industrial Electrician".
-  // College may arrive there too, depending on the partner's shape.
+  // College and status may arrive there too, depending on the partner's shape.
   training_record: z
     .object({
       course: z.string().trim().max(120).nullish(),
       college_name: z.string().trim().max(160).nullish(),
+      status: z.string().trim().max(40).nullish(),
     })
     .nullish(),
 });
@@ -104,6 +107,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     gender: d.gender ?? undefined,
     collegeName:
       d.college_name ?? d.training_record?.college_name ?? undefined,
+    educationStatus:
+      d.education_status ?? d.training_record?.status ?? undefined,
   });
   const url = await absoluteUrl(`/i/${interviewToken}?p=${blob}`);
 

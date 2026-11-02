@@ -121,6 +121,8 @@ export interface CandidateDetails {
   /** Partner-supplied context for the LLM (pronouns / rapport only). */
   gender?: string | null;
   collegeName?: string | null;
+  /** "pursuing" / "completed" — frames questions to the candidate's stage. */
+  educationStatus?: string | null;
 }
 
 /**
@@ -146,6 +148,7 @@ export async function createAttempt(
       candidateCourse: details.course,
       candidateGender: details.gender ?? null,
       collegeName: details.collegeName ?? null,
+      educationStatus: details.educationStatus ?? null,
       externalStudentId: details.externalStudentId ?? null,
       language: details.language,
       status: "not_started",
@@ -197,6 +200,7 @@ function contextFor(
     candidateCourse: attempt.candidateCourse,
     candidateGender: attempt.candidateGender,
     collegeName: attempt.collegeName,
+    educationStatus: attempt.educationStatus,
     candidateIntroduction: introduction ?? null,
     priorAttempts: priorAttempts ?? null,
     previouslyAsked: previouslyAsked ?? [],

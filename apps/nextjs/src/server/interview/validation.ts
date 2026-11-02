@@ -143,4 +143,10 @@ export const candidateDetailsSchema = z.object({
     .max(160)
     .nullish()
     .transform((v) => (v && v.length > 0 ? v : null)),
+  educationStatus: z
+    .string()
+    .trim()
+    .max(40)
+    .nullish()
+    .transform((v) => (v && v.length > 0 ? v : null)),
 });

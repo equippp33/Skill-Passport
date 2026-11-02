@@ -52,6 +52,7 @@ export async function beginAttemptAction(
     studentId: formData.get("studentId"),
     gender: formData.get("gender"),
     collegeName: formData.get("collegeName"),
+    educationStatus: formData.get("educationStatus"),
   });
 
   if (!parsed.success) {
@@ -109,6 +110,7 @@ export async function beginAttemptAction(
     externalStudentId: parsed.data.studentId,
     gender: parsed.data.gender,
     collegeName: parsed.data.collegeName,
+    educationStatus: parsed.data.educationStatus,
   });
 
   // The only time this token leaves the server. From here on the cookie is
