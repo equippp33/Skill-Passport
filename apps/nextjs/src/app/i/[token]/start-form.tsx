@@ -36,6 +36,8 @@ interface StartPrefill {
   phone?: string;
   course?: string;
   studentId?: string;
+  gender?: string;
+  collegeName?: string;
 }
 
 /**
@@ -68,6 +70,14 @@ export function StartForm({
       {/* Partner student id, carried straight through — not shown or editable. */}
       {initial?.studentId ? (
         <input type="hidden" name="studentId" value={initial.studentId} />
+      ) : null}
+      {/* Partner-supplied context (gender, college), likewise carried straight
+          through — never shown to or edited by the candidate. */}
+      {initial?.gender ? (
+        <input type="hidden" name="gender" value={initial.gender} />
+      ) : null}
+      {initial?.collegeName ? (
+        <input type="hidden" name="collegeName" value={initial.collegeName} />
       ) : null}
 
       <div>

@@ -189,6 +189,14 @@ export const interviewAttemptsTable = pgTable(
      *  lets the first one be prepared before the interview begins. */
     candidateCourse: text("candidate_course"),
     /**
+     * Gender and college, carried through from the partner's integration link
+     * (never asked of the candidate). Used only as extra LLM context — natural
+     * pronouns and light rapport — never as a scored or questioned topic. Null
+     * for ordinary candidates and whenever the partner does not send them.
+     */
+    candidateGender: text("candidate_gender"),
+    collegeName: text("college_name"),
+    /**
      * The partner's own student id, carried through the integration link so the
      * completed result can be posted back keyed to their record. Null for
      * candidates who came through a normal shared link.

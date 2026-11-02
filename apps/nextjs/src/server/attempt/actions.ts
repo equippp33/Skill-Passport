@@ -50,6 +50,8 @@ export async function beginAttemptAction(
     language: formData.get("language"),
     course: formData.get("course"),
     studentId: formData.get("studentId"),
+    gender: formData.get("gender"),
+    collegeName: formData.get("collegeName"),
   });
 
   if (!parsed.success) {
@@ -105,6 +107,8 @@ export async function beginAttemptAction(
     language: parsed.data.language as InterviewLanguageKey,
     course: parsed.data.course,
     externalStudentId: parsed.data.studentId,
+    gender: parsed.data.gender,
+    collegeName: parsed.data.collegeName,
   });
 
   // The only time this token leaves the server. From here on the cookie is

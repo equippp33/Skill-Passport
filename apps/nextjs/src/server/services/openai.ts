@@ -650,24 +650,41 @@ export async function generateDoubtResponse(args: {
   languageName: string;
   /** BCP-47 code, for the transliteration backstop on the spoken reply. */
   languageCode: string;
+  /**
+   * The candidate said they do not know / cannot answer (not just a doubt about
+   * a word). The reply reassures and re-asks more simply instead of explaining,
+   * giving them one real chance before the question is skipped.
+   */
+  givingUp?: boolean;
 }): Promise<string> {
+  const scriptRule =
+    args.languageName === "English"
+      ? "Speak in simple everyday English."
+      : `Speak in ${args.languageName} written in that language's OWN script (never Latin letters).`;
   const result = await requestStructured({
-    instructions: [
-      "You are a warm, patient interviewer. The candidate did NOT answer your",
-      "question — they raised a doubt about it. Reply BRIEFLY, as words spoken",
-      // English has no other script to ask for. Telling the model "never
-      // Latin letters" for an English interview made it write the reply in
-      // Devanagari, which the voice then rejected — so no explanation was
-      // ever heard and the question was simply replayed.
-      args.languageName === "English"
-        ? "aloud, in simple everyday English. If they did not understand a particular word,"
-        : `aloud, in ${args.languageName} written in that language's OWN script (never Latin letters). If they did not understand a particular word,`,
-      "explain THAT word in simple everyday terms. If they could not follow,",
-      "restate the question's meaning simply. If they said nothing meaningful,",
-      "gently encourage them. Always end by inviting them to answer. One or two",
-      "short sentences. NEVER answer the question for them or give an example",
-      "answer.",
-    ].join(" "),
+    instructions: args.givingUp
+      ? [
+          "You are a warm, patient recruiter. The candidate said they do not",
+          "know or cannot answer. Do NOT move on yet. Reassure them warmly that",
+          "there is no right or wrong answer, then re-ask the SAME question more",
+          `simply, inviting any small example from everyday life. ${scriptRule}`,
+          "One or two short sentences. NEVER answer the question for them or give",
+          "an example answer.",
+        ].join(" ")
+      : [
+          "You are a warm, patient interviewer. The candidate did NOT answer your",
+          "question — they raised a doubt about it. Reply BRIEFLY, as words spoken",
+          // English has no other script to ask for. Telling the model "never
+          // Latin letters" for an English interview made it write the reply in
+          // Devanagari, which the voice then rejected — so no explanation was
+          // ever heard and the question was simply replayed.
+          `${scriptRule} If they did not understand a particular word,`,
+          "explain THAT word in simple everyday terms. If they could not follow,",
+          "restate the question's meaning simply. If they said nothing meaningful,",
+          "gently encourage them. Always end by inviting them to answer. One or two",
+          "short sentences. NEVER answer the question for them or give an example",
+          "answer.",
+        ].join(" "),
     input: [
       `Your question was: ${args.question}`,
       `The candidate said: ${untrusted("CANDIDATE", args.doubtTranscript)}`,

@@ -28,6 +28,13 @@ export interface InterviewContext {
   /** The candidate's course / field of study, from the start form. */
   candidateCourse?: string | null;
   /**
+   * Partner-supplied context, present only on integration candidates. Gender is
+   * for natural pronouns/framing ONLY — never a topic or a scored factor (see
+   * the protected-characteristics rule). College is for light rapport only.
+   */
+  candidateGender?: string | null;
+  collegeName?: string | null;
+  /**
    * What the candidate said in the opening language probe — their name and a
    * little about their work. Untrusted content, but genuinely useful: without
    * it every question is asked into a vacuum.
@@ -91,9 +98,12 @@ export function interviewerRules(ctx: InterviewContext): string {
   const firstName = ctx.candidateName?.trim().split(/\s+/)[0] ?? null;
 
   return [
-    `You are a friendly interviewer running a WORKPLACE SKILLS assessment.`,
-    `You speak like a person, not like a form. Someone reading your question`,
-    `out loud should sound like a colleague asking, not a news anchor reading.`,
+    `You are a warm, friendly recruiter having a relaxed screening conversation`,
+    `with the candidate — a WORKPLACE SKILLS assessment, not a quiz or a form.`,
+    `You speak like a person: someone reading your question out loud should`,
+    `sound like an encouraging recruiter chatting, not a news anchor reading.`,
+    `Put the candidate at ease the way a good recruiter does — but NEVER state`,
+    `or imply they are hired, rejected, shortlisted, or guaranteed anything.`,
     ``,
     `## Language`,
     `The interview is SPOKEN to the candidate in ${lang}.`,
@@ -341,6 +351,20 @@ export function contextBlock(ctx: InterviewContext): string {
           `in ordinary everyday life, not their field of study.`,
         ]
       : []),
+    ...(ctx.collegeName
+      ? [
+          `The candidate's college / institution is: ${ctx.collegeName}. You may`,
+          `use it for a touch of warm rapport if it fits naturally; never build a`,
+          `scenario or a scored question around it.`,
+        ]
+      : []),
+    ...(ctx.candidateGender
+      ? [
+          `The candidate's gender is: ${ctx.candidateGender}. Use it ONLY for`,
+          `natural pronouns and gentle framing. NEVER ask about it, mention it,`,
+          `or let it affect scoring — it is a protected characteristic.`,
+        ]
+      : []),
     ...(ctx.priorAttempts
       ? [
           ``,
@@ -373,24 +397,23 @@ export function contextBlock(ctx: InterviewContext): string {
 }
 
 /**
- * The three AI-written questions (by skill-question number) allowed to use
- * the candidate's name.
+ * The TWO AI-written questions (by skill-question number) allowed to use the
+ * candidate's name.
  *
- * Per candidate rather than fixed, so it does not land on the same questions
- * for everyone, but derived from the name rather than random: questions are
- * prepared ahead in separate calls, and every one of those calls must agree on
- * which three they are. Spread out (gaps of at least three, then two) so
- * they never feel clustered. Questions 2-10 are the AI-written ones (1 is
- * the fixed bank).
+ * Kept to two (down from three — client feedback that the name came up too
+ * often) and placed far apart so they never cluster. Per candidate rather than
+ * fixed, so it does not land on the same questions for everyone, but derived
+ * from the name rather than random: questions are prepared ahead in separate
+ * calls, and every one of those calls must agree on which two they are.
+ * Questions 2-10 are the AI-written ones (1 is the fixed bank).
  */
 export function nameQuestionNumbers(candidateName: string | null | undefined): number[] {
   const name = candidateName?.trim().toLowerCase() ?? "";
   let hash = 0;
   for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  const first = 2 + (hash % 3); // 2..4
-  const second = first + 3 + ((hash >>> 3) % 2); // 5..8
-  const third = second + 2 + ((hash >>> 5) % (9 - second)); // second+2..10
-  return [first, second, third];
+  const first = 2 + (hash % 3); // 2..4 (early)
+  const second = Math.min(first + 5 + ((hash >>> 3) % 3), 10); // gap of >= 5, late
+  return [first, second];
 }
 
 /** One line telling the model whether THIS question may use the name. */

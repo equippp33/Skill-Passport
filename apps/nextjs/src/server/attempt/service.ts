@@ -118,6 +118,9 @@ export interface CandidateDetails {
   course: string | null;
   /** Partner student id, when the candidate came through an integration link. */
   externalStudentId?: string | null;
+  /** Partner-supplied context for the LLM (pronouns / rapport only). */
+  gender?: string | null;
+  collegeName?: string | null;
 }
 
 /**
@@ -141,6 +144,8 @@ export async function createAttempt(
       candidateEmail: details.email,
       candidatePhone: details.phone,
       candidateCourse: details.course,
+      candidateGender: details.gender ?? null,
+      collegeName: details.collegeName ?? null,
       externalStudentId: details.externalStudentId ?? null,
       language: details.language,
       status: "not_started",
@@ -190,6 +195,8 @@ function contextFor(
     language: resolveInterviewLanguage(attempt.language),
     candidateName: attempt.candidateName,
     candidateCourse: attempt.candidateCourse,
+    candidateGender: attempt.candidateGender,
+    collegeName: attempt.collegeName,
     candidateIntroduction: introduction ?? null,
     priorAttempts: priorAttempts ?? null,
     previouslyAsked: previouslyAsked ?? [],
@@ -778,6 +785,7 @@ async function speakDoubtResponse(
   attempt: InterviewAttempt,
   turn: InterviewTurn,
   doubtTranscript: string,
+  givingUp = false,
 ): Promise<void> {
   const language = resolveInterviewLanguage(attempt.language ?? "english");
 
@@ -790,6 +798,7 @@ async function speakDoubtResponse(
       doubtTranscript,
       languageName: language.promptName,
       languageCode: language.code,
+      givingUp,
     });
   } catch (error) {
     console.error(
@@ -1039,11 +1048,12 @@ async function transcribeSegments(
  */
 const doubtCounts = new Map<string, number>();
 /**
- * Zero: "skip" or "I don't know" moves straight on (client ask). It used to
- * get one spoken nudge first, which candidates who had plainly said they did
- * not know found pointless.
+ * One: a first "skip" / "I don't know" earns ONE warm, re-framed nudge that
+ * reassures the candidate and re-asks the question more simply (client ask —
+ * give them a chance to answer before the skip is recorded). A second give-up
+ * on the same question then moves on, so nobody is stuck in a loop.
  */
-const MAX_DOUBTS_BEFORE_SKIP = 0;
+const MAX_DOUBTS_BEFORE_SKIP = 1;
 
 /**
  * Genuine questions ABOUT the question ("explain it", "what does job mean?")
@@ -1286,7 +1296,9 @@ async function processTurnScoped(
           clarificationCounts.delete(key);
           await skipTurn(attempt, interview, turn.turnNumber);
         } else {
-          await speakDoubtResponse(attempt, turn, transcript);
+          // A give-up gets an encouraging re-frame; a plain doubt gets the
+          // usual word/meaning explanation.
+          await speakDoubtResponse(attempt, turn, transcript, givingUp);
         }
       }
       return;

@@ -29,6 +29,9 @@ export interface StartPrefill {
   course?: string;
   /** Partner student id (student_uuid), echoed back with the result. */
   studentId?: string;
+  /** Extra LLM context from the partner — never shown to the candidate. */
+  gender?: string;
+  collegeName?: string;
 }
 
 const IV_BYTES = 12;
@@ -89,6 +92,8 @@ export function decodePrefill(
       phone: str(p.phone),
       course: str(p.course),
       studentId: str(p.studentId),
+      gender: str(p.gender),
+      collegeName: str(p.collegeName),
     };
   } catch {
     return null;

@@ -125,4 +125,22 @@ export const candidateDetailsSchema = z.object({
     // alone rejects null and would fail every ordinary candidate's submit.
     .nullish()
     .transform((v) => (v && v.length > 0 ? v : null)),
+  /**
+   * Gender and college name, carried through as hidden fields on integration
+   * links (supplied by the partner, never asked of the candidate). Used only as
+   * extra context for the LLM — natural pronouns, light rapport. Same nullish
+   * handling as studentId so an ordinary link that omits them still submits.
+   */
+  gender: z
+    .string()
+    .trim()
+    .max(32)
+    .nullish()
+    .transform((v) => (v && v.length > 0 ? v : null)),
+  collegeName: z
+    .string()
+    .trim()
+    .max(160)
+    .nullish()
+    .transform((v) => (v && v.length > 0 ? v : null)),
 });
