@@ -184,6 +184,29 @@ export const TAKE_YOUR_TIME_BY_KEY: Record<InterviewLanguageKey, string> = {
 };
 
 /**
+ * A standing reassurance shown on screen WHILE each question is asked — not
+ * spoken, just a quiet line under the question to keep a nervous candidate at
+ * ease (client ask: messages that promote confidence and clarity). One per
+ * language so it reads in the interview's own script.
+ */
+export const REASSURANCE_BY_KEY: Record<InterviewLanguageKey, string> = {
+  english:
+    "There's no right or wrong answer — take your time and just share your thoughts.",
+  hindi: "कोई सही या गलत जवाब नहीं है — आराम से, जो मन में हो वही बताइए।",
+  marathi: "कोणतंही उत्तर बरोबर किंवा चूक नसतं — आरामात, मनात येईल ते सांगा.",
+  bengali: "কোনো সঠিক বা ভুল উত্তর নেই — ধীরে-সুস্থে, যা মনে আসে তাই বলুন।",
+  gujarati: "કોઈ સાચો કે ખોટો જવાબ નથી — નિરાંતે, મનમાં હોય તે કહો.",
+  kannada:
+    "ಸರಿ ಅಥವಾ ತಪ್ಪು ಉತ್ತರ ಎಂಬುದಿಲ್ಲ — ನಿಧಾನವಾಗಿ, ಮನಸ್ಸಿನಲ್ಲಿರುವುದನ್ನು ಹೇಳಿ.",
+  malayalam: "ശരിയോ തെറ്റോ ആയ ഉത്തരമില്ല — സാവധാനം, മനസ്സിലുള്ളത് പറയൂ.",
+  odia: "କୌଣସି ଠିକ୍ କିମ୍ବା ଭୁଲ୍ ଉତ୍ତର ନାହିଁ — ଧୀରେ, ମନରେ ଯାହା ଅଛି କୁହନ୍ତୁ।",
+  punjabi: "ਕੋਈ ਸਹੀ ਜਾਂ ਗਲਤ ਜਵਾਬ ਨਹੀਂ ਹੈ — ਆਰਾਮ ਨਾਲ, ਜੋ ਮਨ ਵਿੱਚ ਹੈ ਦੱਸੋ।",
+  tamil:
+    "சரி அல்லது தவறு என்று பதில் இல்லை — நிதானமாக, மனதில் உள்ளதைச் சொல்லுங்கள்.",
+  telugu: "సరైన లేదా తప్పు సమాధానం అంటూ ఏమీ లేదు — తీరిగ్గా, మనసులో ఉన్నది చెప్పండి.",
+};
+
+/**
  * The understanding check, played after a longer silence — before the visible
  * skip countdown. Phrased to invite ACTION ("…or should I repeat it?") rather
  * than a yes/no, so a bare "yes" is not mistaken for the answer. One per

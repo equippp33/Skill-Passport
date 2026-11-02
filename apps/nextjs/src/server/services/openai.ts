@@ -526,6 +526,19 @@ export async function generateQuestion(args: {
   const { ctx, skill, turnNumber, history } = args;
   const isFirst = turnNumber <= 1;
 
+  // #7 — low-confidence detection. If the last couple of answers were very
+  // short / unsure, don't leave "make it simpler" to the standing rule: force
+  // an easier, reassuring question for THIS turn. Deterministic in code so it
+  // fires reliably, not only when the model happens to notice.
+  const recentAnswers = history
+    .filter((h) => h.answerTranscript && h.answerTranscript.trim().length > 0)
+    .slice(-2);
+  const struggling =
+    recentAnswers.length > 0 &&
+    recentAnswers.every(
+      (h) => h.answerTranscript!.trim().split(/\s+/).filter(Boolean).length <= 8,
+    );
+
   const result = await requestStructured({
     instructions: interviewerRules(ctx),
     input: [
@@ -550,6 +563,16 @@ export async function generateQuestion(args: {
       "",
       questionStyleBlock(skill, ctx),
       nameUseBlock(ctx, turnNumber),
+      ...(struggling
+        ? [
+            "",
+            "IMPORTANT — the candidate's last answers were very short or unsure.",
+            "Make THIS question clearly SIMPLER and more concrete than usual, open",
+            "with a brief warm word of reassurance, and keep it to an easy everyday",
+            "moment they can answer in a sentence. One short clause, then the",
+            "question — no stacked clauses.",
+          ]
+        : []),
       "",
       isFirst
         ? `This is the START of the interview and question 1 of ${ctx.questionCount}.`

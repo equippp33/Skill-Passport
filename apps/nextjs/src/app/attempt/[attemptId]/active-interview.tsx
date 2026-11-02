@@ -11,6 +11,8 @@ import { SubmittingOverlay } from "./submitting-overlay";
 import { Waveform } from "./waveform";
 import { t } from "~/config/messages";
 import type { Messages } from "~/config/messages";
+import { REASSURANCE_BY_KEY } from "~/config/greeting";
+import { languageFromCode } from "~/config/languages";
 import type { WorkSkillId } from "~/config/work-skills";
 import { useAnswerRecorder } from "~/hooks/use-answer-recorder";
 import { useSpeechActivity } from "~/hooks/use-speech-activity";
@@ -1795,6 +1797,15 @@ export function ActiveInterview({
               {turn.questionTranslation}
             </p>
           ) : null}
+
+          {/* A quiet standing reassurance under every question, in the interview
+              language — keeps a nervous candidate at ease (confidence + clarity). */}
+          <p
+            className="mx-auto mt-4 max-w-2xl text-xs leading-relaxed text-content-muted/80"
+            lang={languageCode}
+          >
+            {REASSURANCE_BY_KEY[languageFromCode(languageCode) ?? "english"]}
+          </p>
 
           {turn.questionAudioId ? (
             <audio
