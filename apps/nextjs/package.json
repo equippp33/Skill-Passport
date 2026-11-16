@@ -16,6 +16,7 @@
     "test": "pnpm with-env vitest run",
     "test:watch": "pnpm with-env vitest",
     "db:generate": "drizzle-kit generate",
+    "db:check": "node scripts/db-check.mjs",
     "db:migrate": "pnpm with-env drizzle-kit migrate",
     "db:push": "pnpm with-env drizzle-kit push",
     "db:studio": "pnpm with-env drizzle-kit studio",
