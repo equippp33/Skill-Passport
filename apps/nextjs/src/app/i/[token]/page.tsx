@@ -106,7 +106,11 @@ export default async function CandidateLandingPage({
 
         <Card className="min-w-0">
           <CardContent className="space-y-4 pt-5">
-            <StartForm token={token} initial={prefill} />
+            <StartForm
+              token={token}
+              initial={prefill}
+              prefillToken={prefill?.studentId ? p : null}
+            />
 
             <p className="text-xs leading-relaxed text-content-muted">
               The interview is spoken. Find a quiet, well-lit spot and have your

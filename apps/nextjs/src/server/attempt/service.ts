@@ -1395,7 +1395,7 @@ function primaryTurns(turns: InterviewTurn[]): InterviewTurn[] {
 }
 
 /**
- * The next primary skill to ask, or null when all ten have been covered.
+ * The next primary skill to ask, or null when all eleven have been covered.
  *
  * Data-driven rather than derived from the turn number: dynamic follow-ups mean
  * turn numbers no longer map one-to-one onto skills, so the schedule is read

@@ -79,8 +79,8 @@ export default async function InterviewDetailPage({
              * the counters, not free ones.
              *
              * OpenAI and Sarvam get a line each rather than one "model" line,
-             * because the fallback moves work between them and their rates are
-             * about six times apart.
+             * because the fallback moves work between them and they price
+             * tokens differently.
              *
              * A "~" means part of the figure is modelled: Sarvam recorded no
              * tokens before 6 October 2026, so for older interviews its share
@@ -99,6 +99,11 @@ export default async function InterviewDetailPage({
                     ["Sarvam", details.devCosts.sarvam, details.devCosts.hasEstimate],
                     ["TTS", details.devCosts.tts, false],
                     ["STT", details.devCosts.stt, false],
+                    [
+                      "Transliteration",
+                      details.devCosts.transliteration,
+                      false,
+                    ],
                     [
                       "Avg / completed",
                       details.devCosts.average ?? "₹—",

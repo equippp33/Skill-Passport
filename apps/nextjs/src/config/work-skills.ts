@@ -6,7 +6,7 @@
  * highly technical questions.
  *
  * Order is meaningful: turns are assigned to skills in this order, so every
- * interview covers all ten.
+ * interview covers all eleven.
  */
 
 import { WORK_READINESS_QUESTIONS } from "./work-readiness-pool";

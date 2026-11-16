@@ -13,7 +13,7 @@ import { env } from "~/env";
  * domain ever changes or a second environment appears; changing it here
  * means a rebuild, changing the variable does not.
  */
-const PRODUCTION_ORIGIN = "https://skillpassport.threepointolabs.com";
+const PRODUCTION_ORIGIN = "https://devskillpassport.threepointolabs.com";
 
 /**
  * The origin this app is reachable at, from the server's point of view.

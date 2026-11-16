@@ -261,7 +261,7 @@ describe("message dictionaries", () => {
     expect(MESSAGES.hindi.instructions.start).not.toBe(en.instructions.start);
   });
 
-  it("names all ten skills in every language", () => {
+  it("names every skill in every language", () => {
     for (const dict of Object.values(MESSAGES)) {
       for (const id of WORK_SKILL_IDS) {
         expect(dict.skills[id]).toBeTruthy();
@@ -282,8 +282,8 @@ describe("message dictionaries", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("work skill framework", () => {
-  it("has exactly the ten required skills", () => {
-    expect(WORK_SKILL_COUNT).toBe(10);
+  it("has exactly the eleven required skills", () => {
+    expect(WORK_SKILL_COUNT).toBe(11);
     expect(WORK_SKILLS.map((s) => s.id)).toEqual([...WORK_SKILL_IDS]);
   });
 
@@ -294,37 +294,37 @@ describe("work skill framework", () => {
     }
   });
 
-  it("covers all ten skills across a 10-question interview", () => {
+  it("covers all eleven skills across an 11-question interview", () => {
     const covered = Array.from(
-      { length: 10 },
-      (_, i) => skillForTurn(i + 1, 10).id,
+      { length: 11 },
+      (_, i) => skillForTurn(i + 1, 11).id,
     );
-    expect(new Set(covered).size).toBe(10);
-    expect(covered[0]).toBe("reliability");
-    expect(covered[9]).toBe("customer_orientation");
+    expect(new Set(covered).size).toBe(11);
+    expect(covered[0]).toBe("work_readiness");
+    expect(covered[10]).toBe("customer_orientation");
   });
 
-  it("pairs consecutive turns per skill in a 20-question interview", () => {
-    expect(skillForTurn(1, 20).id).toBe(skillForTurn(2, 20).id);
-    expect(skillForTurn(3, 20).id).not.toBe(skillForTurn(2, 20).id);
+  it("pairs consecutive turns per skill in a 22-question interview", () => {
+    expect(skillForTurn(1, 22).id).toBe(skillForTurn(2, 22).id);
+    expect(skillForTurn(3, 22).id).not.toBe(skillForTurn(2, 22).id);
 
     const covered = Array.from(
-      { length: 20 },
-      (_, i) => skillForTurn(i + 1, 20).id,
+      { length: 22 },
+      (_, i) => skillForTurn(i + 1, 22).id,
     );
-    expect(new Set(covered).size).toBe(10);
+    expect(new Set(covered).size).toBe(11);
   });
 
   it("marks the second question on a skill as a follow-up", () => {
-    expect(isFollowUpTurn(1, 20)).toBe(false);
-    expect(isFollowUpTurn(2, 20)).toBe(true);
-    expect(isFollowUpTurn(3, 20)).toBe(false);
+    expect(isFollowUpTurn(1, 22)).toBe(false);
+    expect(isFollowUpTurn(2, 22)).toBe(true);
+    expect(isFollowUpTurn(3, 22)).toBe(false);
     // With one question per skill nothing is a follow-up.
-    expect(isFollowUpTurn(2, 10)).toBe(false);
+    expect(isFollowUpTurn(2, 11)).toBe(false);
   });
 
   it("never runs past the last skill", () => {
-    expect(skillForTurn(99, 10).id).toBe("customer_orientation");
+    expect(skillForTurn(99, 11).id).toBe("customer_orientation");
   });
 
   it("defaults to exactly one question per skill", () => {

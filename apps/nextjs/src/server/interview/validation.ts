@@ -112,9 +112,10 @@ export const candidateDetailsSchema = z.object({
     .or(z.literal(""))
     .transform((v) => (v && v.length > 0 ? v : null)),
   /**
-   * Partner student id, carried through as a hidden field on integration
-   * links. Absent for ordinary candidates; never shown or validated for the
-   * candidate, only stored so their result can be posted back.
+   * Partner student id, read by the action from the encrypted `?p=` token of
+   * an integration link (never from a form field the browser could edit).
+   * Absent for ordinary candidates; only stored so their result can be posted
+   * back.
    */
   studentId: z
     .string()

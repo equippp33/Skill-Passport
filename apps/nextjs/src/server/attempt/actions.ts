@@ -7,10 +7,12 @@ import {
   attemptEligibility,
   getAttemptForCandidate,
   getInterviewByPublicToken,
+  holdsAttemptCookie,
   MAX_ATTEMPTS_PER_CANDIDATE,
   resumableAttemptFor,
   setAttemptCookie,
 } from "./access";
+import { decodePrefill } from "~/server/integrations/prefill";
 import { candidateDetailsSchema } from "~/server/interview/validation";
 import type { InterviewLanguageKey } from "~/config/languages";
 import {
@@ -49,7 +51,11 @@ export async function beginAttemptAction(
     phone: formData.get("phone"),
     language: formData.get("language"),
     course: formData.get("course"),
-    studentId: formData.get("studentId"),
+    // The partner student id is NEVER taken from a plain form field: it is
+    // read back out of the encrypted `?p=` token the partner link carried, so
+    // a candidate cannot change it to land on (or report into) another
+    // student's record. A missing or tampered token simply means no id.
+    studentId: decodePrefill(formString(formData.get("prefill")))?.studentId,
   });
 
   if (!parsed.success) {
@@ -64,15 +70,24 @@ export async function beginAttemptAction(
   }
 
   // Resume before anything else: if this candidate has an unfinished attempt,
-  // take them back INTO it rather than starting fresh. Matched on identity, so it
-  // works even without the cookie (new device / cleared cookies). Outranks the
-  // retake cap — an unfinished run is not a new retry. `redirect` throws, so it
-  // must stay outside any try/catch.
+  // take them back INTO it rather than starting fresh. Outranks the retake cap —
+  // an unfinished run is not a new retry. `redirect` throws, so it must stay
+  // outside any try/catch.
+  //
+  // Only a VERIFIED identity may resume: the partner student id (which comes
+  // from the encrypted link, so it works on a new device too), or this
+  // browser's own attempt cookie. A typed email alone is not enough — anyone
+  // who knew a candidate's email could otherwise walk into their interview.
+  // Such a candidate simply starts a fresh attempt; an unfinished one never
+  // counts against the retake cap.
   const resumable = await resumableAttemptFor(interview.id, {
     externalStudentId: parsed.data.studentId,
     email: parsed.data.email,
   });
-  if (resumable) {
+  if (
+    resumable &&
+    (parsed.data.studentId || (await holdsAttemptCookie(resumable)))
+  ) {
     await setAttemptCookie(resumable.accessToken);
     redirect(`/attempt/${resumable.id}`);
   }
@@ -111,6 +126,10 @@ export async function beginAttemptAction(
   // what proves the candidate owns this attempt.
   await setAttemptCookie(accessToken);
   redirect(`/attempt/${attemptId}`);
+}
+
+function formString(value: FormDataEntryValue | null): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 /**

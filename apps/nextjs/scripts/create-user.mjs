@@ -1,11 +1,11 @@
 /**
- * Create (or update the password of) an interview candidate.
+ * Create (or update the password of) an admin account.
  *
- * There is deliberately no self-service registration in this app — the brief
- * kept authentication to email + password only — so accounts are provisioned
- * with this script.
+ * Admins can also self-register at `/signup`; this script is for provisioning
+ * an account from the command line, or resetting a password (it upserts on
+ * email).
  *
- *   node scripts/create-user.mjs candidate@example.com "correct horse battery"
+ *   node scripts/create-user.mjs admin@example.com "correct horse battery"
  *
  * Written in plain ESM rather than TypeScript so it runs with bare `node`
  * without a loader or path-alias resolution.

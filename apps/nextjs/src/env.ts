@@ -163,11 +163,6 @@ export const env = createEnv({
      * for latency over depth — it sits on the candidate's critical path.
      */
     SARVAM_CHAT_MODEL: z.string().min(1).default("sarvam-105b-conversations"),
-    /**
-     * Scoring and the closing report, where nobody is waiting on the
-     * response. A reasoning model, so it is slower but more considered.
-     */
-    SARVAM_ANALYSIS_MODEL: z.string().min(1).default("sarvam-105b"),
 
     // --- Cloudflare R2 (answer + question audio storage) ---
     CLOUDFLARE_R2_ACCESS_KEY_ID: z.string().min(1),

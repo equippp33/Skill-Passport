@@ -49,9 +49,12 @@ interface StartPrefill {
 export function StartForm({
   token,
   initial,
+  prefillToken,
 }: {
   token: string;
   initial?: StartPrefill | null;
+  /** The raw `?p=` token, when it decrypted to a partner student. */
+  prefillToken?: string | null;
 }) {
   const [phone, setPhone] = useState(
     initial?.phone ? normalisePhoneInput(initial.phone) : "",
@@ -65,9 +68,11 @@ export function StartForm({
     <form action={formAction} className="space-y-3" noValidate>
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
 
-      {/* Partner student id, carried straight through — not shown or editable. */}
-      {initial?.studentId ? (
-        <input type="hidden" name="studentId" value={initial.studentId} />
+      {/* The encrypted partner token, posted back so the server can read the
+          student id from it. The id itself is never a form field: a plain
+          hidden value could be edited in the browser. */}
+      {prefillToken ? (
+        <input type="hidden" name="prefill" value={prefillToken} />
       ) : null}
 
       <div>

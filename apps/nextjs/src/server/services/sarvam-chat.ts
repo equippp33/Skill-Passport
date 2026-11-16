@@ -4,7 +4,12 @@ import type { z } from "zod";
 
 import { env } from "~/env";
 import { recordUsage } from "~/server/interview/usage";
-import { ProviderError, isRetryableStatus, withRetry } from "./errors";
+import {
+  ProviderError,
+  isRetryableStatus,
+  parseRetryAfter,
+  withRetry,
+} from "./errors";
 
 /**
  * Sarvam chat completions — the interview "brain".
@@ -77,7 +82,8 @@ function logProviderFailure(op: string, status: number, bodyExcerpt: string) {
 /**
  * Which model answers. Both kinds now use the conversational one.
  *
- * `analysis` used to select `SARVAM_ANALYSIS_MODEL` — a REASONING model — on
+ * `analysis` used to select a separate REASONING model (`sarvam-105b`, via a
+ * `SARVAM_ANALYSIS_MODEL` setting since removed) on
  * the reasoning that nobody waits for scoring, so it may as well be
  * considered. Measured on twenty real answers, both given production's token
  * budget and run twenty-up:
@@ -276,6 +282,7 @@ export async function requestStructuredViaSarvam<T>(args: {
           "We could not reach the interviewer. Please try again in a moment.",
         retryable: isRetryableStatus(response.status),
         status: response.status,
+        retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
       });
     }
 

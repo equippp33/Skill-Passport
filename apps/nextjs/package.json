@@ -41,6 +41,7 @@
     "react-dom": "catalog:react19",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.6.0",
+    "ws": "^8.21.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {
