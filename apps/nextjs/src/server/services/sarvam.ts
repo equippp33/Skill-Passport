@@ -2,7 +2,12 @@ import "server-only";
 import { recordUsage } from "~/server/interview/usage";
 
 import { env } from "~/env";
-import { ProviderError, isRetryableStatus, withRetry } from "./errors";
+import {
+  ProviderError,
+  isRetryableStatus,
+  parseRetryAfter,
+  withRetry,
+} from "./errors";
 import { timed } from "./timing";
 
 const kb = (bytes: number) => `${Math.round(bytes / 1024)}KB`;
@@ -144,6 +149,7 @@ export async function transcribeAudio(input: {
           "We could not transcribe your answer just now. Please try again.",
         retryable: isRetryableStatus(response.status),
         status: response.status,
+        retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
       });
     }
 
@@ -221,6 +227,12 @@ export async function transliterateToNative(
       TRANSLITERATE_TIMEOUT_MS,
       "transliterate",
     );
+
+    if (response.ok) {
+      // Billed per input character, so count what was sent once Sarvam
+      // accepted it.
+      recordUsage({ transliterationCharacters: trimmed.length });
+    }
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
@@ -331,6 +343,7 @@ export async function generateSpeech(
         userMessage: "Question audio is unavailable right now.",
         retryable: isRetryableStatus(response.status),
         status: response.status,
+        retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
       });
     }
 

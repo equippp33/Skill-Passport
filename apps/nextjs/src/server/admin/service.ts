@@ -472,6 +472,8 @@ export async function getAttemptCosts(
       llmOutputTokens: interviewAttemptsTable.llmOutputTokens,
       sarvamInputTokens: interviewAttemptsTable.sarvamInputTokens,
       sarvamOutputTokens: interviewAttemptsTable.sarvamOutputTokens,
+      transliterationCharacters:
+        interviewAttemptsTable.transliterationCharacters,
     })
     .from(interviewAttemptsTable)
     .innerJoin(
@@ -758,6 +760,7 @@ interface UsageRow {
   llmOutputTokens: number;
   sarvamInputTokens: number;
   sarvamOutputTokens: number;
+  transliterationCharacters: number;
 }
 
 /** One attempt's bill, in both the formatted and the summable form. */
@@ -823,6 +826,7 @@ async function readCosts(rows: UsageRow[]): Promise<Map<string, CostReading>> {
       ttsCharacters: speech ? r.ttsCharacters : (questionChars.get(r.id) ?? 0),
       openaiInputTokens: r.llmInputTokens,
       openaiOutputTokens: r.llmOutputTokens,
+      transliterationCharacters: r.transliterationCharacters,
       ...sarvam,
     });
 
@@ -843,12 +847,21 @@ function sumReadings(readings: (CostReading | undefined)[]): CostReading {
     (acc, r) => ({
       stt: acc.stt + r.breakdown.stt,
       tts: acc.tts + r.breakdown.tts,
+      transliteration: acc.transliteration + r.breakdown.transliteration,
       openai: acc.openai + r.breakdown.openai,
       sarvam: acc.sarvam + r.breakdown.sarvam,
       llm: acc.llm + r.breakdown.llm,
       total: acc.total + r.breakdown.total,
     }),
-    { stt: 0, tts: 0, openai: 0, sarvam: 0, llm: 0, total: 0 },
+    {
+      stt: 0,
+      tts: 0,
+      transliteration: 0,
+      openai: 0,
+      sarvam: 0,
+      llm: 0,
+      total: 0,
+    },
   );
   return {
     breakdown,
@@ -891,7 +904,9 @@ async function getTurnCounts(
 function describeCost(c: CostBreakdown): string {
   return `OpenAI ${formatInr(c.openai)} · Sarvam ${formatInr(
     c.sarvam,
-  )} · TTS ${formatInr(c.tts)} · STT ${formatInr(c.stt)}`;
+  )} · TTS ${formatInr(c.tts)} · STT ${formatInr(
+    c.stt,
+  )} · Transliteration ${formatInr(c.transliteration)}`;
 }
 
 export async function getInterviewDetails(
@@ -1023,6 +1038,7 @@ export async function getInterviewDetails(
           openai: formatInr(sum.breakdown.openai),
           sarvam: formatInr(sum.breakdown.sarvam),
           tts: formatInr(sum.breakdown.tts),
+          transliteration: formatInr(sum.breakdown.transliteration),
           stt: formatInr(sum.breakdown.stt),
           total: formatInr(sum.breakdown.total),
           // Averaged over the fully metered interviews ONLY. Dividing the

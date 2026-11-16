@@ -62,15 +62,15 @@ question (Sarvam TTS). Everything AI- or database-related lives inside
 ### The framework
 
 It is a **general employability assessment**, not a technical screen. Every
-interview covers ten workplace skills in a fixed order, defined once in
+interview covers eleven workplace skills in a fixed order, defined once in
 [`src/config/work-skills.ts`](apps/nextjs/src/config/work-skills.ts):
 
-reliability · responsibility · following instructions · attention to detail ·
-communication · teamwork · thinking and problem solving · learning and
-adaptability · initiative · customer orientation
+work readiness & aspirations · reliability · responsibility · following
+instructions · attention to detail · communication · teamwork · thinking and
+problem solving · learning and adaptability · initiative · customer orientation
 
 Turn `n` is mapped to a skill server-side, so coverage is deterministic and the
-model cannot wander. The result page shows all ten scores, marking any
+model cannot wander. The result page shows all eleven scores, marking any
 unanswered skill as "not assessed".
 
 **There is no setup step.** The framework is fixed, so "Start new assessment"
@@ -141,13 +141,14 @@ private bucket `ai-interview-recordings`, keyed as:
 ```
 
 Recordings are private and the bucket must stay that way — do not enable
-public access on it. Playback goes through `/api/interview/audio/[audioId]`,
+public access on it. Playback goes through `/api/media/[audioId]`,
 which verifies ownership and then redirects to a presigned URL valid for
 5 minutes.
 
-Sign in at `/login` and start an interview from `/interview`.
+Admins sign in at `/login` and manage interviews from `/admin`. Candidates
+never sign in: they open an interview's share link (`/i/<token>`).
 
-Candidates can self-register at `/signup` (email + password, same fields as
+Admins can also self-register at `/signup` (email + password, same fields as
 sign-in) and land on the dashboard signed in. `user:create` remains for
 provisioning an account from the command line.
 

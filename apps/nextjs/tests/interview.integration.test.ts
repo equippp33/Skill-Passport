@@ -224,14 +224,15 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
     expect(turns[0]!.skillId).toBeNull();
   });
 
-  it("leaves the language unset until the probe is answered", async () => {
+  it("keeps the language chosen on the start form", async () => {
     const { attemptId } = await newAttempt(alice);
     await startAttempt(attemptId);
 
     const attempt = await db.query.interviewAttemptsTable.findFirst({
       where: eq(interviewAttemptsTable.id, attemptId),
     });
-    expect(attempt?.language).toBeNull();
+    // Chosen up front and fixed for the whole interview.
+    expect(attempt?.language).toBe("english");
     expect(attempt?.needsLanguageChoice).toBe(false);
   });
 
@@ -244,9 +245,9 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
   });
 
   it("puts the skill questions after the probe", () => {
-    expect(skillForAttemptTurn(1, 10)).toBeNull();
-    expect(skillForAttemptTurn(2, 10)?.id).toBe("reliability");
-    expect(skillForAttemptTurn(11, 10)?.id).toBe("customer_orientation");
+    expect(skillForAttemptTurn(1, 11)).toBeNull();
+    expect(skillForAttemptTurn(2, 11)?.id).toBe("work_readiness");
+    expect(skillForAttemptTurn(12, 11)?.id).toBe("customer_orientation");
   });
 
   /* ------------------------------ turn claiming ---------------------------- */
@@ -503,12 +504,12 @@ describe.skipIf(!hasDb || !hasR2)("admin and candidate separation", () => {
 
   /* -------------------------------- reporting ------------------------------ */
 
-  it("reports all ten skills, marking unassessed ones as null", async () => {
+  it("reports all eleven skills, marking unassessed ones as null", async () => {
     const { attemptId } = await newAttempt(alice);
     await startAttempt(attemptId);
 
     const scores = aggregateSkillScores(await getTurns(attemptId));
-    expect(scores).toHaveLength(10);
+    expect(scores).toHaveLength(11);
     // The probe must not appear as a skill.
     expect(scores.every((s) => s.score === null)).toBe(true);
   });

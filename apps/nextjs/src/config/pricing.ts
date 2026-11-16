@@ -34,16 +34,27 @@ const SARVAM_OUTPUT_INR_PER_MTOK = 73.2;
 
 /* ------------------------------- OpenAI ---------------------------------- */
 
-/** `gpt-4.1` standard processing, per million tokens, in USD. */
-const OPENAI_INPUT_USD_PER_MTOK = 2.0;
-const OPENAI_OUTPUT_USD_PER_MTOK = 8.0;
+/**
+ * `gpt-4.1-mini` standard processing, per million tokens, in USD — the
+ * default `OPENAI_MODEL`. These were gpt-4.1 prices ($2 / $8), which overstated
+ * every OpenAI-served call about five times. If `OPENAI_MODEL` is changed,
+ * change these with it.
+ */
+const OPENAI_INPUT_USD_PER_MTOK = 0.4;
+const OPENAI_OUTPUT_USD_PER_MTOK = 1.6;
+
+/* ---------------------------- Transliteration ---------------------------- */
+
+/** Sarvam transliterate: ₹2 per 1,000 characters (pay as you go). */
+const SARVAM_TRANSLITERATE_INR_PER_CHAR = 2 / 1_000;
 
 /**
  * What an interview used.
  *
  * Model tokens are split by the provider that actually served the call rather
- * than totalled, because the same token costs about six times more at OpenAI
- * than at Sarvam (₹176 against ₹29.28 per million input). One combined figure
+ * than totalled, because the two providers price tokens differently (about
+ * ₹35 against ₹29.28 per million input, ₹141 against ₹73.20 per million
+ * output, for gpt-4.1-mini and sarvam-105b). One combined figure
  * could only be priced by assuming a provider, and that assumption is wrong
  * for every call the Sarvam circuit breaker handed to OpenAI — the calls that
  * are least visible and most expensive.
@@ -61,11 +72,14 @@ export interface InterviewUsage {
   openaiOutputTokens: number;
   sarvamInputTokens: number;
   sarvamOutputTokens: number;
+  /** Characters sent to Sarvam transliterate; 0 for English interviews. */
+  transliterationCharacters?: number;
 }
 
 export interface CostBreakdown {
   stt: number;
   tts: number;
+  transliteration: number;
   openai: number;
   sarvam: number;
   /** The model bill whoever served it — `openai + sarvam`. */
@@ -83,6 +97,8 @@ export interface CostBreakdown {
 export function interviewCost(usage: InterviewUsage): CostBreakdown {
   const stt = usage.sttMinutes * SARVAM_STT_INR_PER_MINUTE;
   const tts = usage.ttsCharacters * SARVAM_TTS_INR_PER_CHAR;
+  const transliteration =
+    (usage.transliterationCharacters ?? 0) * SARVAM_TRANSLITERATE_INR_PER_CHAR;
 
   const openai =
     ((usage.openaiInputTokens * OPENAI_INPUT_USD_PER_MTOK +
@@ -96,7 +112,15 @@ export function interviewCost(usage: InterviewUsage): CostBreakdown {
     1_000_000;
 
   const llm = openai + sarvam;
-  return { stt, tts, openai, sarvam, llm, total: stt + tts + llm };
+  return {
+    stt,
+    tts,
+    transliteration,
+    openai,
+    sarvam,
+    llm,
+    total: stt + tts + transliteration + llm,
+  };
 }
 
 /* ------------------------- Reconstructing Sarvam ------------------------- */

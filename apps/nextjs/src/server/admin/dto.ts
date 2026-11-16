@@ -120,8 +120,8 @@ export interface InterviewDetails {
     /**
      * The two model bills, separately.
      *
-     * Not one "model" line chosen by `AI_PROVIDER`: a token costs about six
-     * times more at OpenAI than at Sarvam, and the circuit breaker moves work
+     * Not one "model" line chosen by `AI_PROVIDER`: the two providers price
+     * tokens differently, and the circuit breaker moves work
      * between them mid-interview, so a single line could only be right by
      * luck. Either may be ₹0.00, which is a real answer — that provider did
      * no work under this link.
@@ -130,6 +130,7 @@ export interface InterviewDetails {
     sarvam: string;
     tts: string;
     stt: string;
+    transliteration: string;
     total: string;
     /**
      * Per COMPLETED interview — null when none have completed.

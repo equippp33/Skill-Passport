@@ -380,8 +380,8 @@ export function contextBlock(ctx: InterviewContext): string {
  * for everyone, but derived from the name rather than random: questions are
  * prepared ahead in separate calls, and every one of those calls must agree on
  * which three they are. Spread out (gaps of at least three, then two) so
- * they never feel clustered. Questions 2-10 are the AI-written ones (1 is
- * the fixed bank).
+ * they never feel clustered. Questions 2-11 are the AI-written ones (1 is
+ * the fixed Work Readiness bank); the three picked here fall within 2-10.
  */
 export function nameQuestionNumbers(candidateName: string | null | undefined): number[] {
   const name = candidateName?.trim().toLowerCase() ?? "";
@@ -506,8 +506,10 @@ export function frameworkBlock(): string {
     `## The ${WORK_SKILLS.length} skills this interview covers, in order`,
     ...WORK_SKILLS.map((s, i) => `${i + 1}. ${s.label} — ${s.definition}`),
     ``,
-    `Assess ONLY the skill named for the current question. The others are`,
-    `covered by their own questions.`,
+    `The current question assesses ONLY the skill named for it, and its score`,
+    `reflects that skill alone. The others are covered by their own questions;`,
+    `where the response asks for secondarySkills, evidence of another skill is`,
+    `reported there, never folded into this question's score.`,
   ].join("\n");
 }
 

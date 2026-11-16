@@ -260,8 +260,9 @@ export const interviewAttemptsTable = pgTable(
      * clips instead.
      *
      * Model tokens are counted PER PROVIDER rather than in one pair of
-     * columns, because the two are priced an order of magnitude apart —
-     * roughly ₹29 against ₹176 per million input tokens. A single total
+     * columns, because the two are priced differently — roughly ₹29
+     * against ₹35 per million input tokens, and about twice as much at
+     * OpenAI for output. A single total
      * cannot be costed without assuming which provider produced it, and that
      * assumption is wrong every time the Sarvam breaker falls back to OpenAI
      * mid-interview, which is precisely when it is least visible.
@@ -281,6 +282,10 @@ export const interviewAttemptsTable = pgTable(
     sarvamRequests: integer("sarvam_requests").notNull().default(0),
     sarvamInputTokens: integer("sarvam_input_tokens").notNull().default(0),
     sarvamOutputTokens: integer("sarvam_output_tokens").notNull().default(0),
+    /** Characters sent to Sarvam's transliterate API (billed per character). */
+    transliterationCharacters: integer("transliteration_characters")
+      .notNull()
+      .default(0),
 
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),

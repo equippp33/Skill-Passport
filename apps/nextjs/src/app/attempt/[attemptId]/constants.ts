@@ -55,26 +55,6 @@ export const SILENCE_ADVANCE_SECONDS = 8;
  * Any speech at all resets the ladder — it can never cut off someone talking.
  */
 /**
- * The "would you like to add anything?" flow (streaming path only).
- *
- * On the first pause we don't submit — we ask if they want to add more and keep
- * the mic open. If they stay quiet this long after the ask, the stashed answer
- * is submitted on its own. Covers the short "add?" clip plus a few seconds of
- * real listening. A reply of at most this many words is read as a decline
- * ("no", "that's all") and dropped; anything longer is appended to the answer.
- */
-export const ADD_WAIT_MS = 6000;
-export const ADD_DECLINE_MAX_WORDS = 3;
-
-/**
- * Only offer "add anything?" when the answer was SHORT — a barely-there reply
- * that probably has more behind it. If they actually spoke for longer than this
- * (measured from the first to the last partial transcript), they clearly said
- * their piece, so submit and move on without nagging.
- */
-export const ADD_MAX_ANSWER_MS = 3000;
-
-/**
  * The multi-part opening asks the next bit (hobbies, then location) after each
  * is answered, mic still recording. If the candidate stays silent on a bit this
  * long, move on to the next bit rather than stalling the interview at the start.

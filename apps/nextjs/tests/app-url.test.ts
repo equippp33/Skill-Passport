@@ -17,7 +17,7 @@ vi.mock("next/headers", () => ({
     Promise.resolve({ get: (key: string) => requestHeaders[key] ?? null }),
 }));
 
-const DOMAIN = "https://skillpassport.threepointolabs.com";
+const DOMAIN = "https://devskillpassport.threepointolabs.com";
 
 /** `~/env` snapshots process.env when it loads, so re-import after stubbing. */
 async function load() {
@@ -48,7 +48,7 @@ describe("origin used in candidate links", () => {
 
   it("uses the compiled domain in production, with nothing configured", async () => {
     vi.stubEnv("NODE_ENV", "production");
-    requestHeaders = { host: "skillpassport.threepointolabs.com" };
+    requestHeaders = { host: "devskillpassport.threepointolabs.com" };
 
     const { appUrl } = await load();
     expect(await appUrl()).toBe(DOMAIN);

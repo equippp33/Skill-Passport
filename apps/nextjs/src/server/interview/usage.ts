@@ -50,6 +50,7 @@ interface UsageDelta {
   sarvamRequests?: number;
   sarvamInputTokens?: number;
   sarvamOutputTokens?: number;
+  transliterationCharacters?: number;
 }
 
 const scope = new AsyncLocalStorage<{ attemptId: string }>();
@@ -94,6 +95,9 @@ export function recordUsage(delta: UsageDelta): void {
   }
   if (delta.sarvamOutputTokens) {
     set.sarvamOutputTokens = sql`${interviewAttemptsTable.sarvamOutputTokens} + ${delta.sarvamOutputTokens}`;
+  }
+  if (delta.transliterationCharacters) {
+    set.transliterationCharacters = sql`${interviewAttemptsTable.transliterationCharacters} + ${delta.transliterationCharacters}`;
   }
   if (Object.keys(set).length === 0) return;
 

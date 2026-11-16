@@ -56,6 +56,20 @@ function tokensMatch(a: string, b: string): boolean {
   return timingSafeEqual(left, right);
 }
 
+/**
+ * True when this browser's attempt cookie belongs to `attempt`.
+ *
+ * Used to decide whether an unfinished attempt may be resumed from the start
+ * form: knowing a candidate's email is not proof of being that candidate, but
+ * holding the cookie their attempt was issued with is.
+ */
+export async function holdsAttemptCookie(
+  attempt: InterviewAttempt,
+): Promise<boolean> {
+  const token = await readAttemptCookie();
+  return !!token && tokensMatch(token, attempt.accessToken);
+}
+
 export interface AttemptContext {
   attempt: InterviewAttempt;
   interview: Interview;
@@ -186,10 +200,11 @@ export async function attemptEligibility(
  * Lets a student who left mid-interview pick up where they stopped instead of
  * starting over — no matter how long ago they left (client's call: always
  * resume). Matched on the SAME identity as the retake cap — partner student id
- * when present, else email — so it works even without the `sp_attempt` cookie (a
- * new device, cleared cookies, or after it expired), which is the only other way
- * back to a live attempt. With no identity to key on, returns null (cookie-only
- * resume still applies).
+ * when present, else email. With no identity to key on, returns null.
+ *
+ * This only FINDS the attempt. Whether the caller may enter it is a separate
+ * question (see `beginAttemptAction`): a partner student id from the encrypted
+ * link is proof of identity, a typed email is not.
  */
 export async function resumableAttemptFor(
   interviewId: string,
