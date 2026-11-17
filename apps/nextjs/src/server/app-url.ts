@@ -81,6 +81,23 @@ export async function selfOrigin(): Promise<string> {
   return appUrl();
 }
 
+/**
+ * The origin to show an ADMIN for a candidate link they will copy and share.
+ *
+ * Deliberately the host the admin actually loaded, not the configured
+ * `appUrl()`. One box can answer on several domains (the test box is reachable
+ * at both `test-` and `dev-` hostnames); a link stamped from a fixed `APP_URL`
+ * then points at a different domain than the admin is looking at, which reads
+ * as a bug and makes testing need a manual domain swap. Following the request
+ * host makes the link match the page, on every environment, with no env
+ * fiddling. Only the admin's own authenticated page uses this; partner and
+ * report URLs stay pinned to `appUrl()`. Falls back to `appUrl()` when there
+ * is no request (e.g. a script).
+ */
+export async function adminLinkOrigin(): Promise<string> {
+  return (await originFromRequest()) ?? appUrl();
+}
+
 /** An absolute URL for a path on this app. */
 export async function absoluteUrl(path: string): Promise<string> {
   const base = await appUrl();

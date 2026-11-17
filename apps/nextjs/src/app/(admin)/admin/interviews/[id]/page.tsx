@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Icon } from "~/components/ui/icon";
-import { appUrl } from "~/server/app-url";
+import { adminLinkOrigin } from "~/server/app-url";
 import { getInterviewDetails, requireAdmin } from "~/server/admin/service";
 import { getMessages } from "~/config/messages";
 import { uiLanguage } from "~/server/language";
@@ -30,7 +30,7 @@ export default async function InterviewDetailPage({
 
   const [details, appOrigin] = await Promise.all([
     getInterviewDetails(admin.id, parsed.data),
-    appUrl(),
+    adminLinkOrigin(),
   ]);
   if (!details) notFound();
 
