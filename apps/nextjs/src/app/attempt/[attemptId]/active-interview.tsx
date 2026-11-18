@@ -31,6 +31,7 @@ import {
   isRepeatRequest,
   isSkipRequest,
 } from "~/config/repeat-requests";
+import { looksLikeSttHallucination } from "~/lib/stt-sanity";
 import {
   MAX_ANSWER_SECONDS,
   MIN_ANSWER_BLOB_BYTES,
@@ -1178,7 +1179,11 @@ export function ActiveInterview({
        */
       const transcript = getTranscriptRef.current();
       const words = transcript.trim().split(/\s+/).filter(Boolean).length;
-      const answered = words >= MIN_ANSWER_WORDS;
+      // Looped STT filler invented from silence ("okay okay okay, so…") is NOT
+      // an answer — it must never satisfy "they spoke", or a silent candidate is
+      // treated as having answered and hurried on with garbage.
+      const answered =
+        words >= MIN_ANSWER_WORDS && !looksLikeSttHallucination(transcript);
 
       /**
        * The opening is three parts in ONE turn, so a part is identified by
@@ -1196,9 +1201,10 @@ export function ActiveInterview({
        * fallback and does not need this one.
        */
       if (i === 2) {
-        // Applies to the opening as well now: it is the last resort if noise
-        // keeps cancelling the opening's own timer and nothing is ever said.
-        if (!answered) handleAdvanceRef.current();
+        // The INTRO is never given up on silence — it has to be answered, so it
+        // waits (its own long safety timer is the only thing that can ever end
+        // it). Every other question still moves on after this backstop.
+        if (!answered && !opening) handleAdvanceRef.current();
         return;
       }
 

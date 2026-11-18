@@ -95,10 +95,17 @@ wss.on("connection", (client, req) => {
    */
   const keepAlive = setInterval(() => {
     try {
-      if (client.readyState === WebSocket.OPEN) client.ping();
+      // A DATA frame, not a ping: Cloudflare does not always count ping/pong as
+      // activity, so a ping-only keepalive still gets the idle socket cut. The
+      // browser ignores an unknown event (its message switch has no case for
+      // it), so this is invisible to the interview but keeps the hop alive.
+      if (client.readyState === WebSocket.OPEN)
+        client.send(JSON.stringify({ event: "keepalive" }));
+      // Upstream goes straight to Sarvam (not through Cloudflare); a ping keeps
+      // that side warm without sending audio it would try to transcribe.
       if (upstream.readyState === WebSocket.OPEN) upstream.ping();
     } catch {
-      // A ping on a socket mid-close is harmless to miss.
+      // A send on a socket mid-close is harmless to miss.
     }
   }, 25000);
 
