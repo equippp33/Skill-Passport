@@ -984,7 +984,23 @@ export function ActiveInterview({
         return;
       }
       clearAddTimer();
-      void finalizeStreamedAnswer(combined);
+      // The intro must be answered, so never FINISH it on nothing — or on looped
+      // STT filler, which is nothing. If there is no real answer across the bits,
+      // replay this bit so they hear it again and speak, rather than Next
+      // silently doing nothing (finalize bails on an empty transcript) or
+      // bouncing to a "mic failed" screen. A real answer falls through to finish.
+      const realIntro = looksLikeSttHallucination(combined) ? "" : combined;
+      if (!realIntro.trim()) {
+        openingTranscriptRef.current = "";
+        playOpeningBit(Math.max(0, openingStepRef.current - 1));
+        streamRearmRef.current();
+        addTimerRef.current = setTimeout(
+          () => advanceOpeningRef.current(""),
+          OPENING_BIT_WAIT_MS,
+        );
+        return;
+      }
+      void finalizeStreamedAnswer(realIntro);
     },
     [
       openingBitUrls.length,
