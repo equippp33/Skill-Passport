@@ -52,10 +52,16 @@ const SPEECH_RMS_CEILING = 0.06;
 /**
  * Speech must beat the measured room noise by this factor. A fan or background
  * chatter sits at the noise floor; a real voice is several times louder, so
- * requiring 2.5× the ambient level is what separates the two — and it adapts
- * per room instead of guessing one number that works nowhere.
+ * requiring several times the ambient level is what separates the two — and it
+ * adapts per room instead of guessing one number that works nowhere.
+ *
+ * At 3× the bar leans against DISTANT background voices (bystanders arrive
+ * quieter at the mic than the candidate speaking into it) while the candidate's
+ * own close voice still clears it with headroom. The floor below is unchanged,
+ * so a quiet room is never deafened. Drop back toward 2.5 if soft-spoken
+ * candidates report the answer ending while they are still talking.
  */
-const NOISE_MULTIPLIER = 2.5;
+const NOISE_MULTIPLIER = 3.0;
 
 /** How often the level is sampled. Fine enough for a 1s countdown. */
 const SAMPLE_INTERVAL_MS = 200;

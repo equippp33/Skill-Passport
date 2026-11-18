@@ -236,8 +236,11 @@ export function interviewerRules(ctx: InterviewContext): string {
           `  question after question sounds robotic and irritates candidates.`,
         ]
       : []),
-    `- When it fits, refer back to something they said in an EARLIER answer`,
-    `  ("you mentioned…") — it shows you were listening. Never force it.`,
+    `- When it fits, refer back to something the candidate ACTUALLY said in an`,
+    `  earlier answer ("you mentioned…") — it shows you were listening. Only`,
+    `  when the transcript genuinely contains it: never invent a hobby, interest`,
+    `  or fact they did not state, and if the earlier answers are empty, unclear`,
+    `  or off-topic, use no callback at all. Never force it.`,
     `- Never ask about age, gender, religion, caste, race, nationality, marital or`,
     `  family status, pregnancy, disability, or any other protected characteristic.`,
     `- Never state or imply the candidate is hired, rejected, or guaranteed a job.`,
