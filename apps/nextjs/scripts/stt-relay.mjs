@@ -82,6 +82,26 @@ wss.on("connection", (client, req) => {
   const pending = [];
   let upstreamOpen = false;
 
+  /**
+   * Keep both hops warm during a silent stretch.
+   *
+   * The opening can sit quiet for a minute-plus (the candidate is still
+   * answering, just between parts), and in silence the browser sends no audio,
+   * so nothing crosses the wire. Cloudflare cuts an idle WebSocket after ~100s;
+   * when it does, the stream drops to the batch fallback — where Sarvam
+   * hallucinates canned filler out of the silence. A ping every 25s on each hop
+   * is traffic Cloudflare counts, with no audio and nothing to transcribe, so
+   * the live stream survives the quiet and never falls back.
+   */
+  const keepAlive = setInterval(() => {
+    try {
+      if (client.readyState === WebSocket.OPEN) client.ping();
+      if (upstream.readyState === WebSocket.OPEN) upstream.ping();
+    } catch {
+      // A ping on a socket mid-close is harmless to miss.
+    }
+  }, 25000);
+
   upstream.on("open", () => {
     upstreamOpen = true;
     for (const msg of pending) upstream.send(msg);
@@ -96,6 +116,7 @@ wss.on("connection", (client, req) => {
     if (client.readyState === WebSocket.OPEN) client.send(text);
   });
   upstream.on("close", (code, reason) => {
+    clearInterval(keepAlive);
     console.log(
       `[relay] upstream closed code=${code} ${reason?.toString()?.slice(0, 120)}`,
     );
@@ -115,6 +136,7 @@ wss.on("connection", (client, req) => {
     else pending.push(msg);
   });
   client.on("close", () => {
+    clearInterval(keepAlive);
     console.log("[relay] client closed");
     if (upstream.readyState === WebSocket.OPEN) upstream.close();
     else upstream.terminate();
