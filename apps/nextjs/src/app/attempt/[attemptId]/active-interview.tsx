@@ -338,9 +338,14 @@ export function ActiveInterview({
     // Unlock Next a while after the question finished playing, not at once.
     if (nextTimerRef.current) clearTimeout(nextTimerRef.current);
     const readyFor = current.turnNumber;
+    // Scored questions keep the delay (don't let them blurt past before hearing
+    // it out). The UNSCORED opening unlocks Next at once, so the candidate can
+    // self-pace instead of being trapped between a locked Next and the 10s
+    // opening auto-advance — the two 10s clocks used to collide and skip the
+    // intro out from under them.
     nextTimerRef.current = setTimeout(
       () => setNextReadyTurn(readyFor),
-      NEXT_BUTTON_DELAY_SECONDS * 1000,
+      current.kind === "language_probe" ? 0 : NEXT_BUTTON_DELAY_SECONDS * 1000,
     );
     // A fresh question: no countdown running, and the invitation to add more
     // is owed again. Reset here rather than in an effect, because this is the

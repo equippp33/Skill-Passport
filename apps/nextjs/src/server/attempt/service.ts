@@ -1991,6 +1991,54 @@ async function skipTurnInner(
 }
 
 /**
+ * A "Next" pressed with no answer at all.
+ *
+ * Treated exactly like a spoken give-up ("I don't know"): the FIRST time on a
+ * question earns one warm, reassuring re-ask (the same `MAX_DOUBTS_BEFORE_SKIP`
+ * allowance), and only a second give-up actually skips it. It shares the doubt
+ * counter with the spoken path, so a mix of the two still moves on after the
+ * same number of tries — pressing Next no longer skips straight past without
+ * the "no pressure, try again" the spoken skip already gives.
+ *
+ * Returns whether the turn was skipped (the poll advances to the next question)
+ * or re-asked (the question stays and the poll resumes the same turn).
+ */
+export async function skipOrProbeTurn(
+  attempt: InterviewAttempt,
+  interview: Interview,
+  turnNumber: number,
+): Promise<{ skipped: boolean }> {
+  const turn = (await getTurns(attempt.id)).find(
+    (t) => t.turnNumber === turnNumber,
+  );
+  // Nothing to probe: gone, already done, or the unscored opening (which paces
+  // itself and must never nag). Skip outright.
+  if (!turn || turn.status === "completed" || turn.kind === "language_probe") {
+    await skipTurn(attempt, interview, turnNumber);
+    return { skipped: true };
+  }
+
+  const key = `${attempt.id}:${turnNumber}`;
+  const seen = (doubtCounts.get(key) ?? 0) + 1;
+  doubtCounts.set(key, seen);
+
+  if (seen > MAX_DOUBTS_BEFORE_SKIP) {
+    doubtCounts.delete(key);
+    clarificationCounts.delete(key);
+    await skipTurn(attempt, interview, turnNumber);
+    return { skipped: true };
+  }
+
+  // First give-up: reassure and re-ask, leaving the question in place. An empty
+  // doubt transcript is fine — the givingUp reply reassures and re-asks rather
+  // than answering anything the candidate said.
+  await withUsageScope(attempt.id, () =>
+    speakDoubtResponse(attempt, turn, "", true),
+  );
+  return { skipped: false };
+}
+
+/**
  * What happens once a skill answer has been transcribed.
  *
  * Two paths. For a follow-up-ELIGIBLE primary the model must see the answer to

@@ -525,7 +525,10 @@ const SCENARIO_SOURCE_TEXT: Record<ScenarioSource, string> = {
     ` their introduction. If they mentioned more than one and an earlier` +
     ` question already used one, use a DIFFERENT one this time. If they` +
     ` mentioned none, use something else they said about themselves; if there` +
-    ` is nothing, use general everyday life.`,
+    ` is nothing, use general everyday life. NEVER invent, assume or guess a` +
+    ` hobby the candidate did not actually state, and never say "you` +
+    ` mentioned…" about a hobby unless it is genuinely in what they said —` +
+    ` with no hobby given, use general everyday life instead.`,
   course:
     `Base it on the candidate's COURSE / FIELD OF STUDY: their classes,` +
     ` practicals, training or project work, or a simple situation from that` +

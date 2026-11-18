@@ -17,7 +17,7 @@ import {
   createAttempt,
   prewarmFirstQuestion,
   regenerateQuestionAudio,
-  skipTurn,
+  skipOrProbeTurn,
   startAttempt,
 } from "./service";
 
@@ -153,17 +153,24 @@ export async function startAttemptAction(
 export async function skipTurnAction(
   attemptId: string,
   turnNumber: number,
-): Promise<{ ok: boolean }> {
+): Promise<{ ok: boolean; skipped: boolean }> {
   const found = await getAttemptForCandidate(attemptId);
-  if (!found) return { ok: false };
+  if (!found) return { ok: false, skipped: false };
 
   try {
-    await skipTurn(found.attempt, found.interview, turnNumber);
+    // First silent Next earns one warm re-ask; a second actually skips. The
+    // client's poll resumes the same turn on a re-ask and advances on a skip,
+    // so it needs no branch of its own.
+    const { skipped } = await skipOrProbeTurn(
+      found.attempt,
+      found.interview,
+      turnNumber,
+    );
     revalidatePath(`/attempt/${attemptId}`);
-    return { ok: true };
+    return { ok: true, skipped };
   } catch (error) {
     console.error("[attempt] skip failed", error);
-    return { ok: false };
+    return { ok: false, skipped: false };
   }
 }
 
