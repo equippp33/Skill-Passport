@@ -249,6 +249,13 @@ export function useStreamingStt({
       finals.length = 0;
       transcriptRef.current = "";
       setPartial("");
+      // Each opening bit (and each re-ask) is a FRESH prompt, so restart the
+      // silence ladder: every part gets its own patient check-in and give-up
+      // window instead of inheriting "already nudged / already gave up" from
+      // the part before. Without this, only the first silent bit was ever
+      // nudged and the rest were hurried along in silence.
+      firedSilenceStages.clear();
+      quietSince = Date.now();
     };
 
     const start = async () => {

@@ -75,12 +75,18 @@ export const ADD_DECLINE_MAX_WORDS = 3;
 export const ADD_MAX_ANSWER_MS = 3000;
 
 /**
- * The multi-part opening asks the next bit (hobbies, then location) after each
- * is answered, mic still recording. If the candidate stays silent on a bit this
- * long, move on to the next bit rather than stalling the interview at the start.
- * Cancelled the moment they start speaking (see the partial-transcript effect).
+ * LAST-RESORT backstop for a silent opening bit.
+ *
+ * Each bit now runs the SAME patient silence ladder as a scored question — a
+ * gentle check-in at 15s and give-up at 60s, PER bit (the ladder is reset for
+ * every bit in the streaming hook's `rearm`). So a candidate still gathering
+ * their first words is nudged, not skipped; only a genuinely empty seat moves
+ * on, at 60s, and only then. This timer sits ABOVE the 60s give-up so it never
+ * pre-empts that ladder — it exists purely so the opening cannot hang forever
+ * if, for some reason, no ladder is running at all. Cancelled the moment they
+ * start speaking (see the partial-transcript effect).
  */
-export const OPENING_BIT_WAIT_MS = 10000;
+export const OPENING_BIT_WAIT_MS = 90000;
 
 /**
  * Quiet after SPEAKING before the interviewer reacts.
