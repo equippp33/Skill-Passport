@@ -7,9 +7,11 @@ import { useEffect, useRef, useState } from "react";
  *
  * Replaces the local microphone-VAD guesswork: the candidate's audio is
  * streamed to Sarvam (via our relay, so the key stays server-side) and Sarvam's
- * own voice-activity detection decides when they have finished — no amplitude
- * threshold to tune, and it never transcribes a silent tail, so the hallucinated
- * garbage the batch endpoint produced is gone.
+ * own voice-activity detection decides when they have finished.
+ *
+ * Sarvam invents sentences out of silence and faint noise, so it is never sent
+ * the room: the voice gate (VOICE_RMS_FLOOR) replaces every chunk without a
+ * real voice in it with digital silence before it leaves the browser.
  *
  * Two layers of endpointing:
  *  - Sarvam segments speech into utterances on ~1s of silence and returns a
@@ -37,6 +39,53 @@ const MAX_FRAME_SAMPLES = 1600;
  * transcribed as their answer.
  */
 const POST_SPEAK_MUTE_MS = 700;
+
+/**
+ * The voice gate: Sarvam only ever hears the candidate's VOICE, never the room.
+ *
+ * Fed silence or faint noise, the speech model does not return nothing — it
+ * invents a stock sentence ("Okay, so I'm going to try and connect this to the
+ * phone") and that was being scored as the answer. So each ~100ms chunk is
+ * measured here first: a chunk clearly louder than the room is sent as is, and
+ * any other chunk is sent as the same length of pure digital silence (zeros).
+ *
+ * Zeros rather than nothing, deliberately. Sarvam's own VAD needs to HEAR the
+ * silence after speech to emit `vad.speech_end` and `transcript.final`, the
+ * silence ladder runs on those events, and an idle socket gets cut. Zeros keep
+ * the stream continuous with true timing, but give the model nothing to
+ * transcribe. The recorder is separate and still archives the real audio.
+ *
+ * "Clearly louder than the room" = VOICE_NOISE_MULTIPLIER × the QUIETEST chunk
+ * of the last NOISE_WINDOW_CHUNKS, kept between the floor and ceiling. Speech
+ * has gaps between words, so the quietest recent chunk is the room even while
+ * someone talks, and a fan or hum raises the bar so it never opens the gate on
+ * its own. Same floor/ceiling as the batch path's detector (use-speech-activity).
+ */
+const VOICE_RMS_FLOOR = 0.008;
+const VOICE_RMS_CEILING = 0.06;
+const VOICE_NOISE_MULTIPLIER = 3;
+/** ~3s of 100ms chunks — long enough to always contain a pause. */
+const NOISE_WINDOW_CHUNKS = 30;
+/** Chunks (~1s) measured before the room's own noise is trusted over the floor. */
+const NOISE_WARMUP_CHUNKS = 10;
+/**
+ * The last few chunks before the gate opens, re-sent as real audio when it
+ * does, so the first syllable ("Mmy name…") is not lost to the loudness check
+ * catching up. (They already went out as zeros; Sarvam just sees ~0.3s more
+ * audio, which does not matter to it.)
+ */
+const PRE_ROLL_CHUNKS = 3;
+/**
+ * Chunks still sent for real after the voice drops below the bar, so word
+ * endings and soft consonants are not clipped.
+ */
+const HANGOVER_CHUNKS = 5;
+
+function rmsOf(samples: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < samples.length; i += 1) sum += samples[i]! * samples[i]!;
+  return samples.length ? Math.sqrt(sum / samples.length) : 0;
+}
 
 /** Float32 at `inRate` → linear16 PCM resampled to 16kHz. */
 function resampleToPcm16(float32: Float32Array, inRate: number): Int16Array {
@@ -230,6 +279,7 @@ export function useStreamingStt({
      * backstop that eventually moves things along. The caller decides, so both
      * facts are handed to it.
      */
+    let gateStats = { voice: 0, silenced: 0 };
     const startedAt = Date.now();
     let talking = false;
     let everSpoke = false;
@@ -359,6 +409,30 @@ export function useStreamingStt({
           }
         };
 
+        // Voice-gate state (see VOICE_RMS_FLOOR). For the first
+        // NOISE_WARMUP_CHUNKS the bar is the plain floor, so a candidate who
+        // starts talking the instant the question ends is not measured against
+        // their own voice before any pause has been heard. Only that long,
+        // though: kept longer, a fan would open the gate until it aged out.
+        const recentRms: number[] = [];
+        let preRoll: Float32Array[] = [];
+        let hangover = 0;
+        // For the dev console: how much of this turn actually reached Sarvam.
+        gateStats = { voice: 0, silenced: 0 };
+
+        /** Resample once, then send in frames under Sarvam's per-frame cap. */
+        const sendPcm = (pcm: Int16Array) => {
+          for (let i = 0; i < pcm.length; i += MAX_FRAME_SAMPLES) {
+            const frame = pcm.subarray(i, i + MAX_FRAME_SAMPLES);
+            ws!.send(
+              JSON.stringify({
+                event: "audio_input",
+                audio: pcm16ToBase64(frame),
+              }),
+            );
+          }
+        };
+
         // Flush accumulated audio at a steady cadence, ~100ms per message.
         flushTimer = setInterval(() => {
           // Do not stream while the interviewer's own clip is playing — nor for
@@ -385,17 +459,40 @@ export function useStreamingStt({
           }
           pending = [];
           pendingLen = 0;
-          // Resample once, then send in frames small enough that even a full
-          // second handed over by a throttled timer never trips Sarvam's
-          // per-frame cap.
-          const pcm = resampleToPcm16(merged, inRate);
-          for (let i = 0; i < pcm.length; i += MAX_FRAME_SAMPLES) {
-            const frame = pcm.subarray(i, i + MAX_FRAME_SAMPLES);
-            ws.send(
-              JSON.stringify({
-                event: "audio_input",
-                audio: pcm16ToBase64(frame),
-              }),
+
+          // Voice gate: is this chunk clearly louder than the room?
+          const level = rmsOf(merged);
+          recentRms.push(level);
+          if (recentRms.length > NOISE_WINDOW_CHUNKS) recentRms.shift();
+          const roomNoise =
+            recentRms.length < NOISE_WARMUP_CHUNKS ? 0 : Math.min(...recentRms);
+          const threshold = Math.min(
+            VOICE_RMS_CEILING,
+            Math.max(VOICE_RMS_FLOOR, roomNoise * VOICE_NOISE_MULTIPLIER),
+          );
+
+          if (level >= threshold) {
+            // Gate opening: send the held-back lead-in first, in order.
+            for (const held of preRoll) sendPcm(resampleToPcm16(held, inRate));
+            preRoll = [];
+            hangover = HANGOVER_CHUNKS;
+            gateStats.voice += 1;
+            sendPcm(resampleToPcm16(merged, inRate));
+          } else if (hangover > 0) {
+            // Just after speech: still the real audio, for the word's tail.
+            hangover -= 1;
+            gateStats.voice += 1;
+            sendPcm(resampleToPcm16(merged, inRate));
+          } else {
+            gateStats.silenced += 1;
+            // The room, not the candidate: send the same length of silence,
+            // and keep the chunk as possible lead-in for the next word.
+            preRoll.push(merged);
+            if (preRoll.length > PRE_ROLL_CHUNKS) preRoll.shift();
+            sendPcm(
+              new Int16Array(
+                Math.floor((merged.length * TARGET_SAMPLE_RATE) / inRate),
+              ),
             );
           }
         }, FLUSH_MS);
@@ -443,6 +540,11 @@ export function useStreamingStt({
 
     return () => {
       cancelled = true;
+      if (gateStats.voice + gateStats.silenced > 0) {
+        console.info(
+          `[stt] voice gate: sent ${gateStats.voice} voice chunks, silenced ${gateStats.silenced} (~100ms each)`,
+        );
+      }
       if (flushTimer) clearInterval(flushTimer);
       if (turnEndTimer) clearTimeout(turnEndTimer);
       if (silenceTimer) clearInterval(silenceTimer);

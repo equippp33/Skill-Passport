@@ -31,7 +31,7 @@ import {
   isRepeatRequest,
   isSkipRequest,
 } from "~/config/repeat-requests";
-import { looksLikeSttHallucination } from "~/lib/stt-sanity";
+import { stripSttHallucinations } from "~/lib/stt-sanity";
 import {
   MAX_ANSWER_SECONDS,
   MIN_ANSWER_BLOB_BYTES,
@@ -988,8 +988,9 @@ export function ActiveInterview({
       // STT filler, which is nothing. If there is no real answer across the bits,
       // replay this bit so they hear it again and speak, rather than Next
       // silently doing nothing (finalize bails on an empty transcript) or
-      // bouncing to a "mic failed" screen. A real answer falls through to finish.
-      const realIntro = looksLikeSttHallucination(combined) ? "" : combined;
+      // bouncing to a "mic failed" screen. A real answer falls through to finish,
+      // with any invented sentences (often tacked onto the end) removed.
+      const realIntro = stripSttHallucinations(combined);
       if (!realIntro.trim()) {
         openingTranscriptRef.current = "";
         playOpeningBit(Math.max(0, openingStepRef.current - 1));
@@ -1193,13 +1194,13 @@ export function ActiveInterview({
        * countdown ("there are words") at the same moment — and moved on
        * without having said anything. Counting real words settles both.
        */
-      const transcript = getTranscriptRef.current();
-      const words = transcript.trim().split(/\s+/).filter(Boolean).length;
-      // Looped STT filler invented from silence ("okay okay okay, so…") is NOT
-      // an answer — it must never satisfy "they spoke", or a silent candidate is
-      // treated as having answered and hurried on with garbage.
-      const answered =
-        words >= MIN_ANSWER_WORDS && !looksLikeSttHallucination(transcript);
+      // Invented sentences ("Okay, so I'm going to try and connect this to the
+      // phone") are NOT an answer — they must never satisfy "they spoke", or a
+      // silent candidate is treated as having answered and hurried on with
+      // garbage. Only the words left after stripping them count.
+      const transcript = stripSttHallucinations(getTranscriptRef.current());
+      const words = transcript.split(/\s+/).filter(Boolean).length;
+      const answered = words >= MIN_ANSWER_WORDS;
 
       /**
        * The opening is three parts in ONE turn, so a part is identified by

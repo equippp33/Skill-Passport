@@ -53,7 +53,7 @@ import type { InterviewContext, PriorTurn } from "~/server/services/openai";
 import { deliverResult } from "~/server/integrations/result-webhook";
 import { env } from "~/env";
 import { generateSpeech, transcribeAudio } from "~/server/services/sarvam";
-import { looksLikeSttHallucination } from "~/lib/stt-sanity";
+import { stripSttHallucinations } from "~/lib/stt-sanity";
 import { timed } from "~/server/services/timing";
 import { loadAudioBytes, storeAudio } from "~/server/interview/audio";
 import { deleteAudioObject } from "~/server/interview/storage";
@@ -1218,16 +1218,19 @@ async function processTurnScoped(
       transcript = heard;
     }
 
-    // STT invents looping filler out of silence ("okay okay okay, so…"). That is
-    // not what the candidate said — blank it so it is handled as the silence it
-    // really was (re-asked, never stored or scored), never shown in the report.
-    if (looksLikeSttHallucination(transcript)) {
+    // STT invents stock sentences out of silence ("Okay, so I'm going to try
+    // and connect this to the phone"), often tacked onto the end of a real
+    // answer. Remove just those sentences — the real answer is kept and scored.
+    // Nothing left means nothing was said: handled below as the silence it was
+    // (re-asked, never stored or scored), never shown in the report.
+    const cleaned = stripSttHallucinations(transcript);
+    if (cleaned !== transcript.replace(/\s+/g, " ").trim()) {
       console.log(
-        `[attempt] dropped hallucinated transcript turn=${turn.turnNumber}: ${JSON.stringify(
-          transcript.slice(0, 120),
-        )}`,
+        `[attempt] stripped hallucinated speech turn=${turn.turnNumber}: ${JSON.stringify(
+          transcript.slice(0, 160),
+        )} -> ${JSON.stringify(cleaned.slice(0, 160))}`,
       );
-      transcript = "";
+      transcript = cleaned;
     }
 
     console.log(
