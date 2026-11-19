@@ -27,6 +27,8 @@ import {
 import { env } from "~/env";
 import { useStreamingStt } from "~/hooks/use-streaming-stt";
 import {
+  isDeclineRequest,
+  isExplainRequest,
   isGiveUpRequest,
   isRepeatRequest,
   isSkipRequest,
@@ -52,6 +54,10 @@ interface TurnView {
   turnNumber: number;
   question: string;
   questionAudioId: string | null;
+  /** The question's own clip while a doubt reply sits in `questionAudioId`. */
+  originalQuestionAudioId: string | null;
+  /** Follow-ups are optional: a plain "no" moves on. */
+  isFollowUp: boolean;
   status: "awaiting_answer" | "processing" | "completed" | "failed";
   errorMessage: string | null;
   skillId: WorkSkillId | null;
@@ -1266,9 +1272,13 @@ export function ActiveInterview({
       // sense. Hand it over at the first pause; the server skips the
       // question. Checked BEFORE the word gate below, because "pata nahi" or
       // "no idea" is two words and would otherwise wait for the check-in.
+      // On a follow-up a plain "no" / "nahi" is a decline too — follow-ups are
+      // optional, and the server skips one the moment it is declined.
       if (
         !opening &&
-        (isSkipRequest(transcript) || isGiveUpRequest(transcript))
+        (isSkipRequest(transcript) ||
+          isGiveUpRequest(transcript) ||
+          (active.isFollowUp && isDeclineRequest(transcript)))
       ) {
         handleAdvanceRef.current();
         return;
@@ -1322,13 +1332,21 @@ export function ActiveInterview({
     if (!el.paused) return true;
     streamRearmRef.current();
     try {
+      // After a doubt reply, the slot holds the REPLY ("no problem, there's
+      // no right or wrong answer…"). "Repeat" means the question, so switch
+      // the element to the question's own clip first.
+      const original = turnRef.current.originalQuestionAudioId;
+      if (original) {
+        const url = `/api/media/${original}?attempt=${attemptId}`;
+        if (el.getAttribute("src") !== url) el.src = url;
+      }
       el.currentTime = 0;
       void el.play().catch(() => undefined);
       return true;
     } catch {
       return false;
     }
-  }, []);
+  }, [attemptId]);
 
   /**
    * A spoken request, acted on the moment it is heard.
@@ -1370,6 +1388,15 @@ export function ActiveInterview({
           // The request is an instruction, not part of the introduction.
           streamRearmRef.current();
         }
+        return;
+      }
+
+      // "Explain it" / "samajh nahi aaya": the server speaks an explanation,
+      // in the interview language. Sent the
+      // moment it is heard — checked before repeat, because "I didn't
+      // understand" is in both lists and wants the meaning, not a replay.
+      if (isExplainRequest(text)) {
+        handleAdvanceRef.current();
         return;
       }
 

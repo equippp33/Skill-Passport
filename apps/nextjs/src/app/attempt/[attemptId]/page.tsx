@@ -13,7 +13,7 @@ import {
 } from "~/config/greeting";
 import { WORK_SKILL_COUNT, WORK_SKILL_IDS } from "~/config/work-skills";
 import { getAttemptForCandidate } from "~/server/attempt/access";
-import { getTurns } from "~/server/attempt/service";
+import { getTurns, originalQuestionAudioOf } from "~/server/attempt/service";
 import { uiMessages } from "~/server/language";
 import { isOpenAIConfigured } from "~/server/services/openai";
 import { uuidSchema } from "~/server/interview/validation";
@@ -129,6 +129,8 @@ export default async function AttemptPage({
                 question: current.question,
                 questionTranslation: current.questionTranslation,
                 questionAudioId: current.questionAudioId,
+                originalQuestionAudioId: originalQuestionAudioOf(current.id),
+                isFollowUp: current.isFollowUp,
                 status: current.status,
                 errorMessage: current.errorMessage,
                 skillId: current.skillId,

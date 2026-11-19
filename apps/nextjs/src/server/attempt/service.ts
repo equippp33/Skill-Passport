@@ -30,6 +30,8 @@ import {
 import type { WorkSkill, WorkSkillId } from "~/config/work-skills";
 import { WORK_READINESS_QUESTIONS } from "~/config/work-readiness-pool";
 import {
+  isDeclineRequest,
+  isExplainRequest,
   isGiveUpRequest,
   isRepeatRequest,
   isSkipRequest,
@@ -737,6 +739,11 @@ export async function submitAnswer(args: {
 
   if (!claimed) return { status: "already_processing", turnId: turn.id };
 
+  // A spoken reply to an earlier doubt has done its job once a new answer
+  // arrives: put the question's own clip back, so the report and any later
+  // "repeat" play the question, not the reply.
+  await restoreQuestionAudio(turn.id);
+
   await db
     .update(interviewAttemptsTable)
     .set({ status: "processing", updatedAt: new Date() })
@@ -757,6 +764,9 @@ export async function submitAnswer(args: {
  * score is written, so a repeat leaves no trace in the report.
  */
 async function repeatTurn(attemptId: string, turnId: string): Promise<void> {
+  // "Repeat" means the QUESTION — never the reply to a doubt that may be
+  // sitting in the audio slot (see speakDoubtResponse).
+  await restoreQuestionAudio(turnId);
   await db.transaction(async (tx) => {
     await tx
       .update(interviewTurnsTable)
@@ -776,15 +786,52 @@ async function repeatTurn(attemptId: string, turnId: string): Promise<void> {
 }
 
 /**
+ * The question's own clip, kept aside while a doubt reply occupies its slot.
+ *
+ * A doubt reply plays through the turn's audio slot (that is how the browser
+ * already knows to play it on a re-ask). It used to DELETE the question clip to
+ * make room, so a candidate who then said "repeat" heard the reply again — "no
+ * problem, there's no right or wrong answer…" — instead of the question, with
+ * no way to ever hear the question again. The original is now kept here and
+ * put back (`restoreQuestionAudio`) on repeat, on a new answer, or on a skip.
+ *
+ * ponytail: in-process, like `doubtCounts` — lost on restart, when the worst
+ * case is the old behaviour (repeat plays the reply) for that one turn.
+ */
+const originalQuestionAudio = new Map<string, string>();
+
+/** For the browser: the question clip to replay while a reply is in the slot. */
+export function originalQuestionAudioOf(turnId: string): string | null {
+  return originalQuestionAudio.get(turnId) ?? null;
+}
+
+/** Put the question's own clip back in its slot, discarding the reply clip. */
+async function restoreQuestionAudio(turnId: string): Promise<void> {
+  const original = originalQuestionAudio.get(turnId);
+  if (!original) return;
+  originalQuestionAudio.delete(turnId);
+  const [row] = await db
+    .select({ audioId: interviewTurnsTable.questionAudioId })
+    .from(interviewTurnsTable)
+    .where(eq(interviewTurnsTable.id, turnId));
+  await db
+    .update(interviewTurnsTable)
+    .set({ questionAudioId: original, updatedAt: new Date() })
+    .where(eq(interviewTurnsTable.id, turnId));
+  if (row?.audioId && row.audioId !== original) {
+    await discardAudioClip(row.audioId);
+  }
+}
+
+/**
  * Answer a doubt OUT LOUD, leaving the question exactly as it is.
  *
  * The candidate asked something instead of answering — "what does this word
  * mean?" — or said nothing usable. The interviewer speaks a short reply and the
  * on-screen question text never moves; the candidate answers it next. The reply
- * plays through the turn's audio slot, so a following "repeat" replays the
- * reply — acceptable, since the reply itself invites them to answer and the
- * question is still on screen. Falls back to a plain replay if the reply cannot
- * be generated or voiced.
+ * plays through the turn's audio slot; the question's own clip is kept aside
+ * (`originalQuestionAudio`) so a following "repeat" plays the question again.
+ * Falls back to a plain replay if the reply cannot be generated or voiced.
  */
 async function speakDoubtResponse(
   attempt: InterviewAttempt,
@@ -846,8 +893,15 @@ async function speakDoubtResponse(
     .set({ status: "in_progress", updatedAt: new Date() })
     .where(eq(interviewAttemptsTable.id, attempt.id));
 
-  // The original question clip is now unreferenced.
-  if (previousAudioId) await discardAudioClip(previousAudioId);
+  // Keep the question's own clip for a later "repeat"; only an earlier REPLY
+  // that this one replaces is thrown away.
+  if (previousAudioId) {
+    const original = originalQuestionAudio.get(turn.id);
+    if (!original) originalQuestionAudio.set(turn.id, previousAudioId);
+    else if (previousAudioId !== original) {
+      await discardAudioClip(previousAudioId);
+    }
+  }
 }
 
 /**
@@ -1271,13 +1325,44 @@ async function processTurnScoped(
     // anything subtler the model judges, so we respond and re-ask like a real
     // interviewer instead of scoring it as the answer. The opening turn is
     // never classified: its only job is to capture the introduction.
-    const looksLikeRepeat = isRepeatRequest(transcript);
+    // "Explain it" / "samajh nahi aaya" wants the MEANING,
+    // so it is answered with a spoken explanation — not a replay of the same
+    // words, which is what it used to get (those phrases also sit in the
+    // repeat list). Checked first; the opening keeps its plain replay.
+    const wantsExplain = !isProbe && isExplainRequest(transcript);
+    const looksLikeRepeat = !wantsExplain && isRepeatRequest(transcript);
     const wantsSkip = !isProbe && isSkipRequest(transcript);
     // "I don't know" is matched here too, not left to the model, so it is
     // always skipped rather than sometimes scored as an answer.
     const givesUp = !isProbe && isGiveUpRequest(transcript);
+
+    /**
+     * A follow-up is never forced.
+     *
+     * It digs into the candidate's previous answer and may simply be beyond
+     * them. Re-asking it after "no" / "skip" / "I don't know" — warm re-frame,
+     * then an explanation, then another — kept a candidate who had plainly
+     * declined stuck on it for minutes. On a follow-up, declining once moves
+     * on: unscored, nothing held against them. (Main questions keep their one
+     * gentle re-ask. A repeat request is still honoured.)
+     */
+    if (
+      turn.isFollowUp &&
+      !looksLikeRepeat &&
+      !wantsExplain &&
+      (wantsSkip || givesUp || isDeclineRequest(transcript))
+    ) {
+      console.log(
+        `[attempt] follow-up declined, skipping turn=${turn.turnNumber}: ${JSON.stringify(
+          transcript.slice(0, 80),
+        )}`,
+      );
+      await skipTurn(attempt, interview, turn.turnNumber);
+      return;
+    }
     const isDoubt =
       looksLikeRepeat ||
+      wantsExplain ||
       wantsSkip ||
       givesUp ||
       (!isProbe &&
@@ -1306,9 +1391,14 @@ async function processTurnScoped(
         // and gets its own allowance.
         const givingUp = wantsSkip || givesUp;
         const counts = givingUp ? doubtCounts : clarificationCounts;
+        // A vague doubt on a follow-up gets one reply, not three: after that,
+        // another means it is beyond them, and it moves on (see above). An
+        // explicit "please explain" is always honoured, up to the usual cap.
         const limit = givingUp
           ? MAX_DOUBTS_BEFORE_SKIP
-          : MAX_CLARIFICATIONS_BEFORE_SKIP;
+          : turn.isFollowUp && !wantsExplain
+            ? 1
+            : MAX_CLARIFICATIONS_BEFORE_SKIP;
         const seen = (counts.get(key) ?? 0) + 1;
         counts.set(key, seen);
         if (seen > limit) {
@@ -1991,6 +2081,9 @@ async function skipTurnInner(
   );
   if (!turn || turn.status === "completed") return;
 
+  // The report plays the question, not a doubt reply left in its slot.
+  await restoreQuestionAudio(turn.id);
+
   await db
     .update(interviewTurnsTable)
     .set({
@@ -2027,9 +2120,16 @@ export async function skipOrProbeTurn(
   const turn = (await getTurns(attempt.id)).find(
     (t) => t.turnNumber === turnNumber,
   );
-  // Nothing to probe: gone, already done, or the unscored opening (which paces
-  // itself and must never nag). Skip outright.
-  if (!turn || turn.status === "completed" || turn.kind === "language_probe") {
+  // Nothing to probe: gone, already done, the unscored opening (which paces
+  // itself and must never nag), or a follow-up — optional by nature, so Next
+  // with no answer means "I'll pass on this one" and is taken at its word.
+  // Skip outright.
+  if (
+    !turn ||
+    turn.status === "completed" ||
+    turn.kind === "language_probe" ||
+    turn.isFollowUp
+  ) {
     await skipTurn(attempt, interview, turnNumber);
     return { skipped: true };
   }
@@ -2558,6 +2658,13 @@ export interface AttemptStatus {
     question: string;
     questionTranslation: string | null;
     questionAudioId: string | null;
+    /**
+     * The question's own clip while a doubt reply occupies `questionAudioId`,
+     * so the browser's "repeat" plays the question, not the reply.
+     */
+    originalQuestionAudioId: string | null;
+    /** Follow-ups are optional: the browser hands a plain "no" straight on. */
+    isFollowUp: boolean;
     status: InterviewTurn["status"];
     errorMessage: string | null;
     skillId: WorkSkillId | null;
@@ -2630,6 +2737,8 @@ export async function getAttemptStatus(
           question: current.question,
           questionTranslation: current.questionTranslation,
           questionAudioId: current.questionAudioId,
+          originalQuestionAudioId: originalQuestionAudioOf(current.id),
+          isFollowUp: current.isFollowUp,
           status: current.status,
           errorMessage: current.errorMessage,
           skillId: (current.skillId as WorkSkillId | null) ?? null,

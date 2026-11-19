@@ -129,18 +129,60 @@ const PHRASES: string[] = [
   "ਦੁਬਾਰਾ",
   "ਦੁਬਾਰਾ ਦੱਸੋ",
   "ପୁନର୍ବାର",
+  "ଆଉ ଥରେ",
+  "ପୁଣି ଥରେ",
+  "ପୁଣି କୁହନ୍ତୁ",
+  "మళ్ళీ",
+  "మళ్ళీ చెప్పండి",
+  "ಮತ್ತೊಮ್ಮೆ",
+  "திரும்ப சொல்லுங்கள்",
+  "திரும்ப சொல்லுங்க",
+  "আবার",
+  "আরেকবার বলুন",
+  "ફરી",
+  "ફરી કહો",
+  "ਫਿਰ ਤੋਂ",
+  "ਦੁਬਾਰਾ ਕਹੋ",
+  "ഒന്നുകൂടി പറയൂ",
+  "ഒന്നൂടെ പറയൂ",
+  "ಇನ್ನೊಮ್ಮೆ",
+  "আরেকবার",
+  "ఇంకోసారి",
+  "இன்னொரு முறை",
+  "ഒന്നുകൂടി",
+  "ਇੱਕ ਵਾਰ ਫਿਰ",
+  "ફરી એકવાર",
+  // English "repeat" as Sarvam spells it in each script: candidates say the
+  // English word inside a Hindi / Tamil / … interview, and it comes back in
+  // that script, matching nothing above.
+  "रिपीट करो",
+  "रिपीट कीजिए",
+  "रिपीट करिए",
+  "रिपीट कर दो",
+  "रिपीट प्लीज",
+  "प्लीज रिपीट",
+  "ரிப்பீட்",
+  "రిపీట్",
+  "ರಿಪೀಟ್",
+  "রিপিট",
+  "રિપીટ",
+  "റിപ്പീറ്റ്",
+  "ਰਿਪੀਟ",
+  "ରିପିଟ",
 ];
 
 /** Lower-cased, punctuation removed, whitespace collapsed. */
 function normalise(text: string): string {
-  return text
-    .toLowerCase()
-    // Apostrophes are dropped, not spaced: "don't" must become "dont" to
-    // match the phrase lists, not "don t".
-    .replace(/['‘’]/g, "")
-    .replace(/[.,!?;:"“”()\-—।]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return (
+    text
+      .toLowerCase()
+      // Apostrophes are dropped, not spaced: "don't" must become "dont" to
+      // match the phrase lists, not "don t".
+      .replace(/['‘’]/g, "")
+      .replace(/[.,!?;:"“”()\-—।]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 }
 
 /**
@@ -155,6 +197,11 @@ export function isRepeatRequest(transcript: string): boolean {
 
   const words = text.split(" ");
   if (words.length > MAX_WORDS) return false;
+
+  // A lone "रिपीट" (English "repeat" in Devanagari). Inside a sentence it only
+  // counts in a request form ("रिपीट करो") — "मैं उस से रिपीट करने के लिए
+  // कहूँगा" (I would ask them to repeat) is a real answer.
+  if (text === "रिपीट" || text === "रिपीट प्लीज") return true;
 
   return PHRASES.some((phrase) => {
     const needle = normalise(phrase);
@@ -205,6 +252,35 @@ const SKIP_PHRASES: string[] = [
   "వదిలేయండి",
   "அடுத்த கேள்வி",
   " முந்தைய",
+  "விட்டுவிடுங்கள்",
+  "ಮುಂದಿನ ಪ್ರಶ್ನೆ",
+  "ಬಿಟ್ಟುಬಿಡಿ",
+  "পরের প্রশ্ন",
+  "বাদ দিন",
+  "આગળનો પ્રશ્ન",
+  "પછીનો પ્રશ્ન",
+  "છોડી દો",
+  "അടുത്ത ചോദ്യം",
+  "ഒഴിവാക്കൂ",
+  "ਅਗਲਾ ਸਵਾਲ",
+  "ਛੱਡ ਦਿਓ",
+  "ପରବର୍ତ୍ତୀ ପ୍ରଶ୍ନ",
+  "ଛାଡ଼ି ଦିଅନ୍ତୁ",
+  // English "next" / "skip" as Sarvam spells them in each script — "नेक्स्ट
+  // क्वेश्चन प्लीज" turns up in real Hindi and Marathi interviews and used to
+  // match nothing.
+  "नेक्स्ट क्वेश्चन",
+  "नेक्स्ट प्रश्न",
+  "नेक्स्ट वन",
+  "स्किप",
+  "ஸ்கிப்",
+  "స్కిప్",
+  "ಸ್ಕಿಪ್",
+  "স্কিপ",
+  "સ્કિપ",
+  "സ്കിപ്പ്",
+  "ਸਕਿੱਪ",
+  "ସ୍କିପ",
 ];
 
 /**
@@ -280,12 +356,258 @@ const GIVE_UP_PHRASES: string[] = [
   "नाही माहिती",
   "माहिती नाही",
   "ठाऊक नाही",
+  // English "I don't know" as Sarvam spells it in Devanagari.
+  "डोंट नो",
+  "डोन्ट नो",
+  // Other supported languages
+  "தெரியாது",
+  "తెలియదు",
+  "ಗೊತ್ತಿಲ್ಲ",
+  "জানি না",
+  "ખબર નથી",
+  "അറിയില്ല",
+  "ਪਤਾ ਨਹੀਂ",
+  "ਨਹੀਂ ਪਤਾ",
+  "ଜାଣି ନାହିଁ",
+  "ଜାଣେ ନାହିଁ",
 ];
 
 export function isGiveUpRequest(transcript: string): boolean {
   const text = normalise(transcript);
   if (!text || text.split(" ").length > MAX_WORDS) return false;
   return GIVE_UP_PHRASES.some((p) => text.includes(normalise(p)));
+}
+
+/**
+ * "Explain the question" — the candidate wants the MEANING, not a replay.
+ *
+ * "I didn't understand" / "samajh nahi aaya" also sit in the repeat list
+ * (the opening still just replays on them), but on a real question the
+ * interviewer should explain rather than say the same words again. Callers
+ * check this BEFORE `isRepeatRequest`. The explanation is spoken by the
+ * interviewer; it never answers the question for them.
+ */
+const EXPLAIN_PHRASES: string[] = [
+  // English. Phrased as requests: a bare "explain" also turns up inside short
+  // real answers ("I would explain it to the customer").
+  "can you explain",
+  "could you explain",
+  "please explain",
+  "explain me",
+  "explain the question",
+  "explain this question",
+  "explain question",
+  "explain again",
+  "explain once",
+  "explain properly",
+  "explain in",
+  "what does it mean",
+  "what does this mean",
+  "what is the meaning",
+  "meaning of this",
+  "meaning of the question",
+  "what do you mean",
+  "i did not understand",
+  "i didnt understand",
+  "didnt understand",
+  "dont understand",
+  "i dont understand",
+  "not understand",
+  "not getting the question",
+  "not getting you",
+  "didnt get the question",
+  "didnt get you",
+  "did not get the question",
+  "understand the question",
+  // Hindi / Marathi, romanised. Not a bare "matlab": it is everyday filler
+  // ("matlab, main pehle…").
+  "samjhao",
+  "samjhaiye",
+  "samjha do",
+  "samjha dijiye",
+  "samajh nahi aaya",
+  "samajh nahi aya",
+  "samajh nahi",
+  "samjha nahi",
+  "nahi samjha",
+  "matlab kya",
+  "kya matlab",
+  "iska matlab",
+  "explain karo",
+  "explain kariye",
+  "explain kijiye",
+  "explain kara",
+  "samjun sanga",
+  "samjavun sanga",
+  "samajla nahi",
+  "samajle nahi",
+  "kalala nahi",
+  // Devanagari
+  "समझाइए",
+  "समझाओ",
+  "समझा दो",
+  "समझा दीजिए",
+  "समझ नहीं आया",
+  "समझ नहीं",
+  "समझा नहीं",
+  "मतलब क्या",
+  "क्या मतलब",
+  "इसका मतलब",
+  "अर्थ क्या",
+  "अर्थ काय",
+  "याचा अर्थ",
+  "समजावून सांगा",
+  "समजून सांगा",
+  "समजलं नाही",
+  "समजले नाही",
+  "कळलं नाही",
+  "कळले नाही",
+  // Other supported scripts
+  "விளக்கவும்",
+  "புரியவில்லை",
+  "వివరించండి",
+  "అర్థం కాలేదు",
+  "ವಿವರಿಸಿ",
+  "ಅರ್ಥವಾಗಲಿಲ್ಲ",
+  "বুঝিয়ে বলুন",
+  "বুঝতে পারিনি",
+  "સમજાવો",
+  "સમજાયું નહીં",
+  "വിശദീകരിക്കൂ",
+  "മനസ്സിലായില്ല",
+  "ਸਮਝਾਓ",
+  "ਸਮਝ ਨਹੀਂ ਆਇਆ",
+  "ବୁଝାନ୍ତୁ",
+  "ବୁଝି ପାରିଲି ନାହିଁ",
+  "ବୁଝିଲି ନାହିଁ",
+  "புரியல",
+  "புரியலை",
+  "விளக்கமா சொல்லுங்க",
+  "అర్ధం కాలేదు",
+  "ಅರ್ಥ ಆಗಲಿಲ್ಲ",
+  "ಅರ್ಥ ಆಗಿಲ್ಲ",
+  "বুঝিনি",
+  "বুঝলাম না",
+  "સમજ ન પડી",
+  "સમજાયું નથી",
+  "മനസിലായില്ല",
+  "ਸਮਝ ਨਹੀਂ ਆਈ",
+  // English "explain" as Sarvam spells it in Devanagari.
+  "एक्सप्लेन करो",
+  "एक्सप्लेन कीजिए",
+  "एक्सप्लेन करिए",
+  "एक्सप्लेन करा",
+];
+
+/** A request is a sentence, not an answer: anything longer is answering. */
+const EXPLAIN_MAX_WORDS = 8;
+
+/**
+ * Whether the candidate is asking for the question to be explained, in any
+ * supported language. The explanation is always given in the interview
+ * language.
+ */
+export function isExplainRequest(transcript: string): boolean {
+  const text = normalise(transcript);
+  if (!text || text.split(" ").length > EXPLAIN_MAX_WORDS) return false;
+  // Whole words only: "समजून सांगा" (please explain) must not match inside
+  // "समजून सांगायचं" (to explain to someone), which is a real answer.
+  const padded = ` ${text} `;
+  return EXPLAIN_PHRASES.some((p) => padded.includes(` ${normalise(p)} `));
+}
+
+/**
+ * A plain "no" — the candidate declining a FOLLOW-UP.
+ *
+ * Only the follow-up path uses this: a follow-up digs into something the
+ * candidate already said and may simply be beyond them, so "No" / "Nahi" there
+ * means "I have nothing to add", and they must not be pushed. On a main
+ * question a bare "no" is left to the normal doubt handling.
+ *
+ * The WHOLE reply must be negatives plus politeness ("No sir", "No no, not
+ * really", "नाही"), so a real answer that merely contains "no" never matches.
+ */
+const DECLINE_WORDS = new Set(
+  [
+    "no",
+    "nope",
+    "nah",
+    "not",
+    "nahi",
+    "nahin",
+    "nai",
+    "nhi",
+    "nako",
+    "नहीं",
+    "नही",
+    "नाही",
+    "नको",
+    "இல்லை",
+    "లేదు",
+    "ಇಲ್ಲ",
+    "না",
+    "ના",
+    "ഇല്ല",
+    "ਨਹੀਂ",
+    "ନା",
+    "ନାହିଁ",
+    "illa",
+    "ledu",
+    "nahin",
+    "नो",
+    "வேண்டாம்",
+    "వద్దు",
+    "ಬೇಡ",
+    "નહીં",
+    "വേണ്ട",
+    "ନାଇଁ",
+    "nako",
+    "vendam",
+    "vaddu",
+    "beda",
+  ].map(normalise),
+);
+/** Words allowed alongside the "no" without making it an answer. */
+const DECLINE_FILLER = new Set(
+  [
+    "sir",
+    "mam",
+    "maam",
+    "madam",
+    "really",
+    "thanks",
+    "thank",
+    "you",
+    "please",
+    "okay",
+    "ok",
+    "सर",
+    "जी",
+    "ਜੀ",
+    "থাক",
+    "ji",
+    "ಸರ್",
+    "சார்",
+    "సార్",
+    "স্যার",
+    "સર",
+    "സർ",
+    "ਸਰ",
+    "ସାର୍",
+    "मैडम",
+    "मॅडम",
+  ].map(normalise),
+);
+
+export function isDeclineRequest(transcript: string): boolean {
+  const text = normalise(transcript);
+  if (!text) return false;
+  const words = text.split(" ");
+  if (words.length > 6) return false;
+  return (
+    words.some((w) => DECLINE_WORDS.has(w)) &&
+    words.every((w) => DECLINE_WORDS.has(w) || DECLINE_FILLER.has(w))
+  );
 }
 
 /**
@@ -304,6 +626,19 @@ const EXACT_SKIP_PHRASES: string[] = [
   "पास",
   "पास करो",
   "पास कीजिए",
+  // A bare "next" in a local script only on its own: "नेक्स्ट टाइम ध्यान
+  // रखूंगा" (next time I will be careful) is a real answer.
+  "नेक्स्ट",
+  "நெக்ஸ்ட்",
+  "నెక్స్ట్",
+  "ನೆಕ್ಸ್ಟ್",
+  "নেক্সট",
+  "નેક્સ્ટ",
+  "നെക്സ്റ്റ്",
+  "ਨੈਕਸਟ",
+  "ନେକ୍ସଟ",
+  "नेक्स्ट प्लीज",
+  "प्लीज नेक्स्ट",
 ];
 
 export function isSkipRequest(transcript: string): boolean {
