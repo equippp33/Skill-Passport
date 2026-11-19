@@ -11,7 +11,7 @@
  * app is untouched and this can be restarted on its own. Runs in the same
  * container-set as Next; a reverse-proxy rule routes its subdomain here.
  *
- *   node --env-file=../../.env scripts/stt-relay.mjs
+ *   node --env-file=../../.env stt-relay/stt-relay.mjs
  *
  * The HTTP server answers any non-upgrade request with "stt-relay ok" so the
  * subdomain doubles as a health check, and the upgrade is accepted on ANY path
