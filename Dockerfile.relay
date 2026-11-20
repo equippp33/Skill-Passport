@@ -1,7 +1,7 @@
 # Skill Passport — realtime STT relay image.
 #
 # A small sibling to the main Dockerfile. It ships NO Next build: the relay only
-# runs apps/nextjs/scripts/stt-relay.mjs, which sits between the browser and
+# runs apps/nextjs/stt-relay/stt-relay.mjs, which sits between the browser and
 # Sarvam's streaming STT so the API key never reaches the client. Deployed as
 # its own Coolify app, pointed at this file.
 #
@@ -51,10 +51,10 @@ WORKDIR /repo
 # store, so both trees are copied to keep `ws` resolvable.
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/nextjs/node_modules ./apps/nextjs/node_modules
-COPY apps/nextjs/scripts/stt-relay.mjs ./apps/nextjs/scripts/stt-relay.mjs
+COPY apps/nextjs/stt-relay/stt-relay.mjs ./apps/nextjs/stt-relay/stt-relay.mjs
 
 USER relay
 EXPOSE 3100
 
 # node is PID 1 so it gets SIGTERM directly and stops promptly.
-CMD ["node", "apps/nextjs/scripts/stt-relay.mjs"]
+CMD ["node", "apps/nextjs/stt-relay/stt-relay.mjs"]
